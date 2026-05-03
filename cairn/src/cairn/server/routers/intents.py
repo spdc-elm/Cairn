@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from fastapi import HTTPException
 
 from cairn.server.db import get_conn
 from cairn.server.models import (
@@ -11,7 +12,9 @@ from cairn.server.models import (
 )
 from cairn.server.services import (
     check_project_active,
+    check_project_intent_delete_writable,
     get_claimable_open_intent_or_404,
+    get_intent_or_404,
     get_releasable_open_intent_or_404,
     intent_to_model,
     next_fact_id,
@@ -113,6 +116,22 @@ def release(project_id: str, intent_id: str, body: HeartbeatRequest):
             ).fetchone()
 
         return intent_to_model(conn, row, project_id)
+
+
+@router.delete(
+    "/projects/{project_id}/intents/{intent_id}",
+    status_code=204,
+)
+def delete_open_intent(project_id: str, intent_id: str):
+    with get_conn() as conn:
+        check_project_intent_delete_writable(conn, project_id)
+        row = get_intent_or_404(conn, project_id, intent_id)
+        if row["to_fact_id"] is not None:
+            raise HTTPException(409, "Only open intents can be deleted")
+        conn.execute(
+            "DELETE FROM intents WHERE id = ? AND project_id = ?",
+            (intent_id, project_id),
+        )
 
 
 @router.post(

@@ -62,6 +62,13 @@ def check_project_active(conn: sqlite3.Connection, project_id: str) -> sqlite3.R
     return row
 
 
+def check_project_intent_delete_writable(conn: sqlite3.Connection, project_id: str) -> sqlite3.Row:
+    row = get_project_or_404(conn, project_id)
+    if row["status"] not in ("active", "stopped"):
+        raise HTTPException(403, f"Project is {row['status']}")
+    return row
+
+
 def check_project_hint_writable(conn: sqlite3.Connection, project_id: str) -> sqlite3.Row:
     row = get_project_or_404(conn, project_id)
     if row["status"] not in ("active", "stopped", "completed"):
