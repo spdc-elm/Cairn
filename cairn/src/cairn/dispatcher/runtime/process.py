@@ -100,6 +100,7 @@ class ManagedProcess:
 
     def _read_stream(self) -> None:
         assert self._exec_id is not None
+        stream = None
         try:
             stream = self._api.exec_start(
                 self._exec_id,
@@ -121,6 +122,11 @@ class ManagedProcess:
         except DockerException as exc:
             self._read_error = str(exc)
         finally:
+            if stream is not None and hasattr(stream, "close"):
+                try:
+                    stream.close()
+                except (DockerException, OSError, ValueError):
+                    pass
             self._returncode = self._resolve_exit_code()
             self._done.set()
 
