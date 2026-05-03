@@ -1,8 +1,8 @@
 server: "http://cairn-server:8000"
 
 common_env:
-  TSEC_SERVER_HOST: "10.0.0.44:8000"
-  TSEC_AGENT_TOKEN: "xxx"
+  TSEC_SERVER_HOST: "127.0.0.1:8000"
+  TSEC_AGENT_TOKEN: "replace-me"
 
 runtime:
   interval: 3
@@ -25,32 +25,22 @@ tasks:
 
 container:
   image: "ghcr.io/oritera/cairn-worker-container:latest"
+  platform: "linux/amd64"
   network_mode: "host"
   completed_action: "stop"
   # cap_add:
   #   - "NET_RAW"
   #   - "NET_ADMIN"
 
-
 workers:
-  - name: "claudecode_deepseek-v4-pro"
-    type: "claudecode"
+  - name: "codex-example"
+    type: "codex"
     task_types: [bootstrap, reason, explore]
     max_running: 2
     priority: 0
     env:
-      ANTHROPIC_MODEL: "deepseek-v4-pro"
-      ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic"
-      ANTHROPIC_AUTH_TOKEN: "sk-xxx"
-
-  - name: "codex_qwen3.6-plus"
-    type: "codex"
-    task_types: [bootstrap,reason,explore]
-    max_running: 2
-    priority: 0
-    env:
-      CODEX_MODEL: "qwen3.6-plus"
-      CODEX_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-      OPENAI_API_KEY: "sk-xxx"
-
-
+      CODEX_MODEL: "your-model-name"
+      CODEX_BASE_URL: "https://your-openai-compatible-endpoint/v1"
+      # Set to "true" if your Responses API endpoint rejects non-streaming requests.
+      CODEX_HEALTHCHECK_STREAM: "false"
+      OPENAI_API_KEY: "sk-replace-me"
