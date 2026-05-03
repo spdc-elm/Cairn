@@ -703,29 +703,41 @@
               </div>
               <template x-if="selectedIntentRecord().worker">
                 <div class="pt-4 border-t border-slate-100 space-y-2">
-                  <div class="flex items-center justify-between gap-3">
-                    <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">Worker Output</p>
-                    <button type="button" @click="loadSelectedIntentRunLog(true)"
-                      class="px-2 py-1 rounded-md border border-slate-200 text-[11px] text-slate-500 hover:bg-slate-50">Refresh</button>
-                  </div>
-                  <template x-if="runLog.loading && !runLog.detail">
-                    <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-400">Loading worker output...</div>
-                  </template>
-                  <template x-if="runLog.error">
-                    <div class="rounded-lg border border-rose-100 bg-rose-50 px-3 py-3 text-xs text-rose-600" x-text="runLog.error"></div>
-                  </template>
-                  <template x-if="!runLog.loading && !runLog.error && !runLog.detail">
-                    <div class="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-400">No run log yet</div>
-                  </template>
-                  <template x-if="runLog.detail">
-                    <div class="rounded-lg border border-slate-200 bg-slate-950 overflow-hidden">
-                      <div class="flex items-center justify-between gap-3 border-b border-slate-800 px-3 py-2 text-[11px]">
-                        <span class="font-mono text-slate-300 truncate" x-text="runLog.detail.summary.run_id"></span>
-                        <span class="shrink-0" :class="runLogStatusClass()" x-text="runLogStatusLabel()"></span>
+                  <div class="rounded-xl border border-slate-200 bg-slate-50/70 overflow-hidden">
+                    <div class="flex items-center justify-between gap-3 px-3 py-2.5 border-b border-slate-200">
+                      <button type="button" @click="toggleRunLogExpanded()"
+                        class="min-w-0 flex-1 flex items-center gap-2 text-left">
+                        <svg class="w-4 h-4 text-slate-400 shrink-0 transition-transform" :class="runLog.expanded ? 'rotate-90' : ''" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+                        <div class="min-w-0">
+                          <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">Worker Output</p>
+                          <p class="text-xs text-slate-500 truncate" x-text="runLog.detail?.summary?.run_id || 'Live conversation / stdout'"></p>
+                        </div>
+                      </button>
+                      <div class="flex items-center gap-2 shrink-0">
+                        <template x-if="runLog.detail">
+                          <span class="text-[11px] font-medium" :class="runLogStatusClass()" x-text="runLogStatusLabel()"></span>
+                        </template>
+                        <button type="button" @click="loadSelectedIntentRunLog(true)"
+                          class="px-2 py-1 rounded-md border border-slate-200 bg-white text-[11px] text-slate-500 hover:bg-slate-50">Refresh</button>
                       </div>
-                      <pre class="max-h-80 overflow-auto p-3 text-[11px] leading-relaxed text-slate-100 whitespace-pre-wrap break-words" x-text="runLogText()"></pre>
                     </div>
-                  </template>
+                    <div x-show="runLog.expanded" class="p-3 space-y-2">
+                      <template x-if="runLog.loading && !runLog.detail">
+                        <div class="rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm text-slate-400">Loading worker output...</div>
+                      </template>
+                      <template x-if="runLog.error">
+                        <div class="rounded-lg border border-rose-100 bg-rose-50 px-3 py-3 text-sm text-rose-600" x-text="runLog.error"></div>
+                      </template>
+                      <template x-if="!runLog.loading && !runLog.error && !runLog.detail">
+                        <div class="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-3 text-sm text-slate-400">No run log yet</div>
+                      </template>
+                      <template x-if="runLog.detail">
+                        <div class="rounded-lg border border-slate-200 bg-slate-950 overflow-hidden">
+                          <pre x-ref="runLogOutput" class="h-[28rem] overflow-auto p-4 text-[12px] leading-6 text-slate-100 whitespace-pre-wrap break-words" x-text="runLogText()"></pre>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
                 </div>
               </template>
             </div>
@@ -1138,7 +1150,7 @@ function cairnApp() {
     yamlPreviewTitle: '',
     yamlPreviewText: '',
     yamlPreviewHtml: '',
-    runLog: { projectId: '', intentId: '', loading: false, error: '', detail: null },
+    runLog: { projectId: '', intentId: '', loading: false, error: '', detail: null, expanded: true },
     toast: { show: false, message: '', type: 'info' },
     replay: {
       active: false,
@@ -1597,12 +1609,12 @@ function cairnApp() {
 
     async loadSelectedIntentRunLog(force = false) {
       if (!this.selectedProjectId || !this.selectedIntentId()) {
-        this.runLog = { projectId: '', intentId: '', loading: false, error: '', detail: null };
+        this.runLog = { projectId: '', intentId: '', loading: false, error: '', detail: null, expanded: true };
         return;
       }
       const intent = this.selectedIntentRecord();
       if (!intent || !intent.worker) {
-        this.runLog = { projectId: this.selectedProjectId, intentId: this.selectedIntentId(), loading: false, error: '', detail: null };
+        this.runLog = { ...this.runLog, projectId: this.selectedProjectId, intentId: this.selectedIntentId(), loading: false, error: '', detail: null };
         return;
       }
       const projectId = this.selectedProjectId;
@@ -1612,12 +1624,14 @@ function cairnApp() {
       try {
         const detail = await this.api('GET', `/projects/${projectId}/runs/latest?intent_id=${encodeURIComponent(intentId)}`);
         if (this.selectedProjectId === projectId && this.selectedIntentId() === intentId) {
-          this.runLog = { projectId, intentId, loading: false, error: '', detail };
+          this.runLog = { ...this.runLog, projectId, intentId, loading: false, error: '', detail };
+          this.scrollRunLogToBottom();
         }
       } catch (e) {
         if (this.selectedProjectId !== projectId || this.selectedIntentId() !== intentId) return;
         const message = String(e.message || '');
         this.runLog = {
+          ...this.runLog,
           projectId,
           intentId,
           loading: false,
@@ -1651,6 +1665,21 @@ function cairnApp() {
       if (label === 'running') return 'text-amber-300';
       if (label === 'finished') return 'text-emerald-300';
       return 'text-rose-300';
+    },
+
+    toggleRunLogExpanded() {
+      this.runLog = { ...this.runLog, expanded: !this.runLog.expanded };
+      if (this.runLog.expanded) this.scrollRunLogToBottom();
+    },
+
+    scrollRunLogToBottom() {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const el = this.$refs.runLogOutput;
+          if (!el) return;
+          el.scrollTop = el.scrollHeight;
+        });
+      });
     },
 
     async toggleProjectStop() {
@@ -2662,7 +2691,7 @@ function cairnApp() {
     clearGraphSelection(preserveTimeline = false) {
       this.selectedNode = null;
       this.selectedFacts = [];
-      this.runLog = { projectId: '', intentId: '', loading: false, error: '', detail: null };
+      this.runLog = { projectId: '', intentId: '', loading: false, error: '', detail: null, expanded: true };
       if (!preserveTimeline) this.selectedTimelineEntryId = null;
       if (this.cy) this.cy.elements().removeClass('highlight focus faded selected-fact');
     },
