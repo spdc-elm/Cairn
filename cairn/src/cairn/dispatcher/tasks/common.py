@@ -10,6 +10,7 @@ from cairn.dispatcher.runtime.cancellation import TaskCancellation
 from cairn.dispatcher.runtime.containers import ContainerManager
 from cairn.dispatcher.runtime.heartbeat import HeartbeatLease
 from cairn.dispatcher.runtime.process import ProcessResult
+from cairn.dispatcher.runtime.run_logs import RunLogWriter
 
 HEALTHCHECK_COMMUNICATE_GRACE_SECONDS = 10
 PROCESS_COMMUNICATE_GRACE_SECONDS = 15
@@ -93,6 +94,9 @@ def run_worker_process(
     *,
     phase: str,
     timeout_seconds: int,
+    project_id: str | None = None,
+    task_type: str | None = None,
+    intent_id: str | None = None,
     lease: HeartbeatLease | None = None,
     cancellation: TaskCancellation | None = None,
 ) -> ProcessResult:
@@ -103,11 +107,35 @@ def run_worker_process(
         phase,
         timeout_seconds,
     )
+    run_logger = None
+    if project_id is not None and task_type is not None:
+        run_logger = RunLogWriter(
+            project_id=project_id,
+            task_type=task_type,
+            phase=phase,
+            worker_name=worker.name,
+            intent_id=intent_id,
+            metadata={
+                "container": container_name,
+                "timeout_seconds": timeout_seconds,
+                "argv0": argv[0] if argv else None,
+            },
+        )
+        LOG.info(
+            "run log opened project=%s intent=%s worker=%s phase=%s run_id=%s path=%s",
+            project_id,
+            intent_id,
+            worker.name,
+            phase,
+            run_logger.run_id,
+            run_logger.path,
+        )
     process = container_manager.build_exec_process(
         container_name,
         dict(worker.env),
         argv,
         timeout_seconds=timeout_seconds,
+        run_logger=run_logger,
     )
     process.start()
     if lease is not None:
@@ -115,7 +143,15 @@ def run_worker_process(
     if cancellation is not None:
         cancellation.attach_process(process)
     try:
-        return process.communicate(timeout=communicate_timeout(timeout_seconds))
+        result = process.communicate(timeout=communicate_timeout(timeout_seconds))
+        if run_logger is not None:
+            run_logger.finish(
+                returncode=result.returncode,
+                timed_out=result.timed_out,
+                cancelled=result.cancelled,
+                cancel_reason=result.cancel_reason,
+            )
+        return result
     finally:
         if lease is not None:
             lease.attach_process(None)

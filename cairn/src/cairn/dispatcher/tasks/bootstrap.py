@@ -113,6 +113,9 @@ def run_bootstrap_task(
             execute.argv,
             phase="bootstrap",
             timeout_seconds=config.tasks.bootstrap.timeout,
+            project_id=project.project.id,
+            task_type="bootstrap",
+            intent_id=intent.id,
             lease=lease,
             cancellation=cancellation,
         )
@@ -307,6 +310,9 @@ def _try_conclude_fallback(
         conclude_argv,
         phase="bootstrap_conclude",
         timeout_seconds=config.tasks.bootstrap.conclude_timeout,
+        project_id=project.project.id,
+        task_type="bootstrap",
+        intent_id=intent.id,
         lease=lease,
         cancellation=cancellation,
     )

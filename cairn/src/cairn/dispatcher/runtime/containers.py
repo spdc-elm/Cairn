@@ -53,6 +53,7 @@ class ContainerManager:
                 detach=True,
                 name=name,
                 network_mode=self._config.network_mode,
+                platform=self._config.platform,
                 cap_add=self._config.cap_add or None,
             )
             LOG.info("created container project=%s container=%s", project_id, name)
@@ -88,6 +89,7 @@ class ContainerManager:
                 detach=True,
                 name=name,
                 network_mode=self._config.network_mode,
+                platform=self._config.platform,
                 cap_add=self._config.cap_add or None,
             )
         except DockerException as exc:
@@ -185,6 +187,7 @@ class ContainerManager:
         command: list[str],
         timeout_seconds: int | None = None,
         kill_after_seconds: int = 5,
+        run_logger=None,
     ) -> ManagedProcess:
         container = self._require_container(container_name)
         argv: list[str] = []
@@ -198,7 +201,7 @@ class ContainerManager:
                 ]
             )
         argv.extend(command)
-        return ManagedProcess(container, argv, env)
+        return ManagedProcess(container, argv, env, run_logger=run_logger)
 
     def remove_container(self, name: str, *, force: bool = True) -> None:
         container = self._get_container(name)

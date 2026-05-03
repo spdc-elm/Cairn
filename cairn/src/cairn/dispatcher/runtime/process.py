@@ -24,9 +24,10 @@ class ProcessResult:
 
 
 class ManagedProcess:
-    def __init__(self, container: Container, command: list[str], env: dict[str, str]):
+    def __init__(self, container: Container, command: list[str], env: dict[str, str], run_logger: Any | None = None):
         self.command = command
         self.env = env
+        self.run_logger = run_logger
         self._container = container
         self._api = container.client.api
         self._exec_id: str | None = None
@@ -111,8 +112,12 @@ class ManagedProcess:
                 stdout, stderr = self._split_chunk(chunk)
                 if stdout:
                     self._stdout.append(stdout)
+                    if self.run_logger is not None:
+                        self.run_logger.write_stream("stdout", stdout)
                 if stderr:
                     self._stderr.append(stderr)
+                    if self.run_logger is not None:
+                        self.run_logger.write_stream("stderr", stderr)
         except DockerException as exc:
             self._read_error = str(exc)
         finally:

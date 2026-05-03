@@ -127,6 +127,9 @@ def run_reason_task(
             command.argv,
             phase="reason_execute",
             timeout_seconds=config.tasks.reason.timeout,
+            project_id=project.project.id,
+            task_type="reason",
+            intent_id=None,
             lease=lease,
             cancellation=cancellation,
         )

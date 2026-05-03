@@ -6,7 +6,7 @@ services:
     image: cairn-app
     container_name: cairn-server
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./datas/cairn/:/root/.local/share/cairn/
     healthcheck:
@@ -30,6 +30,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./dispatch.yaml:/cairn/dispatch.yaml
+      - ./datas/cairn/:/root/.local/share/cairn/
     depends_on:
       cairn-server:
         condition: service_healthy
