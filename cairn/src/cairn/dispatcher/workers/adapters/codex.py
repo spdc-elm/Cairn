@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from cairn.dispatcher.config import WorkerConfig
 from cairn.dispatcher.workers.adapters._curl import build_verbose_curl_healthcheck, expand_env, render_curl_command
 from cairn.dispatcher.workers.base import DriverResult, RegexSessionDriver
@@ -107,9 +109,12 @@ class CodexDriver(RegexSessionDriver):
 
     @staticmethod
     def _healthcheck_payload(worker: WorkerConfig) -> str:
-        return (
-            '{"input":[{"content":"ping","role":"user"}],'
-            '"model":"'
-            + worker.env["CODEX_MODEL"]
-            + '","stream":false}'
+        stream = worker.env.get("CODEX_HEALTHCHECK_STREAM", "").lower() in {"1", "true", "yes", "on"}
+        return json.dumps(
+            {
+                "input": [{"content": "ping", "role": "user"}],
+                "model": worker.env["CODEX_MODEL"],
+                "stream": stream,
+            },
+            ensure_ascii=False,
         )
