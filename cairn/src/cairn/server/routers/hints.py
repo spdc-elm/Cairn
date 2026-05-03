@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from fastapi import HTTPException
 
 from cairn.server.db import get_conn
 from cairn.server.models import CreateHintRequest, Hint
@@ -23,3 +24,22 @@ def create_hint(project_id: str, body: CreateHintRequest):
             (hid, project_id, body.content, body.creator, now),
         )
         return Hint(id=hid, content=body.content, creator=body.creator, created_at=now)
+
+
+@router.delete(
+    "/projects/{project_id}/hints/{hint_id}",
+    status_code=204,
+)
+def delete_hint(project_id: str, hint_id: str):
+    with get_conn() as conn:
+        check_project_hint_writable(conn, project_id)
+        row = conn.execute(
+            "SELECT 1 FROM hints WHERE id = ? AND project_id = ?",
+            (hint_id, project_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "Hint not found")
+        conn.execute(
+            "DELETE FROM hints WHERE id = ? AND project_id = ?",
+            (hint_id, project_id),
+        )

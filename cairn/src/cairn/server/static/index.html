@@ -760,21 +760,25 @@
           </div>
         </template>
         <template x-for="h in project.hints" :key="h.id">
-          <button type="button" @click="openHintTimelineEntry(h.id)"
-            class="w-full text-left rounded-2xl border border-amber-200/80 bg-white shadow-sm overflow-hidden transition hover:bg-amber-50/40">
+          <div class="rounded-2xl border border-amber-200/80 bg-white shadow-sm overflow-hidden">
             <div class="px-4 py-3 border-b border-amber-100 bg-amber-50/80">
               <div class="flex items-center justify-between gap-3 text-[11px]">
                 <div class="flex items-center gap-2 min-w-0">
                   <span class="w-2 h-2 rounded-full bg-amber-400 shrink-0"></span>
                   <span class="font-medium text-amber-800 truncate" x-text="h.creator"></span>
                 </div>
-                <span class="text-amber-600/80 shrink-0 tabular-nums" x-text="formatTime(h.created_at)"></span>
+                <div class="flex items-center gap-2 shrink-0">
+                  <span class="text-amber-600/80 tabular-nums" x-text="formatTime(h.created_at)"></span>
+                  <button type="button" x-show="projectCanWriteHints()" @click.stop="deleteHint(h.id)"
+                    class="px-2 py-1 rounded-md border border-rose-200 bg-white text-[11px] text-rose-500 hover:bg-rose-50">Delete</button>
+                </div>
               </div>
             </div>
-            <div class="p-4">
+            <button type="button" @click="openHintTimelineEntry(h.id)"
+              class="w-full text-left p-4 transition hover:bg-amber-50/40">
               <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words" x-text="h.content"></p>
-            </div>
-          </button>
+            </button>
+          </div>
         </template>
       </div>
 
@@ -3449,6 +3453,17 @@ function cairnApp() {
         await this.loadProject(this.selectedProjectId);
         this.updateGraph();
         this.showToast('Intent concluded');
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async deleteHint(hintId) {
+      if (!this.selectedProjectId || !hintId) return;
+      try {
+        await this.api('DELETE', `/projects/${this.selectedProjectId}/hints/${hintId}`);
+        await this.loadProject(this.selectedProjectId);
+        await this.loadProjects();
+        this.updateGraph();
+        this.showToast('Hint deleted');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
