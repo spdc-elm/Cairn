@@ -701,6 +701,33 @@
                   <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Concluded</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedIntentRecord().concluded_at)"></span></div>
                 </template>
               </div>
+              <template x-if="selectedIntentRecord().worker">
+                <div class="pt-4 border-t border-slate-100 space-y-2">
+                  <div class="flex items-center justify-between gap-3">
+                    <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">Worker Output</p>
+                    <button type="button" @click="loadSelectedIntentRunLog(true)"
+                      class="px-2 py-1 rounded-md border border-slate-200 text-[11px] text-slate-500 hover:bg-slate-50">Refresh</button>
+                  </div>
+                  <template x-if="runLog.loading && !runLog.detail">
+                    <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-400">Loading worker output...</div>
+                  </template>
+                  <template x-if="runLog.error">
+                    <div class="rounded-lg border border-rose-100 bg-rose-50 px-3 py-3 text-xs text-rose-600" x-text="runLog.error"></div>
+                  </template>
+                  <template x-if="!runLog.loading && !runLog.error && !runLog.detail">
+                    <div class="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-400">No run log yet</div>
+                  </template>
+                  <template x-if="runLog.detail">
+                    <div class="rounded-lg border border-slate-200 bg-slate-950 overflow-hidden">
+                      <div class="flex items-center justify-between gap-3 border-b border-slate-800 px-3 py-2 text-[11px]">
+                        <span class="font-mono text-slate-300 truncate" x-text="runLog.detail.summary.run_id"></span>
+                        <span class="shrink-0" :class="runLogStatusClass()" x-text="runLogStatusLabel()"></span>
+                      </div>
+                      <pre class="max-h-80 overflow-auto p-3 text-[11px] leading-relaxed text-slate-100 whitespace-pre-wrap break-words" x-text="runLogText()"></pre>
+                    </div>
+                  </template>
+                </div>
+              </template>
             </div>
           </section>
         </template>
@@ -1111,6 +1138,7 @@ function cairnApp() {
     yamlPreviewTitle: '',
     yamlPreviewText: '',
     yamlPreviewHtml: '',
+    runLog: { projectId: '', intentId: '', loading: false, error: '', detail: null },
     toast: { show: false, message: '', type: 'info' },
     replay: {
       active: false,
@@ -1561,7 +1589,68 @@ function cairnApp() {
     },
 
     async loadProject(id) {
-      try { this.project = await this.api('GET', `/projects/${id}`); } catch(e) { this.showToast(e.message, 'error'); }
+      try {
+        this.project = await this.api('GET', `/projects/${id}`);
+        await this.loadSelectedIntentRunLog();
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async loadSelectedIntentRunLog(force = false) {
+      if (!this.selectedProjectId || !this.selectedIntentId()) {
+        this.runLog = { projectId: '', intentId: '', loading: false, error: '', detail: null };
+        return;
+      }
+      const intent = this.selectedIntentRecord();
+      if (!intent || !intent.worker) {
+        this.runLog = { projectId: this.selectedProjectId, intentId: this.selectedIntentId(), loading: false, error: '', detail: null };
+        return;
+      }
+      const projectId = this.selectedProjectId;
+      const intentId = this.selectedIntentId();
+      if (!force && this.runLog.projectId === projectId && this.runLog.intentId === intentId && this.runLog.loading) return;
+      this.runLog = { ...this.runLog, projectId, intentId, loading: true, error: '' };
+      try {
+        const detail = await this.api('GET', `/projects/${projectId}/runs/latest?intent_id=${encodeURIComponent(intentId)}`);
+        if (this.selectedProjectId === projectId && this.selectedIntentId() === intentId) {
+          this.runLog = { projectId, intentId, loading: false, error: '', detail };
+        }
+      } catch (e) {
+        if (this.selectedProjectId !== projectId || this.selectedIntentId() !== intentId) return;
+        const message = String(e.message || '');
+        this.runLog = {
+          projectId,
+          intentId,
+          loading: false,
+          error: message.includes('Run log not found') || message.includes('HTTP 404') ? '' : message,
+          detail: null,
+        };
+      }
+    },
+
+    runLogText() {
+      const detail = this.runLog.detail;
+      if (!detail) return '';
+      const text = detail.combined || detail.stderr || detail.stdout || '';
+      if (!text.trim()) return 'Worker has not emitted output yet.';
+      return detail.truncated ? `${text}\n\n[output truncated]` : text;
+    },
+
+    runLogStatusLabel() {
+      const summary = this.runLog.detail?.summary;
+      if (!summary) return 'unknown';
+      if (summary.finished_at) {
+        if (summary.cancelled) return 'cancelled';
+        if (summary.timed_out) return 'timed out';
+        return summary.returncode === 0 ? 'finished' : `exit ${summary.returncode ?? '?'}`;
+      }
+      return 'running';
+    },
+
+    runLogStatusClass() {
+      const label = this.runLogStatusLabel();
+      if (label === 'running') return 'text-amber-300';
+      if (label === 'finished') return 'text-emerald-300';
+      return 'text-rose-300';
     },
 
     async toggleProjectStop() {
@@ -2573,6 +2662,7 @@ function cairnApp() {
     clearGraphSelection(preserveTimeline = false) {
       this.selectedNode = null;
       this.selectedFacts = [];
+      this.runLog = { projectId: '', intentId: '', loading: false, error: '', detail: null };
       if (!preserveTimeline) this.selectedTimelineEntryId = null;
       if (this.cy) this.cy.elements().removeClass('highlight focus faded selected-fact');
     },
@@ -2653,6 +2743,7 @@ function cairnApp() {
       this.selectedTimelineEntryId = null;
       this.selectedNode = { type:'intent', id: intentId };
       this.applyLineageHighlightForIntent(intentId);
+      this.loadSelectedIntentRunLog(true);
     },
 
     selectFact(fact) {
