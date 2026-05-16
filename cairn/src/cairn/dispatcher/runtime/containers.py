@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import io
 import logging
+from pathlib import PurePosixPath
+import tarfile
 import threading
 import uuid
 
@@ -107,55 +110,64 @@ class ContainerManager:
         state = container.attrs.get("State", {}).get("Status")
         return str(state) if state else None
 
-    def cleanup_completed(self, project_id: str) -> None:
+    def cleanup_completed(self, project_id: str) -> bool:
         name = self.container_name(project_id)
         state = self.inspect_state(name)
         if state is None:
-            return
+            return True
         container = self._require_container(name)
         if self._config.completed_action == "remove":
             LOG.info("removing completed project container project=%s container=%s", project_id, name)
             try:
                 container.remove(force=True)
             except NotFound:
-                return
+                return True
             except DockerException as exc:
                 LOG.warning("failed to remove container=%s error=%s", name, exc)
+                return False
+            return self.inspect_state(name) is None
         elif state == "running":
             LOG.info("stopping completed project container project=%s container=%s", project_id, name)
             try:
                 container.stop(timeout=1)
             except NotFound:
-                return
+                return True
             except DockerException as exc:
                 LOG.warning("failed to stop container=%s error=%s", name, exc)
+                return False
+            return self.inspect_state(name) != "running"
+        return True
 
-    def cleanup_stopped(self, project_id: str) -> None:
+    def cleanup_stopped(self, project_id: str) -> bool:
         name = self.container_name(project_id)
         state = self.inspect_state(name)
         if state != "running":
-            return
+            return True
         LOG.info("stopping stopped project container project=%s container=%s", project_id, name)
         container = self._require_container(name)
         try:
             container.stop(timeout=1)
         except NotFound:
-            return
+            return True
         except DockerException as exc:
             LOG.warning("failed to stop stopped project container=%s error=%s", name, exc)
+            return False
+        return self.inspect_state(name) != "running"
 
-    def cleanup_orphan(self, name: str) -> None:
+    def cleanup_orphan(self, name: str) -> bool:
         state = self.inspect_state(name)
         if state is None:
-            return
+            return True
         LOG.info("removing orphan project container container=%s state=%s", name, state)
         container = self._require_container(name)
         try:
             container.remove(force=True)
         except NotFound:
-            return
+            return True
         except DockerException as exc:
             LOG.warning("failed to remove orphan container=%s error=%s", name, exc)
+            return False
+        return self.inspect_state(name) is None
 
     def managed_container_names(self) -> list[str]:
         try:
@@ -203,6 +215,16 @@ class ContainerManager:
         argv.extend(command)
         return ManagedProcess(container, argv, env, run_logger=run_logger)
 
+    def write_text_file(self, container_name: str, path: str, content: str) -> None:
+        archive_path, archive = self._text_file_archive(path, content)
+        container = self._require_container(container_name)
+        try:
+            ok = container.put_archive(archive_path, archive)
+        except DockerException as exc:
+            raise RuntimeError(f"failed to write container file {path}: {exc}") from exc
+        if not ok:
+            raise RuntimeError(f"failed to write container file {path}")
+
     def remove_container(self, name: str, *, force: bool = True) -> None:
         container = self._get_container(name)
         if container is None:
@@ -244,3 +266,36 @@ class ContainerManager:
         status_code = getattr(getattr(exc, "response", None), "status_code", None)
         explanation = str(getattr(exc, "explanation", "") or exc)
         return status_code == 409 or "is already in use" in explanation
+
+    @staticmethod
+    def _text_file_archive(path: str, content: str) -> tuple[str, bytes]:
+        target = PurePosixPath(path)
+        if not target.is_absolute() or target.name in ("", ".", ".."):
+            raise ValueError(f"container file path must be absolute: {path}")
+        parts = target.parts[1:]
+        if not parts or any(part in ("", ".", "..") for part in parts):
+            raise ValueError(f"invalid container file path: {path}")
+        if len(parts) == 1:
+            archive_path = "/"
+            archive_parts = parts
+        else:
+            archive_path = f"/{parts[0]}"
+            archive_parts = parts[1:]
+
+        payload = content.encode("utf-8")
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode="w") as archive:
+            parent = ""
+            for part in archive_parts[:-1]:
+                parent = f"{parent}/{part}" if parent else part
+                info = tarfile.TarInfo(parent)
+                info.type = tarfile.DIRTYPE
+                info.mode = 0o755
+                archive.addfile(info)
+
+            file_name = "/".join(archive_parts)
+            info = tarfile.TarInfo(file_name)
+            info.size = len(payload)
+            info.mode = 0o644
+            archive.addfile(info, io.BytesIO(payload))
+        return archive_path, stream.getvalue()

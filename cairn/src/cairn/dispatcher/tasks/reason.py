@@ -22,6 +22,7 @@ from cairn.dispatcher.tasks.common import (
     preview,
     run_healthcheck,
     run_worker_process,
+    write_graph_snapshot_reference,
 )
 from cairn.dispatcher.workers.registry import get_driver
 from cairn.server.models import ProjectDetail
@@ -110,7 +111,12 @@ def run_reason_task(
         prompt = render_prompt(
             load_prompt(config.runtime.prompt_group, "reason.md"),
             {
-                "graph_yaml": export_yaml.strip(),
+                "graph_yaml": write_graph_snapshot_reference(
+                    container_manager,
+                    container_name,
+                    export_yaml.strip(),
+                    phase="reason_execute",
+                ),
                 "fact_ids": format_fact_ids(allowed_fact_ids),
                 "open_intents": format_open_intents(open_intents),
                 "max_intents": str(config.tasks.reason.max_intents),
@@ -135,6 +141,7 @@ def run_reason_task(
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
         total_ms = int((time.perf_counter() - task_started) * 1000)
+        session = driver.extract_session(session, result.stdout, result.stderr)
         cancelled = cancel_reason(result, cancellation)
         if cancelled is not None:
             LOG.info(
@@ -178,7 +185,8 @@ def run_reason_task(
             )
             return "failed"
         try:
-            payload = parse_json_output(result.stdout)
+            model_output = driver.extract_response_text(result.stdout, result.stderr)
+            payload = parse_json_output(model_output)
             kind, data = validate_reason_payload(
                 payload, open_intents_empty=not open_intents, max_intents=config.tasks.reason.max_intents,
             )

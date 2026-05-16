@@ -19,6 +19,7 @@ from cairn.dispatcher.tasks.common import (
     run_healthcheck,
     run_worker_process,
     write_conclude_result,
+    write_graph_snapshot_reference,
 )
 from cairn.dispatcher.workers.registry import get_driver
 from cairn.server.models import Intent, ProjectDetail
@@ -96,7 +97,12 @@ def run_explore_task(
         prompt = render_prompt(
             load_prompt(config.runtime.prompt_group, "explore.md"),
             {
-                "graph_yaml": export_yaml.strip(),
+                "graph_yaml": write_graph_snapshot_reference(
+                    container_manager,
+                    container_name,
+                    export_yaml.strip(),
+                    phase="explore_execute",
+                ),
                 "intent_id": intent.id,
                 "intent_description": intent.description,
             },
@@ -119,7 +125,7 @@ def run_explore_task(
             cancellation=cancellation,
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
-        session = driver.extract_session(session, first.stderr)
+        session = driver.extract_session(session, first.stdout, first.stderr)
         cancelled = cancel_reason(first, cancellation)
         if cancelled is not None:
             LOG.info(
@@ -145,7 +151,8 @@ def run_explore_task(
             return "failed"
         if not did_timeout(first) and first.returncode == 0:
             try:
-                payload = parse_json_output(first.stdout)
+                model_output = driver.extract_response_text(first.stdout, first.stderr)
+                payload = parse_json_output(model_output)
                 kind, description = validate_explore_payload(payload)
             except Exception as exc:
                 LOG.warning(
@@ -295,7 +302,12 @@ def _try_conclude_fallback(
     prompt = render_prompt(
         load_prompt(config.runtime.prompt_group, "explore_conclude.md"),
         {
-            "graph_yaml": export_yaml.strip(),
+            "graph_yaml": write_graph_snapshot_reference(
+                container_manager,
+                container_name,
+                export_yaml.strip(),
+                phase="explore_conclude",
+            ),
             "intent_id": intent.id,
             "intent_description": intent.description,
         },
@@ -346,7 +358,8 @@ def _try_conclude_fallback(
         best_effort_release(client, project_id, intent.id, worker.name)
         return "failed"
     try:
-        payload = parse_json_output(result.stdout)
+        model_output = driver.extract_response_text(result.stdout, result.stderr)
+        payload = parse_json_output(model_output)
         kind, description = validate_explore_payload(payload)
     except Exception as exc:
         LOG.warning(
