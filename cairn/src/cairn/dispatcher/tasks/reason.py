@@ -13,7 +13,7 @@ from cairn.dispatcher.prompting import (
 )
 from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.runtime.cancellation import TaskCancellation
-from cairn.dispatcher.runtime.containers import ContainerManager
+from cairn.dispatcher.runtime.environments.base import WorkEnvironment
 from cairn.dispatcher.runtime.heartbeat import HeartbeatLease
 from cairn.dispatcher.tasks.common import (
     best_effort_release_reason,
@@ -33,7 +33,7 @@ LOG = logging.getLogger(__name__)
 def run_reason_task(
     config: DispatchConfig,
     client: CairnClient,
-    container_manager: ContainerManager,
+    environment: WorkEnvironment,
     project: ProjectDetail,
     export_yaml: str,
     worker: WorkerConfig,
@@ -45,17 +45,19 @@ def run_reason_task(
     lease = HeartbeatLease.for_reason(client, project.project.id, worker.name, config.runtime.interval)
     lease.start()
     try:
-        container_name = container_manager.ensure_running(project.project.id)
+        handle = environment.prepare_project(project.project.id)
 
         LOG.info(
-            "starting container exec project=%s worker=%s phase=reason_healthcheck timeout=%ss",
+            "starting work environment process project=%s environment=%s backend=%s worker=%s phase=reason_healthcheck timeout=%ss",
             project.project.id,
+            environment.id,
+            environment.backend,
             worker.name,
             healthcheck_timeout,
         )
         healthcheck = run_healthcheck(
-            container_manager,
-            container_name,
+            environment,
+            handle,
             worker,
             driver.build_healthcheck(worker),
             timeout_seconds=healthcheck_timeout,
@@ -112,8 +114,8 @@ def run_reason_task(
             load_prompt(config.runtime.prompt_group, "reason.md"),
             {
                 "graph_yaml": write_graph_snapshot_reference(
-                    container_manager,
-                    container_name,
+                    environment,
+                    handle,
                     export_yaml.strip(),
                     phase="reason_execute",
                 ),
@@ -127,8 +129,8 @@ def run_reason_task(
         command = driver.build_execute(worker, prompt, session)
         execute_started = time.perf_counter()
         result = run_worker_process(
-            container_manager,
-            container_name,
+            environment,
+            handle,
             worker,
             command.argv,
             phase="reason_execute",

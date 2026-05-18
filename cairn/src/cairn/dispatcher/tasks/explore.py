@@ -8,7 +8,7 @@ from cairn.dispatcher.contracts import parse_json_output, validate_explore_paylo
 from cairn.dispatcher.prompting import load_prompt, render_prompt
 from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.runtime.cancellation import TaskCancellation
-from cairn.dispatcher.runtime.containers import ContainerManager
+from cairn.dispatcher.runtime.environments.base import EnvironmentHandle, WorkEnvironment
 from cairn.dispatcher.runtime.heartbeat import HeartbeatLease
 from cairn.dispatcher.tasks.common import (
     best_effort_release,
@@ -30,7 +30,7 @@ LOG = logging.getLogger(__name__)
 def run_explore_task(
     config: DispatchConfig,
     client: CairnClient,
-    container_manager: ContainerManager,
+    environment: WorkEnvironment,
     project: ProjectDetail,
     export_yaml: str,
     intent: Intent,
@@ -43,18 +43,20 @@ def run_explore_task(
     lease = HeartbeatLease.for_intent(client, project.project.id, intent.id, worker.name, config.runtime.interval)
     lease.start()
     try:
-        container_name = container_manager.ensure_running(project.project.id)
+        handle = environment.prepare_project(project.project.id)
 
         LOG.info(
-            "starting container exec project=%s intent=%s worker=%s phase=explore_healthcheck timeout=%ss",
+            "starting work environment process project=%s intent=%s environment=%s backend=%s worker=%s phase=explore_healthcheck timeout=%ss",
             project.project.id,
             intent.id,
+            environment.id,
+            environment.backend,
             worker.name,
             healthcheck_timeout,
         )
         healthcheck = run_healthcheck(
-            container_manager,
-            container_name,
+            environment,
+            handle,
             worker,
             driver.build_healthcheck(worker),
             timeout_seconds=healthcheck_timeout,
@@ -98,8 +100,8 @@ def run_explore_task(
             load_prompt(config.runtime.prompt_group, "explore.md"),
             {
                 "graph_yaml": write_graph_snapshot_reference(
-                    container_manager,
-                    container_name,
+                    environment,
+                    handle,
                     export_yaml.strip(),
                     phase="explore_execute",
                 ),
@@ -113,8 +115,8 @@ def run_explore_task(
         session = execute.session
         execute_started = time.perf_counter()
         first = _run_process(
-            container_manager,
-            container_name,
+            environment,
+            handle,
             worker,
             execute.argv,
             phase="explore_execute",
@@ -169,8 +171,8 @@ def run_explore_task(
                 return _try_conclude_fallback(
                     config,
                     client,
-                    container_manager,
-                    container_name,
+                    environment,
+                    handle,
                     worker,
                     driver,
                     project.project.id,
@@ -216,8 +218,8 @@ def run_explore_task(
             return _try_conclude_fallback(
                 config,
                 client,
-                container_manager,
-                container_name,
+                environment,
+                handle,
                 worker,
                 driver,
                 project.project.id,
@@ -251,8 +253,8 @@ def run_explore_task(
 def _try_conclude_fallback(
     config: DispatchConfig,
     client: CairnClient,
-    container_manager: ContainerManager,
-    container_name: str,
+    environment: WorkEnvironment,
+    handle: EnvironmentHandle,
     worker: WorkerConfig,
     driver,
     project_id: str,
@@ -297,14 +299,14 @@ def _try_conclude_fallback(
         best_effort_release(client, project_id, intent.id, worker.name)
         return "failed"
 
-    container_name = container_manager.ensure_running(project_id)
+    handle = environment.prepare_project(project_id)
 
     prompt = render_prompt(
         load_prompt(config.runtime.prompt_group, "explore_conclude.md"),
         {
             "graph_yaml": write_graph_snapshot_reference(
-                container_manager,
-                container_name,
+                environment,
+                handle,
                 export_yaml.strip(),
                 phase="explore_conclude",
             ),
@@ -316,8 +318,8 @@ def _try_conclude_fallback(
     LOG.info("starting conclude fallback project=%s intent=%s worker=%s", project_id, intent.id, worker.name)
     conclude_started = time.perf_counter()
     result = _run_process(
-        container_manager,
-        container_name,
+        environment,
+        handle,
         worker,
         conclude_argv,
         phase="explore_conclude",
@@ -397,8 +399,8 @@ def _try_conclude_fallback(
 
 
 def _run_process(
-    container_manager: ContainerManager,
-    container_name: str,
+    environment: WorkEnvironment,
+    handle: EnvironmentHandle,
     worker: WorkerConfig,
     argv: list[str],
     *,
@@ -410,8 +412,8 @@ def _run_process(
     cancellation: TaskCancellation,
 ):
     return run_worker_process(
-        container_manager,
-        container_name,
+        environment,
+        handle,
         worker,
         argv,
         phase=phase,

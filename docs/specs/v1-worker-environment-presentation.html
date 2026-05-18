@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cairn Worker Environment v1 Presentation</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17202e;
+      --muted: #607086;
+      --line: #d9e1ea;
+      --paper: #fbfcfe;
+      --panel: #ffffff;
+      --teal: #0f766e;
+      --green: #15803d;
+      --amber: #b45309;
+      --red: #b91c1c;
+      --violet: #6d28d9;
+      --slate: #334155;
+      --soft-teal: #e6f6f3;
+      --soft-amber: #fff7e6;
+      --soft-red: #fff1f2;
+      --soft-violet: #f3efff;
+      --code: #0f172a;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { height: 100%; }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC", "PingFang SC", sans-serif;
+      line-height: 1.55;
+      letter-spacing: 0;
+    }
+
+    button {
+      font: inherit;
+      border: 0;
+      cursor: pointer;
+      color: inherit;
+    }
+
+    .deck {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+    }
+
+    .side {
+      background: #111827;
+      color: #e5edf6;
+      padding: 24px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+    }
+
+    .brand {
+      display: grid;
+      gap: 6px;
+    }
+
+    .eyebrow {
+      color: #91d8cf;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .brand p {
+      margin: 0;
+      color: #aebccc;
+      font-size: 13px;
+    }
+
+    .nav {
+      display: grid;
+      gap: 8px;
+    }
+
+    .nav button {
+      min-height: 44px;
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: transparent;
+      color: #b7c4d5;
+      text-align: left;
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav button span:first-child {
+      width: 26px;
+      height: 26px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .nav button.active {
+      background: #1f2937;
+      color: #ffffff;
+    }
+
+    .nav button.active span:first-child {
+      background: var(--teal);
+      border-color: var(--teal);
+      color: #ffffff;
+    }
+
+    .side-footer {
+      margin-top: auto;
+      display: grid;
+      gap: 10px;
+      color: #aebccc;
+      font-size: 12px;
+    }
+
+    .progress {
+      height: 8px;
+      background: #263243;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .progress > div {
+      height: 100%;
+      width: 0;
+      background: linear-gradient(90deg, #14b8a6, #f59e0b);
+      transition: width 180ms ease;
+    }
+
+    .main {
+      min-width: 0;
+      padding: 26px;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 18px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .pill-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .pill {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .icon-btn {
+      width: 42px;
+      height: 42px;
+      border-radius: 8px;
+      background: #ffffff;
+      border: 1px solid var(--line);
+      display: grid;
+      place-items: center;
+      font-size: 18px;
+      color: var(--slate);
+    }
+
+    .icon-btn:hover { border-color: #94a3b8; }
+
+    .slide-shell {
+      min-height: 0;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 18px 60px rgba(15, 23, 42, 0.08);
+    }
+
+    .slide {
+      display: none;
+      min-height: calc(100vh - 148px);
+      padding: 42px;
+    }
+
+    .slide.active {
+      display: grid;
+      align-content: start;
+      gap: 26px;
+    }
+
+    .slide h2 {
+      margin: 0;
+      font-size: clamp(30px, 4.2vw, 56px);
+      line-height: 1.05;
+      letter-spacing: 0;
+    }
+
+    .slide h3 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 880px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .thesis {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .thesis-card {
+      border-radius: 8px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      display: grid;
+      gap: 12px;
+    }
+
+    .thesis-card strong {
+      font-size: 30px;
+      line-height: 1.1;
+    }
+
+    .thesis-card p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .server { border-top: 5px solid var(--teal); }
+    .dispatcher { border-top: 5px solid var(--amber); }
+    .risk { border-top: 5px solid var(--red); }
+    .done { border-top: 5px solid var(--green); }
+    .next { border-top: 5px solid var(--violet); }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .fact {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      background: #ffffff;
+      min-height: 132px;
+      display: grid;
+      gap: 10px;
+      align-content: start;
+    }
+
+    .fact b {
+      font-size: 16px;
+    }
+
+    .fact p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .panel.teal { background: var(--soft-teal); border-color: #9bd4cc; }
+    .panel.amber { background: var(--soft-amber); border-color: #f3c06d; }
+    .panel.red { background: var(--soft-red); border-color: #f4b4bb; }
+    .panel.violet { background: var(--soft-violet); border-color: #c6b7ff; }
+
+    .list {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .list li {
+      display: grid;
+      grid-template-columns: 20px minmax(0, 1fr);
+      gap: 10px;
+      color: var(--slate);
+    }
+
+    .mark {
+      width: 18px;
+      height: 18px;
+      border-radius: 6px;
+      margin-top: 3px;
+      background: var(--teal);
+    }
+
+    .mark.amber { background: var(--amber); }
+    .mark.red { background: var(--red); }
+    .mark.violet { background: var(--violet); }
+
+    .compare {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .compare-card {
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      overflow: hidden;
+      background: #ffffff;
+    }
+
+    .compare-card header {
+      padding: 14px 16px;
+      font-weight: 800;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .compare-card.v0 header { background: var(--soft-red); color: var(--red); }
+    .compare-card.v1 header { background: var(--soft-teal); color: var(--teal); }
+
+    .compare-card .body {
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      letter-spacing: 0;
+    }
+
+    pre {
+      margin: 0;
+      padding: 16px;
+      border-radius: 8px;
+      background: var(--code);
+      color: #e5edf6;
+      overflow: auto;
+      font-size: 13px;
+      line-height: 1.55;
+      max-height: 390px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .step {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #ffffff;
+      display: grid;
+      gap: 8px;
+      min-height: 126px;
+    }
+
+    .step small {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .accordion {
+      display: grid;
+      gap: 10px;
+    }
+
+    .risk-item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      overflow: hidden;
+    }
+
+    .risk-item button {
+      width: 100%;
+      min-height: 52px;
+      padding: 14px 16px;
+      background: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      text-align: left;
+      font-weight: 800;
+    }
+
+    .risk-item .content {
+      display: none;
+      padding: 0 16px 16px;
+      color: var(--muted);
+    }
+
+    .risk-item.open .content { display: block; }
+
+    .toggle-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .toggle-row button {
+      border-radius: 8px;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--slate);
+    }
+
+    .toggle-row button.active {
+      border-color: var(--teal);
+      background: var(--soft-teal);
+      color: var(--teal);
+    }
+
+    .note {
+      border-left: 5px solid var(--teal);
+      padding: 14px 16px;
+      background: var(--soft-teal);
+      color: #134e4a;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .workspace-bar {
+      display: grid;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #f8fafc;
+    }
+
+    .path {
+      overflow-wrap: anywhere;
+      color: #0f172a;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px;
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+
+    .footer-note {
+      color: var(--muted);
+      font-size: 12px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 980px) {
+      .deck { grid-template-columns: 1fr; }
+      .side { min-height: auto; }
+      .nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .slide { padding: 28px 20px; }
+      .thesis, .split, .compare, .grid-3 { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="deck">
+    <aside class="side">
+      <div class="brand">
+        <div class="eyebrow">Cairn v1 Spec</div>
+        <h1>Worker Environment 需求评审</h1>
+        <p>面向项目导师的交互式汇报页</p>
+      </div>
+      <nav class="nav" aria-label="presentation slides">
+        <button class="active" data-go="0"><span>01</span><span>结论</span></button>
+        <button data-go="1"><span>02</span><span>v0 证据</span></button>
+        <button data-go="2"><span>03</span><span>职责边界</span></button>
+        <button data-go="3"><span>04</span><span>为何删改</span></button>
+        <button data-go="4"><span>05</span><span>调度链路</span></button>
+        <button data-go="5"><span>06</span><span>配置形态</span></button>
+        <button data-go="6"><span>07</span><span>风险审计</span></button>
+        <button data-go="7"><span>08</span><span>验收</span></button>
+      </nav>
+      <div class="side-footer">
+        <div class="progress" aria-hidden="true"><div id="progress"></div></div>
+        <div id="counter">01 / 08</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar">
+        <div class="pill-row">
+          <div class="pill">Spec: docs/specs/v1-worker-environment-requirements.md</div>
+          <div class="pill">Date: 2026-05-18</div>
+          <div class="pill">Status: review baseline</div>
+        </div>
+        <div class="controls">
+          <button class="icon-btn" id="prev" aria-label="previous slide">‹</button>
+          <button class="icon-btn" id="next" aria-label="next slide">›</button>
+        </div>
+      </div>
+
+      <section class="slide-shell">
+        <article class="slide active">
+          <div>
+            <h2>结论先行：server 管任务与地点，dispatcher 管兵力与凭据</h2>
+            <p class="lead">v1 的目标不是继续扩展 v0，而是把已跑通的 SSH 能力收束成清晰边界。地点由 Web UI 与 server 管理，模型、profile、secret、worker fleet 由 dispatcher 配置管理。</p>
+          </div>
+          <div class="thesis">
+            <div class="thesis-card server">
+              <strong>server.db</strong>
+              <p>保存 project、environment、project-environment binding、地点 healthcheck。</p>
+            </div>
+            <div class="thesis-card dispatcher">
+              <strong>dispatcher config</strong>
+              <p>保存 runtime、worker 列表、profile、secret 引用、调度策略。</p>
+            </div>
+          </div>
+          <div class="note">一句话：project 绑定执行地点，worker/profile 决定模型能力。environment 只回答“命令在哪里运行”。</div>
+        </article>
+
+        <article class="slide">
+          <div>
+            <h2>v0 已证明 SSH backend 可行</h2>
+            <p class="lead">这一轮不是纸面设计。v0 已经完成一条真实路径：dispatcher 通过 server 配置的 SSH environment 拉起远端 Pi agent worker。</p>
+          </div>
+          <div class="grid-3">
+            <div class="fact done"><b>抽象已落地</b><p>任务层从 ContainerManager 解耦到 WorkEnvironment，Docker 成为 backend adapter。</p></div>
+            <div class="fact done"><b>SSH runner 已跑通</b><p>支持 workspace prepare、远端 runner、stdout/stderr、timeout、cancel、cleanup。</p></div>
+            <div class="fact done"><b>Web UI 已具雏形</b><p>可创建 environment，触发 healthcheck，创建 project 时选择 execution environment。</p></div>
+            <div class="fact done"><b>dispatcher 可选地点</b><p>按 project.environment_id 选择 backend，worker selection 可按 allowed_environments 过滤。</p></div>
+            <div class="fact done"><b>Pi harness 可运行</b><p>在远端 workspace 写私有 .cairn/pi/&lt;worker&gt; 配置并执行 Pi agent。</p></div>
+            <div class="fact risk"><b>核心遗留问题</b><p>server environment 混入 pi_model、base_url、api_key、provider_api，边界开始模糊。</p></div>
+          </div>
+        </article>
+
+        <article class="slide">
+          <div>
+            <h2>职责边界：把“地点”和“能力”拆开</h2>
+            <p class="lead">导师评审重点：这不是文件摆放问题，而是系统真相源划分。server 不应知道用什么 LLM 完成任务。</p>
+          </div>
+          <div class="compare">
+            <div class="compare-card v0">
+              <header>v0 混叠</header>
+              <div class="body">
+                <ul class="list">
+                  <li><span class="mark red"></span><span>environment 同时保存 SSH 地点与 Pi provider。</span></li>
+                  <li><span class="mark red"></span><span>server 需要知道模型 endpoint 与 key。</span></li>
+                  <li><span class="mark red"></span><span>healthcheck 归因混乱：地点失败与模型失败混在一起。</span></li>
+                  <li><span class="mark red"></span><span>snapshot 与兼容逻辑制造多个 truth source。</span></li>
+                </ul>
+              </div>
+            </div>
+            <div class="compare-card v1">
+              <header>v1 收口</header>
+              <div class="body">
+                <ul class="list">
+                  <li><span class="mark"></span><span>environment 只描述执行地点。</span></li>
+                  <li><span class="mark"></span><span>profile 描述模型、provider、secret 引用。</span></li>
+                  <li><span class="mark"></span><span>server healthcheck 只测地点，dispatcher healthcheck 测完整 worker matrix。</span></li>
+                  <li><span class="mark"></span><span>project 只持久化 environment_id。</span></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="slide">
+          <div>
+            <h2>两个删除决定：不做 snapshot，不做兼容</h2>
+            <p class="lead">此处是 v1 的设计取舍。现在系统未到稳定 MVP，保留临时兼容会把错误抽象固化。</p>
+          </div>
+          <div class="split">
+            <div class="panel red">
+              <h3>不做 snapshot</h3>
+              <ul class="list">
+                <li><span class="mark red"></span><span>MVP 主目标是调度与执行，不是审计复现。</span></li>
+                <li><span class="mark red"></span><span>snapshot 会制造第二个 environment truth source。</span></li>
+                <li><span class="mark red"></span><span>执行真相唯一：project.environment_id 指向当前 server environment。</span></li>
+              </ul>
+            </div>
+            <div class="panel amber">
+              <h3>不做兼容</h3>
+              <ul class="list">
+                <li><span class="mark amber"></span><span>v0 还未成为产品契约。</span></li>
+                <li><span class="mark amber"></span><span>旧 container.* 与 server-side pi_* 会持续污染边界。</span></li>
+                <li><span class="mark amber"></span><span>允许 docker-default，但它只是地点 backend。</span></li>
+              </ul>
+            </div>
+          </div>
+          <div class="note">若以后需要审计，再新增只含非敏感地点信息的历史记录，且不得作为调度输入。</div>
+        </article>
+
+        <article class="slide">
+          <div>
+            <h2>调度链路：Web UI 改地点，dispatcher 不重启也能用</h2>
+            <p class="lead">新增需求的关键是 environment registry 热刷新。server-side environment 是用户操作面，不应要求重启 dispatcher 才生效。</p>
+          </div>
+          <div class="flow">
+            <div class="step"><b>1. 读配置</b><small>dispatcher 解析 runtime、workers、profiles。配置文件显式选择 dev/local。</small></div>
+            <div class="step"><b>2. 拉地点</b><small>定期从 server 拉 /environments，检测增删改。</small></div>
+            <div class="step"><b>3. 校验矩阵</b><small>allowed_environments 必须存在于 server 或内置地点。</small></div>
+            <div class="step"><b>4. 选择 worker</b><small>project.environment_id 过滤 worker fleet。</small></div>
+            <div class="step"><b>5. 执行任务</b><small>worker.profile 注入 Pi 所需模型与 secret。</small></div>
+          </div>
+          <div class="workspace-bar">
+            <b>Project 顶栏展示</b>
+            <div class="path">environment: pentestvm · workspace: /home/kali/cairn-workspaces/proj_002</div>
+          </div>
+        </article>
+
+        <article class="slide">
+          <div>
+            <h2>配置形态：地点在 server，profile 在 dispatcher</h2>
+            <p class="lead">这里是实现接口的最小稳定形态。secret 只用引用，真实值只在 dispatcher 进程内解析。</p>
+          </div>
+          <div class="toggle-row">
+            <button class="config-tab active" data-config="yaml">dispatch.local.yaml</button>
+            <button class="config-tab" data-config="json">server environment</button>
+          </div>
+          <pre id="config-yaml">profiles:
+  - id: pi-gpt54-local
+    type: pi
+    model: gpt-5.4
+    base_url: "http://host.docker.internal:3000/v1"
+    provider_api: "openai-completions"
+    api_key: "&lt;api-key&gt;"
+    context_window: 200000
+
+workers:
+  - name: pi-worker-1
+    type: pi
+    profile: pi-gpt54-local
+    task_types: [bootstrap, reason, explore]
+    max_running: 1
+    priority: 0
+    allowed_environments: [pentestvm]</pre>
+          <pre id="config-json" hidden>{
+  "id": "pentestvm",
+  "label": "pentestVM over SSH",
+  "backend": "ssh",
+  "ssh_command": "ssh -F /tmp/cairn_pentestvm_ssh_config cairn-pentestvm",
+  "workspace_root": "/home/kali/cairn-workspaces",
+  "harness": "pi",
+  "cleanup": {"completed_action": "stop"},
+  "terminal": {"mode": "none"}
+}</pre>
+        </article>
+
+        <article class="slide">
+          <div>
+            <h2>风险审计：v1 可行，但要盯住四个边界</h2>
+            <p class="lead">这些不是反对 v1，而是实现时最容易走偏的地方。展开可见对应控制策略。</p>
+          </div>
+          <div class="accordion">
+            <div class="risk-item open">
+              <button><span>allowed_environments 校验时机</span><span>+</span></button>
+              <div class="content">不能只在 YAML 加载时校验，因为 environment 由 server 管。应在拉取 server environments 后统一校验，并允许热刷新后更新矩阵。</div>
+            </div>
+            <div class="risk-item">
+              <button><span>healthcheck 归因</span><span>+</span></button>
+              <div class="content">server 只测地点；dispatcher 测 worker + profile + secret + environment。模型失败不应污染 environment 健康状态。</div>
+            </div>
+            <div class="risk-item">
+              <button><span>secret 泄露</span><span>+</span></button>
+              <div class="content">dev/local 中的 API key 不得进入 server、run log、request.json、静态 HTML 或 project metadata；只有 dispatch.example.yaml 可提交。</div>
+            </div>
+            <div class="risk-item">
+              <button><span>environment 热刷新</span><span>+</span></button>
+              <div class="content">修改只影响新任务；运行中任务继续使用已创建 handle。删除 environment 后不回退默认地点。</div>
+            </div>
+          </div>
+        </article>
+
+        <article class="slide">
+          <div>
+            <h2>验收口径：用测试压住边界</h2>
+            <p class="lead">v1 的质量标准不是“SSH 能跑一次”，而是职责边界、热刷新、secret 安全、UI 可解释全部成立。</p>
+          </div>
+          <div class="grid-3">
+            <div class="fact next"><b>DB 收口</b><p>server DB 不新增或展示任何 LLM key/provider 字段。</p></div>
+            <div class="fact next"><b>绑定唯一</b><p>创建 project 后只持久化 environment_id。</p></div>
+            <div class="fact next"><b>地点可管</b><p>Environment 面板可创建 SSH 地点并触发地点 healthcheck。</p></div>
+            <div class="fact next"><b>热刷新</b><p>Web UI 新增或修改 environment 后，dispatcher 无需重启即可用于后续调度。</p></div>
+            <div class="fact next"><b>路径可见</b><p>Project detail 顶栏显示 environment 与 workspace 路径。</p></div>
+            <div class="fact next"><b>安全闭环</b><p>run log 不包含 API key 明文。</p></div>
+          </div>
+          <div class="note">导师要拍板的问题：v1 是否接受“破坏式收口”，以及是否同意把 server-side model credential 全部移出 environment。</div>
+        </article>
+      </section>
+
+      <div class="footer-note">
+        <span>Source: docs/specs/v1-worker-environment-requirements.md</span>
+        <span>Presentation: docs/specs/v1-worker-environment-presentation.html</span>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll(".slide"));
+    const navButtons = Array.from(document.querySelectorAll("[data-go]"));
+    const progress = document.getElementById("progress");
+    const counter = document.getElementById("counter");
+    let index = 0;
+
+    function showSlide(nextIndex) {
+      index = Math.max(0, Math.min(slides.length - 1, nextIndex));
+      slides.forEach((slide, i) => slide.classList.toggle("active", i === index));
+      navButtons.forEach((button, i) => button.classList.toggle("active", i === index));
+      progress.style.width = `${((index + 1) / slides.length) * 100}%`;
+      counter.textContent = `${String(index + 1).padStart(2, "0")} / ${String(slides.length).padStart(2, "0")}`;
+    }
+
+    navButtons.forEach((button) => {
+      button.addEventListener("click", () => showSlide(Number(button.dataset.go)));
+    });
+
+    document.getElementById("prev").addEventListener("click", () => showSlide(index - 1));
+    document.getElementById("next").addEventListener("click", () => showSlide(index + 1));
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowRight" || event.key === "PageDown") showSlide(index + 1);
+      if (event.key === "ArrowLeft" || event.key === "PageUp") showSlide(index - 1);
+      const digit = Number(event.key);
+      if (digit >= 1 && digit <= slides.length) showSlide(digit - 1);
+    });
+
+    document.querySelectorAll(".risk-item button").forEach((button) => {
+      button.addEventListener("click", () => {
+        button.closest(".risk-item").classList.toggle("open");
+      });
+    });
+
+    document.querySelectorAll(".config-tab").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll(".config-tab").forEach((item) => item.classList.remove("active"));
+        button.classList.add("active");
+        const target = button.dataset.config;
+        document.getElementById("config-yaml").hidden = target !== "yaml";
+        document.getElementById("config-json").hidden = target !== "json";
+      });
+    });
+
+    showSlide(0);
+  </script>
+</body>
+</html>

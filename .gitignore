@@ -3,5 +3,7 @@
 __pycache__/
 .playwright-cli/
 datas/
-dispatch.yaml
 dispatch.dev.yaml
+dispatch.local.yaml
+cairn.local.db
+cairn.local.db-*

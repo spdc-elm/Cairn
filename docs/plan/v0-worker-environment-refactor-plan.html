@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cairn Worker Environment SSH-First 重构计划 v0</title>
+  <style type="text/css">
+    :root {
+      color-scheme: light;
+      --ink: #18212f;
+      --muted: #657287;
+      --line: #d8dee8;
+      --soft: #f6f8fb;
+      --panel: #ffffff;
+      --accent: #0f766e;
+      --accent-soft: #e8faf7;
+      --warn: #9a3412;
+      --warn-soft: #fff7ed;
+      --danger: #991b1b;
+      --danger-soft: #fff1f2;
+      --code-bg: #eef3f8;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: #ffffff;
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC", "PingFang SC", sans-serif;
+      line-height: 1.62;
+    }
+
+    .page {
+      width: min(1120px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 48px 0 72px;
+    }
+
+    .header {
+      padding-bottom: 28px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 30px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(28px, 4vw, 44px);
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 38px 0 12px;
+      font-size: 25px;
+      line-height: 1.25;
+      color: #0d2f34;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 24px 0 8px;
+      font-size: 18px;
+      line-height: 1.35;
+      letter-spacing: 0;
+    }
+
+    p { margin: 8px 0 14px; }
+    ul, ol { margin: 8px 0 16px 22px; padding: 0; }
+    li { margin: 6px 0; }
+
+    code {
+      background: var(--code-bg);
+      border-radius: 4px;
+      padding: 0.1em 0.34em;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.94em;
+    }
+
+    pre {
+      overflow: auto;
+      background: #101820;
+      color: #eef7ff;
+      border-radius: 8px;
+      padding: 16px;
+      line-height: 1.45;
+      margin: 12px 0 20px;
+    }
+
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      border-radius: 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 22px;
+      font-size: 15px;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: var(--soft);
+      color: #263244;
+      font-weight: 700;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 18px;
+    }
+
+    .badge {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 10px;
+      color: var(--muted);
+      background: var(--soft);
+      font-size: 13px;
+    }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      padding: 14px 16px;
+      margin: 16px 0 22px;
+    }
+
+    .warn {
+      border-left-color: var(--warn);
+      background: var(--warn-soft);
+    }
+
+    .danger {
+      border-left-color: var(--danger);
+      background: var(--danger-soft);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin: 18px 0;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .panel h3 { margin-top: 0; }
+    .muted { color: var(--muted); }
+    .ok { color: #166534; font-weight: 700; }
+    .risk { color: var(--danger); font-weight: 700; }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+      margin: 16px 0 22px;
+    }
+
+    .step {
+      border: 1px solid var(--line);
+      background: var(--soft);
+      border-radius: 8px;
+      padding: 12px;
+      min-height: 98px;
+    }
+
+    .step strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    @media (max-width: 860px) {
+      .page { width: min(100% - 28px, 1120px); padding-top: 30px; }
+      .grid, .flow { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <h1>Cairn Worker Environment SSH-First 重构计划 v0</h1>
+      <p class="subtitle">历史版本：已被 <code>docs/specs/v1-worker-environment-requirements.md</code> 取代。v1 明确 server 管任务与地点，dispatcher 管兵力与凭据；不做 snapshot，不兼容 v0 临时 schema。</p>
+      <div class="badge-row">
+        <span class="badge">版本：v0 / superseded</span>
+        <span class="badge">日期：2026-05-18</span>
+        <span class="badge">现状依据：当前 project 表无 environment 字段</span>
+        <span class="badge">主 backend：ssh</span>
+        <span class="badge">兼容 backend：docker</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>一、判断</h2>
+      <div class="callout">
+        <p><span class="ok">结论：</span>你的方向是对的。Cairn 真正需要的是“远程工作环境”，不是“Docker 容器”。Docker daemon 远程控制虽省代码，但安全边界过大；SSH 更接近 VS Code Remote 的心智模型，也更适合让用户决定远端到底是裸机、虚拟机、容器、tmux 会话，还是已准备好的安全工具环境。</p>
+      </div>
+      <p>故重构的核心不是把 Docker API 换成 SSH 命令，而是把当前 <code>ContainerManager</code> 抽象为 <code>WorkEnvironment</code>：它能写文件、执行命令、回读输出、取消进程、保留或清理现场。Docker 只是该接口的一个实现。</p>
+    </div>
+
+    <div class="section">
+      <h2>二、第一性原理</h2>
+      <p>Cairn 的 worker 环境本质要解决四件事：</p>
+      <table summary="Cairn worker environment 的一阶需求">
+        <thead>
+          <tr>
+            <th>一阶需求</th>
+            <th>解释</th>
+            <th>SSH-first 下的设计</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>可抵达</td>
+            <td>dispatcher 能免交互连接远端，不被密码、host key、网络阻塞。</td>
+            <td><code>ssh -o BatchMode=yes</code>、known_hosts 检查、SFTP 写入测试。</td>
+          </tr>
+          <tr>
+            <td>可运行</td>
+            <td>远端有 agent harness 与基础命令。</td>
+            <td>先以 <code>pi</code> 为主，检查 <code>pi</code>、<code>python3</code>、<code>timeout</code>、<code>setsid</code>、workspace 权限。</td>
+          </tr>
+          <tr>
+            <td>可观测</td>
+            <td>worker 输出必须实时回流，后续 UI 才能增强交互感。</td>
+            <td>SSH channel 读 stdout/stderr；run log 保持 JSONL；后续可接 tmux/zellij capture-pane。</td>
+          </tr>
+          <tr>
+            <td>可收束</td>
+            <td>任务超时、project stopped、heartbeat 丢失时，远程进程不能残留。</td>
+            <td>远端 runner 以 process group 启动任务，取消时 kill 整组。</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="warn callout">
+        <p>关键边界：SSH backend 不提供 Docker 的镜像复现与 namespace 隔离。它应声明为“可信远程环境”，由用户保证环境内容；Cairn 负责调度、注入、执行、回读与清理。</p>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>三、目标体验</h2>
+      <div class="flow">
+        <div class="step"><strong>登记环境</strong><span>用户或配置声明远程机、用户、workspace、harness 类型。</span></div>
+        <div class="step"><strong>健康检查</strong><span>检查 SSH 免密、远端命令、workspace、pi agent、可选模型调用。</span></div>
+        <div class="step"><strong>创建项目</strong><span>New Project 时选择一个 work environment。</span></div>
+        <div class="step"><strong>调度执行</strong><span>dispatcher 在该环境中运行 bootstrap/reason/explore。</span></div>
+        <div class="step"><strong>保留现场</strong><span>项目 stop/completed 时按策略保留 workspace、tmux/zellij 会话或清理。</span></div>
+      </div>
+      <p>理想 UI 不是“选 Docker 容器”，而是选：</p>
+      <pre><code>mac-mini-local
+kali-vm-ssh
+ctf-box-ssh-container
+gpu-worker-ssh
+legacy-docker-local</code></pre>
+      <p>至于这些环境内部是否 Docker，由用户自己决定。若用户要“SSH 进容器”，只需把 SSH server 放在容器里，Cairn 仍只看见一个 SSH endpoint。</p>
+    </div>
+
+    <div class="section">
+      <h2>四、数据模型与配置</h2>
+      <h3>1. Project 绑定环境</h3>
+      <p>当前 <code>projects</code> 表无环境字段；需增加：</p>
+      <pre><code>ALTER TABLE projects ADD COLUMN environment_id TEXT;
+ALTER TABLE projects ADD COLUMN environment_snapshot_json TEXT;</code></pre>
+      <p><code>environment_id</code> 用于调度；<code>environment_snapshot_json</code> 用于审计与 UI 展示，避免配置后来改名或删除后项目失去历史上下文。</p>
+
+      <h3>2. 环境目录</h3>
+      <p>建议新增一个 redacted-first 的环境配置文件，server 和 dispatcher 都能读取，但 secret 只以引用形式出现。</p>
+      <pre><code>environments:
+  - id: kali-vm
+    label: "Kali VM"
+    backend: ssh
+    host: "192.168.56.10"
+    port: 22
+    user: "kali"
+    auth:
+      mode: agent
+    workspace_root: "/home/kali/cairn-workspaces"
+    harness: pi
+    terminal:
+      mode: none        # none | tmux | zellij
+    cleanup:
+      completed: keep   # keep | stop | remove
+      stopped: stop
+    credentials:
+      mode: remote      # remote | inject | merge
+
+  - id: docker-local
+    label: "Local Docker"
+    backend: docker
+    image: "ghcr.io/oritera/cairn-worker-container:latest"
+    network_mode: host
+    completed_action: stop
+    credentials:
+      mode: inject</code></pre>
+
+      <h3>3. Worker 与环境分离</h3>
+      <p>保留当前 <code>workers[]</code> 的“LLM 并发配额单元”意义，但把执行地点从 worker 中拆走：</p>
+      <pre><code>workers:
+  - name: pi-main
+    type: pi
+    task_types: [bootstrap, reason, explore]
+    max_running: 2
+    priority: 0
+    allowed_environments: ["kali-vm", "docker-local"]
+    env:
+      PI_MODEL: "..."
+      PI_BASE_URL: "..."
+      PI_API_KEY: "${CAIRN_PI_API_KEY}"
+      PI_PROVIDER_API: "openai-completions"</code></pre>
+      <p>当 <code>credentials.mode=remote</code> 时，worker env 中可不填 baseurl/key，driver 需走远端已有 pi 配置；当 <code>inject</code> 时才按当前逻辑注入。</p>
+    </div>
+
+    <div class="section">
+      <h2>五、SSH Health Check</h2>
+      <p>health check 分层，失败信息要能在 UI 直接显示。</p>
+      <table summary="SSH-first health check 分层">
+        <thead>
+          <tr>
+            <th>层</th>
+            <th>检查项</th>
+            <th>失败含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>连接层</td>
+            <td><code>ssh -o BatchMode=yes -o ConnectTimeout=5 user@host true</code></td>
+            <td>无免密、公钥未装、host key 未确认、网络不可达。</td>
+          </tr>
+          <tr>
+            <td>文件层</td>
+            <td>SFTP 创建 <code>$workspace_root/.cairn-healthcheck</code>，写读删。</td>
+            <td>workspace 不可写，权限或磁盘有问题。</td>
+          </tr>
+          <tr>
+            <td>harness 层</td>
+            <td><code>command -v pi</code>、<code>pi --version</code>、<code>python3 --version</code>、<code>timeout --version</code>、<code>setsid --version</code>。</td>
+            <td>远端不是合格 worker runtime。</td>
+          </tr>
+          <tr>
+            <td>模型层</td>
+            <td>若 <code>credentials.mode=inject</code>，用注入 env 跑 pi ping；若 <code>remote</code>，用远端已有配置跑 pi ping。</td>
+            <td>模型配置、baseurl、key 或 provider 不可用。</td>
+          </tr>
+          <tr>
+            <td>回读层</td>
+            <td>运行一个产生 stdout/stderr 的短命令，确认 dispatcher 分流记录。</td>
+            <td>UI 后续实时输出不可靠。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>startup healthcheck 应从“新建 Docker 容器检查所有 worker”改为“检查所有 environment + worker 组合”。项目调度前仍可做轻量 worker healthcheck，但不应每次都重测 SSH 免密。</p>
+    </div>
+
+    <div class="section">
+      <h2>六、执行与输出回读</h2>
+      <h3>1. WorkEnvironment 接口</h3>
+      <pre><code>class WorkEnvironment(Protocol):
+    def id(self) -&gt; str: ...
+    def prepare_project(self, project_id: str) -&gt; EnvironmentHandle: ...
+    def write_text_file(self, handle: EnvironmentHandle, path: str, content: str) -&gt; None: ...
+    def build_process(
+        self,
+        handle: EnvironmentHandle,
+        env: dict[str, str],
+        command: list[str],
+        timeout_seconds: int | None,
+        run_logger: RunLogWriter | None,
+    ) -&gt; ManagedProcessLike: ...
+    def inspect(self, handle: EnvironmentHandle) -&gt; EnvironmentState: ...
+    def cleanup(self, handle: EnvironmentHandle, reason: str) -&gt; CleanupResult: ...</code></pre>
+
+      <h3>2. SSH 远端 runner</h3>
+      <p>不要把复杂命令直接拼成一整段 shell。应在远端 workspace 下放一个小 runner，输入为 JSON，负责 env、cwd、process group、timeout、stdout/stderr framing。</p>
+      <pre><code>~/.cairn/bin/cairn-runner execute \
+  --workspace /home/kali/cairn-workspaces/p12 \
+  --request /home/kali/cairn-workspaces/p12/.cairn/run-abc/request.json</code></pre>
+      <p>请求文件示意：</p>
+      <pre><code>{
+  "argv": ["pi", "--provider", "cairn", "--model", "model-name", "-p", "prompt"],
+  "env": {"PI_API_KEY": "..."},
+  "timeout_seconds": 300,
+  "kill_after_seconds": 5,
+  "session": {"terminal": "none"}
+}</code></pre>
+      <p>runner 启动时用 <code>setsid</code> 建独立进程组；取消时 dispatcher 调用 <code>cairn-runner cancel --run-id ...</code>，由远端 kill 进程组。</p>
+
+      <h3>3. tmux / zellij 路线</h3>
+      <p>第一版先做 raw SSH channel，保证输出能进现有 run log。第二版可加 terminal backend：</p>
+      <pre><code>terminal:
+  mode: zellij
+  session_template: "cairn-{project_id}"
+  pane_per_task: true
+  capture_interval_ms: 500</code></pre>
+      <p>这会带来更强的 UI 交互感：用户可看到 worker 真实终端、可 attach、可回放 pane 内容。但不宜放在第一版，否则进程控制和输出语义会过早复杂化。</p>
+    </div>
+
+    <div class="section">
+      <h2>七、凭据注入策略</h2>
+      <p>这是必须显式配置的边界，不应隐式猜。</p>
+      <table summary="凭据注入策略">
+        <thead>
+          <tr>
+            <th>模式</th>
+            <th>含义</th>
+            <th>适用场景</th>
+            <th>注意</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>remote</code></td>
+            <td>远端已配置 baseurl/key，dispatcher 不传 secret。</td>
+            <td>用户维护自己的 VM / 容器；安全边界最好。</td>
+            <td>healthcheck 必须能验证远端配置真的可用。</td>
+          </tr>
+          <tr>
+            <td><code>inject</code></td>
+            <td>dispatcher 将 worker env 注入远端进程。</td>
+            <td>集中管理模型 key；远端只是算力和工具环境。</td>
+            <td>secret 不可进 argv、日志、request.json 明文长期留存。</td>
+          </tr>
+          <tr>
+            <td><code>merge</code></td>
+            <td>远端保留默认配置，dispatcher 只覆盖指定变量。</td>
+            <td>临时切换模型或 endpoint。</td>
+            <td>需记录 effective config 的 redacted 摘要，便于复盘。</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="danger callout">
+        <p>当前 Pi driver 会把模型配置写成 <code>models.json</code>，其中可能含 key。SSH 版若采用 <code>inject</code>，需把该文件放在 run 私有目录，任务结束按策略删除；若采用 <code>remote</code>，driver 应允许跳过生成 <code>models.json</code>，直接使用远端已有 harness 配置。</p>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>八、原 Docker 元能力对齐</h2>
+      <table summary="Docker 元能力与 SSH backend 对齐方式">
+        <thead>
+          <tr>
+            <th>现有 Docker 能力</th>
+            <th>SSH-first 对应</th>
+            <th>是否可达成</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>创建 worker 容器</td>
+            <td>创建 project workspace；可选创建 tmux/zellij session。</td>
+            <td>可达成，但语义从“容器”变为“环境句柄”。</td>
+          </tr>
+          <tr>
+            <td>复用项目级状态</td>
+            <td>同一 project workspace 保存 session、工具输出、临时文件。</td>
+            <td>可达成。</td>
+          </tr>
+          <tr>
+            <td>写入 graph snapshot</td>
+            <td>SFTP 写入 workspace 内受控路径。</td>
+            <td>可达成。</td>
+          </tr>
+          <tr>
+            <td>exec worker 命令</td>
+            <td>SSH runner 执行 argv。</td>
+            <td>可达成。</td>
+          </tr>
+          <tr>
+            <td>回读 stdout/stderr</td>
+            <td>SSH channel 分流；run log 保持现有 JSONL。</td>
+            <td>可达成，且是 UI 交互增强基础。</td>
+          </tr>
+          <tr>
+            <td>超时 / 取消</td>
+            <td>远端 process group + runner cancel。</td>
+            <td>可达成，但必须测试远程残留进程。</td>
+          </tr>
+          <tr>
+            <td>stop/remove</td>
+            <td>stop=kill active runs, keep workspace；remove=删 workspace；completed 可配置。</td>
+            <td>可达成。</td>
+          </tr>
+          <tr>
+            <td>镜像隔离 / cap / network namespace</td>
+            <td>由用户远程环境自行保证。</td>
+            <td>不等价；必须在 UI/文档中明示。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>九、实施计划</h2>
+      <ol>
+        <li><strong>接口抽象。</strong>新增 <code>dispatcher/runtime/environments/base.py</code>，定义 <code>WorkEnvironment</code> 与 <code>ManagedProcessLike</code>；把现有 Docker 实现包成 <code>DockerEnvironment</code>，行为不变。</li>
+        <li><strong>配置重构。</strong>新增 <code>environments[]</code>；旧 <code>container.*</code> 自动迁移为一个 <code>docker-default</code> 环境，保证兼容。</li>
+        <li><strong>Project schema。</strong>给 project 增 <code>environment_id</code> 与 snapshot；CreateProjectRequest 增可选 <code>environment_id</code>；ProjectMeta/Summary/Detail 返回 redacted environment 信息。</li>
+        <li><strong>UI 选择。</strong>New Project modal 加 environment 下拉；project 卡片显示环境 badge；环境不可用时给 warning，不阻塞历史项目查看。</li>
+        <li><strong>SSH backend MVP。</strong>基于本地虚拟机测试：免密连接、workspace prepare、SFTP 写图谱、runner 执行 pi mock、stdout/stderr 回流、取消无残留。</li>
+        <li><strong>凭据模式。</strong>实现 <code>remote</code> 与 <code>inject</code>；Pi driver 先支持 remote 配置，不强写 <code>models.json</code>。</li>
+        <li><strong>终端复用二期。</strong>在 SSH backend 下加 tmux/zellij adapter，先只 capture 输出，不直接允许 UI 输入控制。</li>
+      </ol>
+    </div>
+
+    <div class="section">
+      <h2>十、测试矩阵</h2>
+      <table summary="重构测试矩阵">
+        <thead>
+          <tr>
+            <th>场景</th>
+            <th>验收标准</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>本地 Docker 兼容</td>
+            <td>旧 <code>dispatch_mock.yaml</code> 可跑；mock project lifecycle 与原行为一致。</td>
+          </tr>
+          <tr>
+            <td>SSH 免密失败</td>
+            <td>healthcheck 明确报 public key / BatchMode 失败，不挂起。</td>
+          </tr>
+          <tr>
+            <td>远端缺 pi</td>
+            <td>环境状态显示 harness missing；dispatcher 不派发。</td>
+          </tr>
+          <tr>
+            <td>远端 remote credentials</td>
+            <td>dispatcher 不传 key；远端 pi ping 成功。</td>
+          </tr>
+          <tr>
+            <td>远端 inject credentials</td>
+            <td>key 不出现在 argv、run log、UI；任务可调用模型。</td>
+          </tr>
+          <tr>
+            <td>任务输出回读</td>
+            <td>stdout/stderr 实时写入现有 run log；latest run API 可读。</td>
+          </tr>
+          <tr>
+            <td>取消与超时</td>
+            <td>project stopped 后远端无残留 worker 进程。</td>
+          </tr>
+          <tr>
+            <td>workspace 保留</td>
+            <td>completed keep 模式下现场仍在；remove 模式下目录消失。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>十一、我建议的第一刀</h2>
+      <div class="grid">
+        <div class="panel">
+          <h3>不要先做 tmux/zellij</h3>
+          <p>先把 SSH runner 的 stdout/stderr、取消、workspace 做稳。终端复用是 UI 增强，不是执行语义的地基。</p>
+        </div>
+        <div class="panel">
+          <h3>不要让 server 持有明文 key</h3>
+          <p>server 只需要 environment metadata；secret 留在 dispatcher 环境变量、密钥文件或远端机器。</p>
+        </div>
+        <div class="panel">
+          <h3>先以 pi 为唯一 SSH harness</h3>
+          <p>Claude/Codex 后接。先让一个 driver 跑通，避免同时处理三套 session 行为。</p>
+        </div>
+        <div class="panel">
+          <h3>保留 Docker backend</h3>
+          <p>不是因为它是理想形态，而是它给回归测试提供稳定参照物。</p>
+        </div>
+      </div>
+      <div class="callout">
+        <p><span class="ok">最终形态：</span>Cairn 调度 project；project 绑定 work environment；work environment 可以是 SSH 远程机、SSH 容器、本地 Docker、远程 Docker。worker driver 只关心如何构造 agent 命令，不再关心命令在哪里运行。</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

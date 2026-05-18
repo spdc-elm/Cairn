@@ -5,7 +5,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 from cairn.dispatcher.config import DispatchConfig, WorkerConfig
-from cairn.dispatcher.runtime.containers import ContainerManager
+from cairn.dispatcher.redaction import redact_text
+from cairn.dispatcher.runtime.environments.base import WorkEnvironment
 from cairn.dispatcher.tasks.common import run_healthcheck
 from cairn.dispatcher.workers.registry import get_driver
 
@@ -15,7 +16,10 @@ STARTUP_HEALTHCHECK_PREVIEW_LIMIT = 50
 
 @dataclass(slots=True)
 class StartupHealthcheckResult:
+    environment_id: str
+    backend: str
     worker_name: str
+    profile_id: str | None
     ok: bool
     returncode: int
     duration_ms: int
@@ -27,53 +31,56 @@ class StartupHealthcheckResult:
 
 def run_startup_healthchecks(
     config: DispatchConfig,
-    container_manager: ContainerManager,
+    environments: dict[str, WorkEnvironment],
     *,
     show_commands: bool = False,
 ) -> list[StartupHealthcheckResult]:
-    container_name = container_manager.create_startup_container()
-    workers = list(config.workers)
-    parallelism = max(1, min(len(workers), config.runtime.max_workers, 8))
+    jobs: list[tuple[WorkEnvironment, WorkerConfig]] = []
+    for environment in environments.values():
+        for worker in config.workers:
+            if worker.allowed_environments is not None and environment.id not in worker.allowed_environments:
+                continue
+            jobs.append((environment, worker))
+    parallelism = max(1, min(len(jobs), config.runtime.max_workers, 8))
     LOG.info(
-        "[*] Startup healthcheck: workers=%s parallelism=%s",
-        len(workers),
+        "[*] Startup healthcheck: jobs=%s environments=%s parallelism=%s",
+        len(jobs),
+        len(environments),
         parallelism,
     )
-    try:
-        with ThreadPoolExecutor(max_workers=parallelism) as executor:
-            future_map = {
-                executor.submit(
-                    _run_worker_healthcheck,
-                    container_manager,
-                    container_name,
-                    worker,
-                    config.runtime.healthcheck_timeout,
-                ): worker.name
-                for worker in workers
-            }
-            results: list[StartupHealthcheckResult] = []
-            for future in as_completed(future_map):
-                worker_name = future_map[future]
-                try:
-                    result = future.result()
-                except Exception:
-                    LOG.exception("startup healthcheck crashed worker=%s", worker_name)
-                    result = StartupHealthcheckResult(
-                        worker_name=worker_name,
-                        ok=False,
-                        returncode=1,
-                        duration_ms=0,
-                        http_status=None,
-                        response_preview="",
-                        stderr_preview="startup healthcheck crashed",
-                        command="-",
-                    )
-                results.append(result)
-    finally:
-        LOG.debug("removing startup healthcheck container container=%s", container_name)
-        container_manager.remove_container(container_name, force=True)
+    with ThreadPoolExecutor(max_workers=parallelism) as executor:
+        future_map = {
+            executor.submit(
+                _run_worker_healthcheck,
+                environment,
+                config.worker_with_profile_env(worker),
+                config.runtime.healthcheck_timeout,
+            ): (environment, worker)
+            for environment, worker in jobs
+        }
+        results: list[StartupHealthcheckResult] = []
+        for future in as_completed(future_map):
+            environment, worker = future_map[future]
+            try:
+                result = future.result()
+            except Exception:
+                LOG.exception("startup healthcheck crashed environment=%s worker=%s", environment.id, worker.name)
+                result = StartupHealthcheckResult(
+                    environment_id=environment.id,
+                    backend=environment.backend,
+                    worker_name=worker.name,
+                    profile_id=worker.profile,
+                    ok=False,
+                    returncode=1,
+                    duration_ms=0,
+                    http_status=None,
+                    response_preview="",
+                    stderr_preview="startup healthcheck crashed",
+                    command="-",
+                )
+            results.append(result)
 
-    results.sort(key=lambda result: result.worker_name)
+    results.sort(key=lambda result: (result.environment_id, result.worker_name))
     _log_report(results, show_commands=show_commands)
     return results
 
@@ -92,42 +99,49 @@ def format_failure_summary(results: list[StartupHealthcheckResult]) -> str:
 
 
 def _run_worker_healthcheck(
-    container_manager: ContainerManager,
-    container_name: str,
+    environment: WorkEnvironment,
     worker: WorkerConfig,
     timeout_seconds: int,
 ) -> StartupHealthcheckResult:
     driver = get_driver(worker.type)
-    healthcheck = run_healthcheck(
-        container_manager,
-        container_name,
-        worker,
-        driver.build_startup_healthcheck(worker),
-        timeout_seconds=timeout_seconds,
-    )
-    result = healthcheck.result
-    http_status, response_preview = _parse_stdout(result.stdout)
-    return StartupHealthcheckResult(
-        worker_name=worker.name,
-        ok=result.returncode == 0,
-        returncode=result.returncode,
-        duration_ms=healthcheck.duration_ms,
-        http_status=http_status,
-        response_preview=response_preview,
-        stderr_preview=_preview(result.stderr),
-        command=driver.describe_startup_healthcheck(worker),
-    )
+    handle = environment.prepare_startup()
+    try:
+        healthcheck = run_healthcheck(
+            environment,
+            handle,
+            worker,
+            driver.build_startup_healthcheck(worker),
+            timeout_seconds=timeout_seconds,
+        )
+        result = healthcheck.result
+        http_status, response_preview = _parse_stdout(result.stdout)
+        return StartupHealthcheckResult(
+            environment_id=environment.id,
+            backend=environment.backend,
+            worker_name=worker.name,
+            profile_id=worker.profile,
+            ok=result.returncode == 0,
+            returncode=result.returncode,
+            duration_ms=healthcheck.duration_ms,
+            http_status=http_status,
+            response_preview=redact_text(response_preview, _worker_secrets(worker)),
+            stderr_preview=redact_text(_preview(result.stderr), _worker_secrets(worker)),
+            command=redact_text(driver.describe_startup_healthcheck(worker), _worker_secrets(worker)),
+        )
+    finally:
+        environment.cleanup_startup(handle)
 
 
 def _log_report(results: list[StartupHealthcheckResult], *, show_commands: bool) -> None:
     if not results:
         LOG.warning("[!] Startup healthcheck: no workers configured")
         return
+    env_width = max(len("ENV"), *(len(result.environment_id) for result in results))
     worker_width = max(len("WORKER"), *(len(result.worker_name) for result in results))
     lines = ["[=] Startup healthcheck results"]
-    header = f"{'CHK':<5} {'WORKER':<{worker_width}} {'HTTP':<6} {'CODE':<6} {'TIME_S':>8}  PREVIEW"
+    header = f"{'CHK':<5} {'ENV':<{env_width}} {'BACKEND':<7} {'WORKER':<{worker_width}} {'HTTP':<6} {'CODE':<6} {'TIME_S':>8}  PREVIEW"
     lines.append(header)
-    lines.append(f"{'-' * 5} {'-' * worker_width} {'-' * 6} {'-' * 6} {'-' * 8}  {'-' * 50}")
+    lines.append(f"{'-' * 5} {'-' * env_width} {'-' * 7} {'-' * worker_width} {'-' * 6} {'-' * 6} {'-' * 8}  {'-' * 50}")
     healthy_count = 0
     for result in results:
         if result.ok:
@@ -137,6 +151,8 @@ def _log_report(results: list[StartupHealthcheckResult], *, show_commands: bool)
         duration_seconds = f"{result.duration_ms / 1000:.2f}"
         lines.append(
             f"{marker:<5} "
+            f"{result.environment_id:<{env_width}} "
+            f"{result.backend:<7} "
             f"{result.worker_name:<{worker_width}} "
             f"{(result.http_status or '-'): <6} "
             f"{result.returncode:<6} "
@@ -150,7 +166,7 @@ def _log_report(results: list[StartupHealthcheckResult], *, show_commands: bool)
         lines.append("")
         lines.append("[=] Startup healthcheck commands")
         for result in results:
-            lines.append(f"- {result.worker_name}")
+            lines.append(f"- {result.environment_id}/{result.worker_name}")
             lines.append(f"  {result.command}")
         lines.append("")
     LOG.info("\n%s\n", "\n".join(lines))
@@ -174,3 +190,11 @@ def _preview(text: str) -> str:
     if len(compact) <= STARTUP_HEALTHCHECK_PREVIEW_LIMIT:
         return compact
     return compact[:STARTUP_HEALTHCHECK_PREVIEW_LIMIT] + "..."
+
+
+def _worker_secrets(worker: WorkerConfig) -> list[str]:
+    return [
+        value
+        for key, value in worker.env.items()
+        if value and ("KEY" in key or "TOKEN" in key or "SECRET" in key)
+    ]

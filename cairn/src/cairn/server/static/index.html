@@ -265,6 +265,10 @@
       </button>
     </div>
     <div class="flex items-center gap-1.5">
+      <button @click="openEnvironmentPanel()" class="h-7 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/><path d="M7 7h.01M7 12h.01M7 17h.01"/></svg>
+        Environments
+      </button>
       <button @click="showNewProject = true" class="h-7 px-2.5 rounded-lg border border-brand-200 text-xs text-brand-600 hover:bg-brand-50 transition inline-flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
         New Project
@@ -324,6 +328,13 @@
                 </div>
               </template>
             </div>
+            <template x-if="p.environment">
+              <div class="mt-2 inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-medium"
+                :class="environmentBadgeClass(p.environment)">
+                <span class="h-1.5 w-1.5 rounded-full" :class="p.environment.backend === 'ssh' ? 'bg-sky-500' : 'bg-slate-400'"></span>
+                <span x-text="environmentLabel(p.environment)"></span>
+              </div>
+            </template>
           </div>
           <div class="flex items-center gap-3 text-[11px] text-slate-400">
             <span class="flex items-center gap-1">
@@ -412,6 +423,17 @@
       <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-[0.12em] shrink-0"
         :class="projectStatusBadgeClass(project.project.status)"
         x-text="project.project.status"></span>
+      <template x-if="project.project.environment">
+        <span class="px-2 py-0.5 rounded-full border text-[10px] font-medium shrink-0"
+          :class="environmentBadgeClass(project.project.environment)"
+          x-text="environmentLabel(project.project.environment)"></span>
+      </template>
+      <template x-if="project.project.planned_workspace">
+        <button @click="copyText(project.project.planned_workspace)"
+          class="min-w-0 max-w-[34rem] truncate px-2 py-0.5 rounded-md border border-slate-200 bg-slate-50 font-mono text-[10px] text-slate-500 hover:bg-white"
+          :title="project.project.planned_workspace"
+          x-text="project.project.planned_workspace"></button>
+      </template>
     </div>
     <div class="flex-1"></div>
     <div class="flex items-center gap-4 text-xs text-slate-400">
@@ -740,6 +762,7 @@
                       </template>
                       <template x-if="runLog.detail">
                         <div class="rounded-lg border border-slate-200 bg-slate-950 overflow-hidden">
+                          <div x-show="runLogMetadataText()" class="border-b border-slate-800 px-4 py-2 text-[11px] text-slate-400 font-mono break-all" x-text="runLogMetadataText()"></div>
                           <pre x-ref="runLogOutput" class="h-[28rem] overflow-auto p-4 text-[12px] leading-6 text-slate-100 whitespace-pre-wrap break-words" x-text="runLogText()"></pre>
                         </div>
                       </template>
@@ -851,6 +874,29 @@
       <input x-model="newProject.title" placeholder="Project title" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
       <textarea x-model="newProject.origin" placeholder="Origin — starting point" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <textarea x-model="newProject.goal" placeholder="Goal — what to achieve" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="text-[11px] text-slate-400 mb-1 block font-medium">Execution</label>
+          <select x-model="newProject.executionMode" @change="syncNewProjectEnvironment()" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+            <option value="docker">Docker</option>
+            <option value="ssh">SSH</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-[11px] text-slate-400 mb-1 block font-medium">Environment</label>
+          <select x-model="newProject.environment_id" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+            <template x-for="env in selectableEnvironments()" :key="env.id">
+              <option :value="env.id" x-text="environmentLabel(env)"></option>
+            </template>
+          </select>
+        </div>
+      </div>
+      <template x-if="newProject.executionMode === 'ssh' && selectableEnvironments().length === 0">
+        <div class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 flex items-center justify-between gap-3">
+          <span>No SSH machine configured.</span>
+          <button type="button" @click="openEnvironmentPanel()" class="font-medium underline underline-offset-2">Configure</button>
+        </div>
+      </template>
 
       <div>
         <div class="flex items-center justify-between mb-2">
@@ -1031,6 +1077,76 @@
   </div>
 </div>
 
+<!-- Environments -->
+<div x-show="showEnvironments" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showEnvironments = false">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl mx-4 border border-slate-200/60 overflow-hidden" @click.stop>
+    <div class="px-5 py-4 border-b border-slate-200/80 flex items-center justify-between gap-4">
+      <div>
+        <h3 class="text-base font-semibold text-slate-700">Work Environments</h3>
+        <p class="text-xs text-slate-400 mt-0.5">SSH machines and Docker default</p>
+      </div>
+      <button @click="showEnvironments = false" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Close</button>
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-[1fr_24rem] gap-0 max-h-[78vh]">
+      <div class="overflow-y-auto p-5 space-y-3 bg-slate-50/60">
+        <template x-if="environments.length === 0">
+          <div class="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-400">No environments</div>
+        </template>
+        <template x-for="env in environments" :key="env.id">
+          <article class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="font-semibold text-slate-700 truncate" x-text="env.label"></span>
+                  <span class="px-2 py-0.5 rounded-full border text-[10px] font-medium" :class="environmentBadgeClass(env)" x-text="env.backend"></span>
+                  <span x-show="env.last_health_status" class="px-2 py-0.5 rounded-full text-[10px] font-medium"
+                    :class="env.last_health_status === 'ok' ? 'bg-teal-50 text-teal-700' : 'bg-rose-50 text-rose-600'"
+                    x-text="env.last_health_status"></span>
+                </div>
+                <p class="mt-1 text-xs font-mono text-slate-400 break-all" x-text="env.backend === 'ssh' ? env.ssh_command : env.id"></p>
+                <p class="mt-1 text-xs text-slate-400" x-text="env.workspace_root || 'Docker managed workspace'"></p>
+              </div>
+              <div class="flex shrink-0 items-center gap-1.5">
+                <button @click="editEnvironment(env)" class="px-2 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-500 hover:bg-slate-50">Edit</button>
+                <button @click="runEnvironmentHealthcheck(env)" :disabled="envHealthcheckLoading === env.id" class="px-2 py-1 rounded-lg border border-sky-200 text-[11px] text-sky-600 hover:bg-sky-50 disabled:opacity-40">
+                  <span x-text="envHealthcheckLoading === env.id ? 'Checking...' : 'Healthcheck'"></span>
+                </button>
+                <button x-show="env.id !== 'docker-default'" @click="deleteEnvironment(env)" class="px-2 py-1 rounded-lg border border-rose-200 text-[11px] text-rose-500 hover:bg-rose-50">Delete</button>
+              </div>
+            </div>
+            <template x-if="env.last_healthcheck">
+              <div class="mt-3 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden">
+                <template x-for="check in env.last_healthcheck.checks || []" :key="check.name">
+                  <div class="px-3 py-2 border-b last:border-b-0 border-slate-200 text-xs">
+                    <div class="flex items-center justify-between gap-3">
+                      <span class="font-medium text-slate-600" x-text="check.name"></span>
+                      <span :class="check.status === 'ok' ? 'text-teal-700' : check.status === 'skipped' ? 'text-slate-400' : 'text-rose-600'" x-text="check.status"></span>
+                    </div>
+                    <p class="mt-1 font-mono text-[11px] text-slate-400 break-all" x-text="check.command"></p>
+                    <p x-show="check.stdout || check.stderr" class="mt-1 font-mono text-[11px] text-slate-500 whitespace-pre-wrap break-words" x-text="[check.stdout, check.stderr].filter(Boolean).join('\n')"></p>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </article>
+        </template>
+      </div>
+      <div class="border-l border-slate-200 p-5 overflow-y-auto">
+        <h4 class="text-sm font-semibold text-slate-700 mb-3" x-text="environmentForm.id ? 'Edit SSH Machine' : 'New SSH Machine'"></h4>
+        <div class="space-y-3">
+          <input x-model="environmentForm.label" placeholder="Label" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+          <input x-model="environmentForm.ssh_command" placeholder="ssh -F /tmp/cairn_pentestvm_ssh_config cairn-pentestvm" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+          <input x-model="environmentForm.workspace_root" placeholder="/home/kali/cairn-workspaces" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+        </div>
+        <div class="flex justify-between gap-2 mt-5">
+          <button @click="resetEnvironmentForm()" class="px-3 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Clear</button>
+          <button @click="saveEnvironment()" :disabled="!environmentForm.label || !environmentForm.ssh_command" class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Settings -->
 <div x-show="showSettings" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showSettings = false">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 border border-slate-200/60" @click.stop>
@@ -1142,12 +1258,16 @@ function cairnApp() {
     showRenameModal: false,
     showLocalPrefs: false,
     showSettings: false,
+    showEnvironments: false,
     showYamlModal: false,
     exportTab: 'yaml',
     exportProjectId: '',
     showDeleteModal: false,
 
-    newProject: { title: '', origin: '', goal: '', hints: [{ content: '' }] },
+    environments: [],
+    envHealthcheckLoading: '',
+    environmentForm: { id: '', label: '', backend: 'ssh', ssh_command: '', workspace_root: '/home/kali/cairn-workspaces', harness: 'pi', cleanup: { completed_action: 'stop' }, terminal: { mode: 'none' } },
+    newProject: { title: '', origin: '', goal: '', hints: [{ content: '' }], executionMode: 'docker', environment_id: 'docker-default' },
     intentForm: { description: '' },
     concludeForm: { description: '', intentId: '' },
     completeForm: { description: '' },
@@ -1186,6 +1306,7 @@ function cairnApp() {
       window.addEventListener('pointermove', this._panelResizeMove);
       window.addEventListener('pointerup', this._panelResizeStop);
       this.loadLocalPrefs();
+      await this.loadEnvironments();
       await this.loadProjects();
       await this.loadSettings();
       this.startPolling();
@@ -1377,6 +1498,95 @@ function cairnApp() {
 
     async loadProjects() {
       try { this.projects = await this.api('GET', '/projects'); } catch(e) { console.error(e); }
+    },
+
+    async loadEnvironments() {
+      try {
+        this.environments = await this.api('GET', '/environments');
+        this.syncNewProjectEnvironment();
+      } catch(e) { console.error(e); }
+    },
+
+    selectableEnvironments() {
+      return this.environments.filter(env => env.backend === this.newProject.executionMode);
+    },
+
+    syncNewProjectEnvironment() {
+      const options = this.selectableEnvironments();
+      if (!options.some(env => env.id === this.newProject.environment_id)) {
+        const healthy = options.find(env => env.last_health_status === 'ok');
+        this.newProject.environment_id = (healthy || options[0])?.id || '';
+      }
+    },
+
+    environmentLabel(env) {
+      if (!env) return 'Environment';
+      return `${env.backend.toUpperCase()} · ${env.label || env.id}`;
+    },
+
+    environmentBadgeClass(env) {
+      if (!env) return 'border-slate-200 bg-slate-50 text-slate-500';
+      return env.backend === 'ssh'
+        ? 'border-sky-200 bg-sky-50 text-sky-700'
+        : 'border-slate-200 bg-slate-100 text-slate-600';
+    },
+
+    openEnvironmentPanel() {
+      this.loadEnvironments();
+      this.showEnvironments = true;
+    },
+
+    resetEnvironmentForm() {
+      this.environmentForm = { id: '', label: '', backend: 'ssh', ssh_command: '', workspace_root: '/home/kali/cairn-workspaces', harness: 'pi', cleanup: { completed_action: 'stop' }, terminal: { mode: 'none' } };
+    },
+
+    editEnvironment(env) {
+      this.environmentForm = {
+        id: env.id,
+        label: env.label || '',
+        backend: env.backend,
+        ssh_command: env.ssh_command || '',
+        workspace_root: env.workspace_root || '/home/kali/cairn-workspaces',
+        harness: env.harness || 'pi',
+        cleanup: env.cleanup || { completed_action: 'stop' },
+        terminal: env.terminal || { mode: 'none' },
+      };
+    },
+
+    async saveEnvironment() {
+      try {
+        const body = { ...this.environmentForm, backend: 'ssh' };
+        const method = body.id ? 'PUT' : 'POST';
+        const path = body.id ? `/environments/${encodeURIComponent(body.id)}` : '/environments';
+        await this.api(method, path, body);
+        this.resetEnvironmentForm();
+        await this.loadEnvironments();
+        this.showToast('Environment saved');
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async deleteEnvironment(env) {
+      if (!env || env.id === 'docker-default') return;
+      try {
+        await this.api('DELETE', `/environments/${encodeURIComponent(env.id)}`);
+        await this.loadEnvironments();
+        this.showToast('Environment deleted');
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async runEnvironmentHealthcheck(env) {
+      if (!env) return;
+      try {
+        this.envHealthcheckLoading = env.id;
+        const result = await this.api('POST', `/environments/${encodeURIComponent(env.id)}/healthcheck`);
+        const found = this.environments.find(item => item.id === env.id);
+        if (found) {
+          found.last_health_status = result.status;
+          found.last_healthcheck = result;
+        }
+        this.showToast(`Healthcheck ${result.status}`);
+      } catch(e) { this.showToast(e.message, 'error'); }
+      finally { this.envHealthcheckLoading = ''; }
     },
 
     rememberProjectListScroll() {
@@ -1696,6 +1906,16 @@ function cairnApp() {
       if (label === 'running') return 'text-amber-300';
       if (label === 'finished') return 'text-emerald-300';
       return 'text-rose-300';
+    },
+
+    runLogMetadataText() {
+      const meta = this.runLog.detail?.summary?.metadata;
+      if (!meta) return '';
+      return [
+        meta.environment_id ? `env=${meta.environment_id}` : '',
+        meta.backend ? `backend=${meta.backend}` : '',
+        meta.workspace ? `workspace=${meta.workspace}` : '',
+      ].filter(Boolean).join('  ');
     },
 
     toggleRunLogExpanded() {
@@ -3392,11 +3612,13 @@ function cairnApp() {
         const actor = this.actorName();
         const hintContents = this.newProject.hints.filter(h => h.content?.trim());
         const body = { title: this.newProject.title, origin: this.newProject.origin, goal: this.newProject.goal };
+        if (this.newProject.environment_id) body.environment_id = this.newProject.environment_id;
         const hints = hintContents.map(h => ({ content: h.content.trim(), creator: actor }));
         if (hints.length > 0) body.hints = hints;
         const data = await this.api('POST', '/projects', body);
         this.showNewProject = false;
-        this.newProject = { title:'', origin:'', goal:'', hints: [{ content:'' }] };
+        this.newProject = { title:'', origin:'', goal:'', hints: [{ content:'' }], executionMode: 'docker', environment_id: 'docker-default' };
+        this.syncNewProjectEnvironment();
         await this.loadProjects();
         await this.openProject(data.project.id);
         this.showToast('Project created');

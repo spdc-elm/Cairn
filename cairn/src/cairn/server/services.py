@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import sqlite3
+import json
+from pathlib import PurePosixPath
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
-from cairn.server.models import Intent, ProjectMeta, ProjectReason
+from cairn.server.models import Intent, ProjectMeta, ProjectReason, WorkEnvironmentPublic, WorkEnvironmentUpsert
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -201,14 +203,100 @@ def project_reason_from_row(row: sqlite3.Row) -> ProjectReason | None:
     )
 
 
-def project_meta_from_row(row: sqlite3.Row) -> ProjectMeta:
+def project_meta_from_row(row: sqlite3.Row, environment: WorkEnvironmentPublic | None = None) -> ProjectMeta:
     return ProjectMeta(
         id=row["id"],
         title=row["title"],
         status=row["status"],
         created_at=row["created_at"],
         reason=project_reason_from_row(row),
+        environment_id=row["environment_id"] if "environment_id" in row.keys() else None,
+        environment=environment,
+        planned_workspace=planned_workspace_for(row["id"], environment),
     )
+
+
+def environment_row_to_public(row: sqlite3.Row, *, include_secret: bool = False) -> WorkEnvironmentPublic:
+    health = None
+    raw_health = row["last_healthcheck_json"] if "last_healthcheck_json" in row.keys() else None
+    if raw_health:
+        try:
+            health = json.loads(raw_health)
+        except json.JSONDecodeError:
+            health = None
+    return WorkEnvironmentPublic(
+        id=row["id"],
+        label=row["label"],
+        backend=row["backend"],
+        ssh_command=row["ssh_command"],
+        workspace_root=row["workspace_root"],
+        harness=row["harness"],
+        cleanup=_loads_optional_json(row["cleanup_json"]) if "cleanup_json" in row.keys() else None,
+        terminal=_loads_optional_json(row["terminal_json"]) if "terminal_json" in row.keys() else None,
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        last_health_status=row["last_health_status"],
+        last_healthcheck=health,
+    )
+
+
+def get_environment_or_404(conn: sqlite3.Connection, environment_id: str, *, include_secret: bool = False) -> WorkEnvironmentPublic:
+    row = conn.execute("SELECT * FROM work_environments WHERE id = ?", (environment_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "Environment not found")
+    return environment_row_to_public(row, include_secret=include_secret)
+
+
+def default_environment(conn: sqlite3.Connection) -> WorkEnvironmentPublic:
+    row = conn.execute(
+        "SELECT * FROM work_environments ORDER BY CASE WHEN id = 'docker-default' THEN 0 ELSE 1 END, created_at LIMIT 1"
+    ).fetchone()
+    assert row is not None
+    return environment_row_to_public(row)
+
+
+def slugify_environment_id(label: str) -> str:
+    cleaned = []
+    for ch in label.lower():
+        if ch.isalnum():
+            cleaned.append(ch)
+        elif cleaned and cleaned[-1] != "-":
+            cleaned.append("-")
+    text = "".join(cleaned).strip("-")
+    return text or "environment"
+
+
+def validate_environment_body(body: WorkEnvironmentUpsert) -> None:
+    if body.backend == "ssh":
+        if not body.ssh_command:
+            raise HTTPException(400, "SSH environment requires ssh_command")
+        root = (body.workspace_root or "").rstrip("/")
+        if root in {"", "/", "/home", "/home/kali", "/home/kali/ctf"} or root.startswith("/home/kali/ctf/"):
+            raise HTTPException(400, "Unsafe SSH workspace_root")
+    if body.backend == "docker" and body.id not in (None, "docker-default"):
+        raise HTTPException(400, "Only docker-default is supported from the server UI")
+
+
+def planned_workspace_for(project_id: str, environment: WorkEnvironmentPublic | None) -> str | None:
+    if environment is None:
+        return None
+    clean_project_id = project_id.replace("/", "-").replace("..", "-")
+    if environment.backend == "ssh":
+        root = (environment.workspace_root or "/home/kali/cairn-workspaces").rstrip("/")
+        return str(PurePosixPath(root) / clean_project_id)
+    if environment.backend == "docker":
+        return f"docker:{clean_project_id}"
+    return None
+
+
+def _loads_optional_json(value: str | None) -> dict | None:
+    if not value:
+        return None
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def clear_project_reason(conn: sqlite3.Connection, project_id: str) -> None:

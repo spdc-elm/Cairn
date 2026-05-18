@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from cairn.dispatcher.config import WorkerConfig
 from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.runtime.cancellation import TaskCancellation
-from cairn.dispatcher.runtime.containers import ContainerManager
+from cairn.dispatcher.runtime.environments.base import EnvironmentHandle, WorkEnvironment
 from cairn.dispatcher.runtime.heartbeat import HeartbeatLease
 from cairn.dispatcher.runtime.process import ProcessResult
 from cairn.dispatcher.runtime.run_logs import RunLogWriter
@@ -16,7 +16,6 @@ from cairn.dispatcher.runtime.run_logs import RunLogWriter
 HEALTHCHECK_COMMUNICATE_GRACE_SECONDS = 10
 PROCESS_COMMUNICATE_GRACE_SECONDS = 15
 LOG_PREVIEW_LIMIT = 1200
-GRAPH_SNAPSHOT_ROOT = "/tmp/cairn-prompts"
 LOG = logging.getLogger(__name__)
 
 
@@ -56,16 +55,16 @@ def communicate_timeout(timeout_seconds: int, grace_seconds: int = PROCESS_COMMU
 
 
 def write_graph_snapshot_reference(
-    container_manager: ContainerManager,
-    container_name: str,
+    environment: WorkEnvironment,
+    handle: EnvironmentHandle,
     graph_yaml: str,
     *,
     phase: str,
 ) -> str:
-    path = f"{GRAPH_SNAPSHOT_ROOT}/{phase}-{uuid.uuid4().hex[:12]}/graph.yaml"
-    container_manager.write_text_file(container_name, path, graph_yaml)
+    path = f"{environment.graph_snapshot_path(handle, phase)}-{uuid.uuid4().hex[:12]}/graph.yaml"
+    environment.write_text_file(handle, path, graph_yaml)
     return (
-        "The graph YAML snapshot is stored in this file inside the current container:\n\n"
+        "The graph YAML snapshot is stored in this file inside the current work environment:\n\n"
         f"{path}\n\n"
         "Before using the graph, read the entire file and treat its contents as the YAML snapshot "
         "for this Graph section."
@@ -73,8 +72,8 @@ def write_graph_snapshot_reference(
 
 
 def run_healthcheck(
-    container_manager: ContainerManager,
-    container_name: str,
+    environment: WorkEnvironment,
+    handle: EnvironmentHandle,
     worker: WorkerConfig,
     command: list[str],
     *,
@@ -82,8 +81,8 @@ def run_healthcheck(
     lease: HeartbeatLease | None = None,
     cancellation: TaskCancellation | None = None,
 ) -> HealthcheckRun:
-    process = container_manager.build_exec_process(
-        container_name,
+    process = environment.build_process(
+        handle,
         dict(worker.env),
         command,
         timeout_seconds=timeout_seconds,
@@ -106,8 +105,8 @@ def run_healthcheck(
 
 
 def run_worker_process(
-    container_manager: ContainerManager,
-    container_name: str,
+    environment: WorkEnvironment,
+    handle: EnvironmentHandle,
     worker: WorkerConfig,
     argv: list[str],
     *,
@@ -120,8 +119,10 @@ def run_worker_process(
     cancellation: TaskCancellation | None = None,
 ) -> ProcessResult:
     LOG.info(
-        "starting container exec container=%s worker=%s phase=%s timeout=%ss",
-        container_name,
+        "starting work environment process environment=%s backend=%s target=%s worker=%s phase=%s timeout=%ss",
+        environment.id,
+        environment.backend,
+        handle.target_name,
         worker.name,
         phase,
         timeout_seconds,
@@ -135,10 +136,16 @@ def run_worker_process(
             worker_name=worker.name,
             intent_id=intent_id,
             metadata={
-                "container": container_name,
+                "container": handle.target_name if environment.backend == "docker" else None,
+                "environment_id": environment.id,
+                "backend": environment.backend,
+                "target": handle.target_name,
+                "workspace": handle.workspace,
+                "profile_id": worker.profile,
                 "timeout_seconds": timeout_seconds,
                 "argv0": argv[0] if argv else None,
             },
+            secrets=_worker_secrets(worker),
         )
         LOG.info(
             "run log opened project=%s intent=%s worker=%s phase=%s run_id=%s path=%s",
@@ -149,8 +156,8 @@ def run_worker_process(
             run_logger.run_id,
             run_logger.path,
         )
-    process = container_manager.build_exec_process(
-        container_name,
+    process = environment.build_process(
+        handle,
         dict(worker.env),
         argv,
         timeout_seconds=timeout_seconds,
@@ -233,6 +240,14 @@ def write_conclude_result(
         phase_ms=phase_ms,
         total_ms=total_ms,
     ).status
+
+
+def _worker_secrets(worker: WorkerConfig) -> list[str]:
+    return [
+        value
+        for key, value in worker.env.items()
+        if value and ("KEY" in key or "TOKEN" in key or "SECRET" in key)
+    ]
 
 
 def write_conclude_result_with_fact_id(

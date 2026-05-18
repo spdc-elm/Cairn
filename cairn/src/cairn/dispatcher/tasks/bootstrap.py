@@ -12,7 +12,7 @@ from cairn.dispatcher.contracts import (
 from cairn.dispatcher.prompting import format_hints, load_prompt, render_prompt
 from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.runtime.cancellation import TaskCancellation
-from cairn.dispatcher.runtime.containers import ContainerManager
+from cairn.dispatcher.runtime.environments.base import WorkEnvironment
 from cairn.dispatcher.runtime.heartbeat import HeartbeatLease
 from cairn.dispatcher.tasks.common import (
     best_effort_release,
@@ -34,7 +34,7 @@ LOG = logging.getLogger(__name__)
 def run_bootstrap_task(
     config: DispatchConfig,
     client: CairnClient,
-    container_manager: ContainerManager,
+    environment: WorkEnvironment,
     project: ProjectDetail,
     intent: Intent,
     worker: WorkerConfig,
@@ -46,18 +46,20 @@ def run_bootstrap_task(
     lease = HeartbeatLease.for_intent(client, project.project.id, intent.id, worker.name, config.runtime.interval)
     lease.start()
     try:
-        container_name = container_manager.ensure_running(project.project.id)
+        handle = environment.prepare_project(project.project.id)
 
         LOG.info(
-            "starting container exec project=%s intent=%s worker=%s phase=bootstrap_healthcheck timeout=%ss",
+            "starting work environment process project=%s intent=%s environment=%s backend=%s worker=%s phase=bootstrap_healthcheck timeout=%ss",
             project.project.id,
             intent.id,
+            environment.id,
+            environment.backend,
             worker.name,
             healthcheck_timeout,
         )
         healthcheck = run_healthcheck(
-            container_manager,
-            container_name,
+            environment,
+            handle,
             worker,
             driver.build_healthcheck(worker),
             timeout_seconds=healthcheck_timeout,
@@ -107,8 +109,8 @@ def run_bootstrap_task(
         session = execute.session
         execute_started = time.perf_counter()
         first = run_worker_process(
-            container_manager,
-            container_name,
+            environment,
+            handle,
             worker,
             execute.argv,
             phase="bootstrap",
@@ -164,8 +166,8 @@ def run_bootstrap_task(
                 return _try_conclude_fallback(
                     config,
                     client,
-                    container_manager,
-                    container_name,
+                    environment,
+                    handle,
                     worker,
                     driver,
                     project,
@@ -211,8 +213,8 @@ def run_bootstrap_task(
             return _try_conclude_fallback(
                 config,
                 client,
-                container_manager,
-                container_name,
+                environment,
+                handle,
                 worker,
                 driver,
                 project,
@@ -245,8 +247,8 @@ def run_bootstrap_task(
 def _try_conclude_fallback(
     config: DispatchConfig,
     client: CairnClient,
-    container_manager: ContainerManager,
-    container_name: str,
+    environment: WorkEnvironment,
+    handle,
     worker: WorkerConfig,
     driver,
     project: ProjectDetail,
@@ -295,7 +297,7 @@ def _try_conclude_fallback(
         best_effort_release(client, project.project.id, intent.id, worker.name)
         return "failed"
 
-    container_name = container_manager.ensure_running(project.project.id)
+    handle = environment.prepare_project(project.project.id)
 
     prompt = render_prompt(
         load_prompt(config.runtime.prompt_group, "bootstrap_conclude.md"),
@@ -305,8 +307,8 @@ def _try_conclude_fallback(
     LOG.info("starting bootstrap conclude fallback project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
     conclude_started = time.perf_counter()
     result = run_worker_process(
-        container_manager,
-        container_name,
+        environment,
+        handle,
         worker,
         conclude_argv,
         phase="bootstrap_conclude",

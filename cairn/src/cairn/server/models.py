@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class Settings(BaseModel):
@@ -43,12 +43,53 @@ class ProjectReason(BaseModel):
     last_heartbeat_at: str
 
 
+class WorkEnvironmentPublic(BaseModel):
+    id: str
+    label: str
+    backend: Literal["docker", "ssh"]
+    ssh_command: str | None = None
+    workspace_root: str | None = None
+    harness: str = "pi"
+    cleanup: dict | None = None
+    terminal: dict | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    last_health_status: str | None = None
+    last_healthcheck: dict | None = None
+
+
+class WorkEnvironmentUpsert(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str | None = None
+    label: str
+    backend: Literal["ssh", "docker"] = "ssh"
+    ssh_command: str | None = None
+    workspace_root: str | None = "/home/kali/cairn-workspaces"
+    harness: str = "pi"
+    cleanup: dict | None = None
+    terminal: dict | None = None
+
+    @field_validator("id", "label", "ssh_command", "workspace_root", "harness")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        return text
+
+
 class ProjectMeta(BaseModel):
     id: str
     title: str
     status: Literal["active", "stopped", "completed"]
     created_at: str
     reason: ProjectReason | None = None
+    environment_id: str | None = None
+    environment: WorkEnvironmentPublic | None = None
+    planned_workspace: str | None = None
 
 
 class ProjectSummary(ProjectMeta):
@@ -84,6 +125,7 @@ class CreateProjectRequest(BaseModel):
     origin: str
     goal: str
     hints: list[CreateHintInline] | None = None
+    environment_id: str | None = None
 
     @field_validator("title", "origin", "goal")
     @classmethod

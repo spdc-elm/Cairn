@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -8,17 +9,18 @@ from pathlib import Path
 
 import requests
 
-from cairn.dispatcher.config import DispatchConfig, WorkerConfig
+from cairn.dispatcher.config import CleanupPolicy, DispatchConfig, SshEnvironmentConfig, TerminalConfig, WorkerConfig
 from cairn.dispatcher.models import ReasonCheckpoint, RunningTask
 from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.runtime.cancellation import TaskCancellation
-from cairn.dispatcher.runtime.containers import ContainerManager
+from cairn.dispatcher.runtime.environments import WorkEnvironment, build_environment
 from cairn.dispatcher.runtime.startup_healthcheck import format_failure_summary, run_startup_healthchecks
 from cairn.dispatcher.scheduler.worker_select import choose_worker
 from cairn.dispatcher.tasks.bootstrap import run_bootstrap_task
 from cairn.dispatcher.tasks.explore import run_explore_task
 from cairn.dispatcher.tasks.reason import run_reason_task
 from cairn.server.models import Intent, ProjectDetail, ProjectSummary
+from cairn.server.models import WorkEnvironmentPublic
 
 LOG = logging.getLogger(__name__)
 UNHEALTHY_RETRY_AFTER_SECONDS = 5
@@ -34,6 +36,7 @@ class WorkerSelection:
     blocked_unhealthy: list[str]
     blocked_rejected: list[str]
     blocked_task_type: list[str]
+    blocked_environment: list[str]
 
 
 class DispatcherLoop:
@@ -41,7 +44,8 @@ class DispatcherLoop:
         self.config_path = config_path
         self.config = DispatchConfig.load(config_path)
         self.client = CairnClient(self.config.server)
-        self.container_manager = ContainerManager(self.config.container)
+        self._environment_hashes: dict[str, str] = {}
+        self.environments = self._build_environment_registry()
         self.executor = ThreadPoolExecutor(max_workers=self.config.runtime.max_workers)
         self.cleanup_executor = ThreadPoolExecutor(max_workers=max(1, min(8, self.config.runtime.max_workers)))
         self.futures: dict[Future[str], RunningTask] = {}
@@ -66,8 +70,56 @@ class DispatcherLoop:
             )
         self.executor.shutdown(wait=True)
         self.cleanup_executor.shutdown(wait=True)
-        self.container_manager.close()
+        for environment in self.environments.values():
+            environment.close()
         self.client.close()
+
+    def _build_environment_registry(self) -> dict[str, WorkEnvironment]:
+        registry: dict[str, WorkEnvironment] = {}
+        for environment in self.config.environments:
+            registry[environment.id] = build_environment(environment)
+            self._environment_hashes[environment.id] = _environment_config_hash(environment)
+        try:
+            server_environments = self.client.list_environments()
+        except Exception as exc:
+            LOG.info("server environments unavailable during dispatcher startup; using config only error=%s", exc)
+            return registry
+        for environment in server_environments:
+            config = _server_environment_config(environment)
+            if config is None or environment.id in registry:
+                continue
+            registry[environment.id] = build_environment(config)
+            self._environment_hashes[environment.id] = _server_environment_hash(environment)
+        return registry
+
+    def _refresh_environment_registry(self) -> None:
+        try:
+            server_environments = self.client.list_environments()
+        except Exception as exc:
+            self._log_changed("environment-refresh", logging.INFO, "server environment refresh skipped error=%s", exc)
+            return
+        config_ids = {environment.id for environment in self.config.environments}
+        seen_server_ids: set[str] = set()
+        for environment in server_environments:
+            config = _server_environment_config(environment)
+            if config is None or environment.id in config_ids:
+                continue
+            seen_server_ids.add(environment.id)
+            digest = _server_environment_hash(environment)
+            if self._environment_hashes.get(environment.id) == digest and environment.id in self.environments:
+                continue
+            old = self.environments.get(environment.id)
+            if old is not None:
+                old.close()
+            self.environments[environment.id] = build_environment(config)
+            self._environment_hashes[environment.id] = digest
+            LOG.info("environment registry refreshed environment=%s backend=%s", environment.id, environment.backend)
+        for environment_id in list(self.environments):
+            if environment_id in config_ids or environment_id in seen_server_ids:
+                continue
+            self.environments.pop(environment_id).close()
+            self._environment_hashes.pop(environment_id, None)
+            LOG.info("environment registry removed environment=%s", environment_id)
 
     def run(self, once: bool = False) -> None:
         try:
@@ -77,13 +129,14 @@ class DispatcherLoop:
                     if not self._settings_checked:
                         self._validate_server_settings()
                         self._settings_checked = True
+                    self._refresh_environment_registry()
                     self._reap_futures()
                     self._reap_cleanup_futures()
                     summaries = self.client.list_projects()
                     self._initialize_reason_checkpoints(summaries)
                     self._refresh_runtime_projects(summaries)
                     self._cancel_inactive_tasks(summaries)
-                    self._queue_container_cleanups(summaries)
+                    self._queue_environment_cleanups(summaries)
                     self._dispatch_available(summaries)
                 except requests.RequestException as exc:
                     if once:
@@ -104,6 +157,20 @@ class DispatcherLoop:
     def run_startup_healthchecks_only(self) -> None:
         try:
             self.run_startup_healthchecks(show_commands=True)
+        finally:
+            self.close()
+
+    def run_environment_healthchecks_only(self) -> None:
+        try:
+            for environment in self.environments.values():
+                result = environment.run_healthcheck()
+                LOG.info(
+                    "environment healthcheck environment=%s backend=%s status=%s result=%s",
+                    environment.id,
+                    environment.backend,
+                    result.get("status"),
+                    result,
+                )
         finally:
             self.close()
 
@@ -178,14 +245,24 @@ class DispatcherLoop:
 
     def _try_dispatch_project(self, summary: ProjectSummary) -> bool:
         skip_scope = f"project:{summary.id}:skip"
-        container_name = self.container_manager.container_name(summary.id)
-        if container_name in self._cleanup_pending:
+        environment = self._environment_for_summary(summary)
+        if environment is None:
+            self._log_changed(
+                f"{skip_scope}:environment",
+                logging.INFO,
+                "skip project=%s because environment=%s is not configured",
+                summary.id,
+                summary.environment_id,
+            )
+            return False
+        cleanup_key = environment.cleanup_key(summary.id)
+        if cleanup_key in self._cleanup_pending:
             self._log_changed(
                 f"{skip_scope}:cleanup_pending",
                 logging.DEBUG,
-                "skip project=%s because container cleanup is still pending container=%s",
+                "skip project=%s because environment cleanup is still pending key=%s",
                 summary.id,
-                container_name,
+                cleanup_key,
             )
             return False
         if self._project_running_task_count(summary.id) >= self.config.runtime.max_project_workers:
@@ -199,6 +276,16 @@ class DispatcherLoop:
             return False
 
         project = self.client.get_project(summary.id)
+        environment = self._environment_for_project(project)
+        if environment is None:
+            self._log_changed(
+                f"{skip_scope}:environment",
+                logging.INFO,
+                "skip project=%s because environment=%s is not configured",
+                summary.id,
+                project.project.environment_id,
+            )
+            return False
         if project.project.status != "active":
             self._log_changed(
                 f"{skip_scope}:status",
@@ -211,7 +298,7 @@ class DispatcherLoop:
         if self._is_initial_project(project):
             if project.project.reason is not None:
                 return False
-            return self._dispatch_initial_project(project)
+            return self._dispatch_initial_project(project, environment)
         running_intent_ids = self._project_running_explore_intents(summary.id)
         unclaimed_intents = [
             intent
@@ -232,7 +319,7 @@ class DispatcherLoop:
         if unclaimed_intents:
             newest = max(unclaimed_intents, key=lambda i: i.created_at)
             export_yaml = self.client.export_project(summary.id)
-            return self._dispatch_explore(project, export_yaml, newest)
+            return self._dispatch_explore(project, export_yaml, newest, environment)
         if project.project.reason is not None:
             self._log_changed(
                 f"{skip_scope}:reason_claimed",
@@ -256,9 +343,9 @@ class DispatcherLoop:
             )
             return False
         export_yaml = self.client.export_project(summary.id)
-        return self._dispatch_reason(project, export_yaml, reason_trigger)
+        return self._dispatch_reason(project, export_yaml, reason_trigger, environment)
 
-    def _dispatch_initial_project(self, project: ProjectDetail) -> bool:
+    def _dispatch_initial_project(self, project: ProjectDetail, environment: WorkEnvironment) -> bool:
         intent = self._get_bootstrap_intent(project)
         if intent is None:
             intent = self._create_bootstrap_intent(project.project.id)
@@ -282,10 +369,10 @@ class DispatcherLoop:
                 intent.worker,
             )
             return False
-        return self._dispatch_bootstrap(project, intent)
+        return self._dispatch_bootstrap(project, intent, environment)
 
-    def _dispatch_reason(self, project: ProjectDetail, export_yaml: str, trigger: str) -> bool:
-        selection = self._select_worker(project.project.id, "reason")
+    def _dispatch_reason(self, project: ProjectDetail, export_yaml: str, trigger: str, environment: WorkEnvironment) -> bool:
+        selection = self._select_worker(project.project.id, "reason", environment.id)
         worker = selection.worker
         if worker is None:
             self._log_changed(
@@ -298,6 +385,7 @@ class DispatcherLoop:
                 selection.blocked_rejected,
             )
             return False
+        worker = self.config.worker_with_profile_env(worker)
         self._clear_log_state(f"project:{project.project.id}:worker:reason")
         claim = self.client.claim_reason(project.project.id, worker.name, trigger)
         if claim.status_code in (403, 409):
@@ -323,7 +411,7 @@ class DispatcherLoop:
                 run_reason_task,
                 self.config,
                 self.client,
-                self.container_manager,
+                environment,
                 project,
                 export_yaml,
                 worker,
@@ -348,8 +436,8 @@ class DispatcherLoop:
         LOG.info("dispatched reason project=%s worker=%s trigger=%s", project.project.id, worker.name, trigger)
         return True
 
-    def _dispatch_bootstrap(self, project: ProjectDetail, intent: Intent) -> bool:
-        selection = self._select_worker(project.project.id, "bootstrap")
+    def _dispatch_bootstrap(self, project: ProjectDetail, intent: Intent, environment: WorkEnvironment) -> bool:
+        selection = self._select_worker(project.project.id, "bootstrap", environment.id)
         worker = selection.worker
         if worker is None:
             self._log_changed(
@@ -363,6 +451,7 @@ class DispatcherLoop:
                 selection.blocked_rejected,
             )
             return False
+        worker = self.config.worker_with_profile_env(worker)
         self._clear_log_state(f"project:{project.project.id}:worker:bootstrap")
         claim = self.client.heartbeat(project.project.id, intent.id, worker.name)
         if claim.status_code in (403, 409):
@@ -390,7 +479,7 @@ class DispatcherLoop:
                 run_bootstrap_task,
                 self.config,
                 self.client,
-                self.container_manager,
+                environment,
                 project,
                 intent,
                 worker,
@@ -406,8 +495,8 @@ class DispatcherLoop:
         LOG.info("dispatched bootstrap project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
         return True
 
-    def _dispatch_explore(self, project: ProjectDetail, export_yaml: str, intent: Intent) -> bool:
-        selection = self._select_worker(project.project.id, "explore")
+    def _dispatch_explore(self, project: ProjectDetail, export_yaml: str, intent: Intent, environment: WorkEnvironment) -> bool:
+        selection = self._select_worker(project.project.id, "explore", environment.id)
         worker = selection.worker
         if worker is None:
             self._log_changed(
@@ -421,6 +510,7 @@ class DispatcherLoop:
                 selection.blocked_rejected,
             )
             return False
+        worker = self.config.worker_with_profile_env(worker)
         self._clear_log_state(f"project:{project.project.id}:worker:explore")
         claim = self.client.heartbeat(project.project.id, intent.id, worker.name)
         if claim.status_code in (403, 409):
@@ -448,7 +538,7 @@ class DispatcherLoop:
                 run_explore_task,
                 self.config,
                 self.client,
-                self.container_manager,
+                environment,
                 project,
                 export_yaml,
                 intent,
@@ -465,15 +555,19 @@ class DispatcherLoop:
         LOG.info("dispatched explore project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
         return True
 
-    def _select_worker(self, project_id: str, task_type: str) -> WorkerSelection:
+    def _select_worker(self, project_id: str, task_type: str, environment_id: str) -> WorkerSelection:
         now = time.time()
         candidates: list[WorkerConfig] = []
         blocked_busy: list[str] = []
         blocked_unhealthy: list[str] = []
         blocked_rejected: list[str] = []
         blocked_task_type: list[str] = []
+        blocked_environment: list[str] = []
         running_counts = self._worker_counts()
         for worker in self.config.workers:
+            if worker.allowed_environments is not None and environment_id not in worker.allowed_environments:
+                blocked_environment.append(worker.name)
+                continue
             if task_type not in worker.task_types:
                 blocked_task_type.append(worker.name)
                 continue
@@ -506,6 +600,7 @@ class DispatcherLoop:
                 blocked_unhealthy=blocked_unhealthy,
                 blocked_rejected=blocked_rejected,
                 blocked_task_type=blocked_task_type,
+                blocked_environment=blocked_environment,
             )
         ordered = choose_worker(candidates, running_counts)
         LOG.debug(
@@ -525,6 +620,7 @@ class DispatcherLoop:
             blocked_unhealthy=blocked_unhealthy,
             blocked_rejected=blocked_rejected,
             blocked_task_type=blocked_task_type,
+            blocked_environment=blocked_environment,
         )
 
     def _worker_counts(self) -> dict[str, int]:
@@ -695,41 +791,55 @@ class DispatcherLoop:
             except Exception:
                 LOG.exception("task crashed project=%s task=%s worker=%s", task.project_id, task.task_type, task.worker_name)
 
-    def _cleanup_completed_containers(self, summaries: list[ProjectSummary]) -> None:
+    def _environment_for_summary(self, summary: ProjectSummary) -> WorkEnvironment | None:
+        environment_id = summary.environment_id or self.config.default_environment_id
+        return self.environments.get(environment_id)
+
+    def _environment_for_project(self, project: ProjectDetail) -> WorkEnvironment | None:
+        environment_id = project.project.environment_id or self.config.default_environment_id
+        return self.environments.get(environment_id)
+
+    def _cleanup_completed_environments(self, summaries: list[ProjectSummary]) -> None:
         for summary in summaries:
             if summary.status != "completed":
                 continue
             if self._inactive_cleanup_done.get(summary.id) == summary.status:
                 continue
-            container_name = self.container_manager.container_name(summary.id)
-            if container_name in self._cleanup_pending:
+            environment = self._environment_for_summary(summary)
+            if environment is None:
                 continue
-            if not self.container_manager.needs_completed_cleanup(summary.id):
+            cleanup_key = environment.cleanup_key(summary.id)
+            if cleanup_key in self._cleanup_pending:
+                continue
+            if not environment.needs_completed_cleanup(summary.id):
                 self._inactive_cleanup_done[summary.id] = summary.status
                 continue
-            future = self.cleanup_executor.submit(self.container_manager.cleanup_completed, summary.id)
-            self.cleanup_futures[future] = (container_name, summary.id, summary.status)
-            self._cleanup_pending.add(container_name)
+            future = self.cleanup_executor.submit(environment.cleanup_completed, summary.id)
+            self.cleanup_futures[future] = (cleanup_key, summary.id, summary.status)
+            self._cleanup_pending.add(cleanup_key)
 
-    def _cleanup_stopped_containers(self, summaries: list[ProjectSummary]) -> None:
+    def _cleanup_stopped_environments(self, summaries: list[ProjectSummary]) -> None:
         for summary in summaries:
             if summary.status != "stopped":
                 continue
             if self._inactive_cleanup_done.get(summary.id) == summary.status:
                 continue
-            container_name = self.container_manager.container_name(summary.id)
-            if container_name in self._cleanup_pending:
+            environment = self._environment_for_summary(summary)
+            if environment is None:
                 continue
-            if not self.container_manager.needs_stopped_cleanup(summary.id):
+            cleanup_key = environment.cleanup_key(summary.id)
+            if cleanup_key in self._cleanup_pending:
+                continue
+            if not environment.needs_stopped_cleanup(summary.id):
                 self._inactive_cleanup_done[summary.id] = summary.status
                 continue
-            future = self.cleanup_executor.submit(self.container_manager.cleanup_stopped, summary.id)
-            self.cleanup_futures[future] = (container_name, summary.id, summary.status)
-            self._cleanup_pending.add(container_name)
+            future = self.cleanup_executor.submit(environment.cleanup_stopped, summary.id)
+            self.cleanup_futures[future] = (cleanup_key, summary.id, summary.status)
+            self._cleanup_pending.add(cleanup_key)
 
-    def _queue_container_cleanups(self, summaries: list[ProjectSummary]) -> None:
-        self._cleanup_completed_containers(summaries)
-        self._cleanup_stopped_containers(summaries)
+    def _queue_environment_cleanups(self, summaries: list[ProjectSummary]) -> None:
+        self._cleanup_completed_environments(summaries)
+        self._cleanup_stopped_environments(summaries)
 
     def _reap_cleanup_futures(self) -> None:
         done = [future for future in self.cleanup_futures if future.done()]
@@ -745,7 +855,7 @@ class DispatcherLoop:
             except Exception:
                 if project_id is not None:
                     self._inactive_cleanup_done.pop(project_id, None)
-                LOG.exception("container cleanup failed container=%s", name)
+                LOG.exception("environment cleanup failed key=%s", name)
 
     def _refresh_runtime_projects(self, summaries: list[ProjectSummary]) -> None:
         active_ids = {summary.id for summary in summaries if summary.status == "active"}
@@ -843,7 +953,40 @@ class DispatcherLoop:
             )
 
     def _run_startup_healthchecks(self, *, show_commands: bool) -> None:
-        results = run_startup_healthchecks(self.config, self.container_manager, show_commands=show_commands)
+        results = run_startup_healthchecks(self.config, self.environments, show_commands=show_commands)
         if any(result.ok for result in results):
             return
         raise RuntimeError(format_failure_summary(results))
+
+
+def _server_environment_config(environment: WorkEnvironmentPublic) -> SshEnvironmentConfig | None:
+    if environment.backend != "ssh" or not environment.ssh_command:
+        return None
+    return SshEnvironmentConfig(
+        id=environment.id,
+        label=environment.label,
+        backend="ssh",
+        ssh_command=environment.ssh_command,
+        workspace_root=environment.workspace_root or "/home/kali/cairn-workspaces",
+        harness="pi",
+        cleanup=CleanupPolicy.model_validate(environment.cleanup or {"completed_action": "stop"}),
+        terminal=TerminalConfig.model_validate(environment.terminal or {"mode": "none"}),
+    )
+
+
+def _server_environment_hash(environment: WorkEnvironmentPublic) -> str:
+    payload = {
+        "id": environment.id,
+        "label": environment.label,
+        "backend": environment.backend,
+        "ssh_command": environment.ssh_command,
+        "workspace_root": environment.workspace_root,
+        "harness": environment.harness,
+        "cleanup": environment.cleanup,
+        "terminal": environment.terminal,
+    }
+    return json.dumps(payload, ensure_ascii=True, sort_keys=True)
+
+
+def _environment_config_hash(environment) -> str:
+    return json.dumps(environment.model_dump(mode="json"), ensure_ascii=True, sort_keys=True)

@@ -22,15 +22,18 @@ from cairn.server.services import (
     check_project_completed,
     check_project_active,
     clear_project_reason,
+    default_environment,
     expire_reason_leases,
     expire_workers,
     get_completion_intent_or_409,
     get_project_or_404,
+    get_environment_or_404,
     intent_to_model,
     next_fact_id,
     next_hint_id,
     next_intent_id,
     next_project_id,
+    planned_workspace_for,
     project_meta_from_row,
     project_reason_from_row,
     utcnow,
@@ -56,21 +59,25 @@ def list_projects():
             FROM projects p
             ORDER BY p.created_at
         """).fetchall()
-        return [
-            ProjectSummary(
+        summaries = []
+        for row in rows:
+            environment = _project_environment_or_none(conn, row["environment_id"])
+            summaries.append(ProjectSummary(
                 id=row["id"],
                 title=row["title"],
                 status=row["status"],
                 created_at=row["created_at"],
                 reason=project_reason_from_row(row),
+                environment_id=row["environment_id"],
+                environment=environment,
+                planned_workspace=planned_workspace_for(row["id"], environment),
                 fact_count=row["fact_count"],
                 intent_count=row["intent_count"],
                 working_intent_count=row["working_intent_count"],
                 unclaimed_intent_count=row["unclaimed_intent_count"],
                 hint_count=row["hint_count"],
-            )
-            for row in rows
-        ]
+            ))
+        return summaries
 
 
 @router.post("/projects", response_model=ProjectDetail, status_code=201)
@@ -78,10 +85,16 @@ def create_project(body: CreateProjectRequest):
     with get_conn() as conn:
         pid = next_project_id(conn)
         now = utcnow()
+        try:
+            environment = get_environment_or_404(conn, body.environment_id) if body.environment_id else default_environment(conn)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                raise HTTPException(400, "Unknown environment") from exc
+            raise
 
         conn.execute(
-            "INSERT INTO projects (id, title, status, created_at) VALUES (?, ?, 'active', ?)",
-            (pid, body.title, now),
+            "INSERT INTO projects (id, title, status, created_at, environment_id) VALUES (?, ?, 'active', ?, ?)",
+            (pid, body.title, now, environment.id),
         )
         conn.execute(
             "INSERT INTO facts (id, project_id, description) VALUES (?, ?, ?)",
@@ -103,7 +116,16 @@ def create_project(body: CreateProjectRequest):
                 hints.append(Hint(id=hid, content=h.content, creator=h.creator, created_at=now))
 
         return ProjectDetail(
-            project=ProjectMeta(id=pid, title=body.title, status="active", created_at=now, reason=None),
+            project=ProjectMeta(
+                id=pid,
+                title=body.title,
+                status="active",
+                created_at=now,
+                reason=None,
+                environment_id=environment.id,
+                environment=environment,
+                planned_workspace=planned_workspace_for(pid, environment),
+            ),
             facts=[
                 Fact(id="origin", description=body.origin),
                 Fact(id="goal", description=body.goal),
@@ -128,12 +150,27 @@ def get_project(project_id: str):
             (project_id,),
         ).fetchall()
 
+        environment = _project_environment_or_none(conn, row["environment_id"])
+        meta = project_meta_from_row(row, environment=environment)
         return ProjectDetail(
-            project=project_meta_from_row(row),
+            project=meta,
             facts=[Fact(**dict(f)) for f in facts],
             intents=build_intents(conn, project_id),
             hints=[Hint(**dict(h)) for h in hints],
         )
+
+
+def _project_environment_or_none(conn, environment_id: str | None):
+    if not environment_id:
+        return default_environment(conn)
+    try:
+        return get_environment_or_404(conn, environment_id)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            return None
+        raise
+
+
 
 
 @router.delete("/projects/{project_id}", status_code=204)

@@ -148,27 +148,27 @@ Pull the base image used to build Cairn:
 docker pull ghcr.io/astral-sh/uv:python3.13-trixie
 ```
  
-Edit `dispatch.yaml` and fill in your LLM endpoints and API keys, then start both services:
+Copy `dispatch.example.yaml` to gitignored `dispatch.dev.yaml`, fill in local profile endpoints and API keys, then start both services:
  
 ```bash
 docker compose up --build
 ```
  
-This starts `cairn-server` on port `8000` and `cairn-dispatcher` once the server passes its health check. The dispatcher mounts `dispatch.yaml` from the project root and connects to Docker via the host socket. Data is persisted to `./datas/cairn/`.
+This starts `cairn-server` on port `8000` and `cairn-dispatcher` once the server passes its health check. The dispatcher mounts `dispatch.dev.yaml` from the project root and connects to Docker via the host socket. Data is persisted to `./datas/cairn/`.
  
 ### Manual
  
-Edit `dispatch.yaml` and fill in your LLM endpoints and API keys, then:
+Copy `dispatch.example.yaml` to gitignored `dispatch.dev.yaml`, fill in local profile endpoints and API keys, then:
  
 ```bash
 # Start the server
-uv run --project cairn cairn serve
- 
+uv run --project cairn cairn server
+
 # Run the dispatcher
-uv run --project cairn cairn dispatch --config dispatch.yaml
- 
+uv run --project cairn cairn dispatch --config dispatch.dev.yaml
+
 # Run startup health checks only
-uv run --project cairn cairn dispatch --config dispatch.yaml --startup-healthcheck-only
+uv run --project cairn cairn dispatch --config dispatch.dev.yaml --startup-healthcheck-only
 ```
 
 ## Disclaimer

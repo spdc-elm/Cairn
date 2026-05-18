@@ -3,7 +3,9 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 import json
 from importlib import resources
+import os
 from pathlib import Path
+import shlex
 from typing import Any, Literal
 
 import yaml
@@ -13,6 +15,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 TaskType = Literal["reason", "explore", "bootstrap"]
 WorkerType = Literal["claudecode", "codex", "pi", "mock"]
 CompletedAction = Literal["remove", "stop"]
+EnvironmentBackend = Literal["docker", "ssh"]
+CredentialsMode = Literal["remote", "inject", "merge"]
+TerminalMode = Literal["none", "tmux", "zellij"]
 
 WORKER_ENV_KEYS: dict[WorkerType, tuple[str, ...]] = {
     "claudecode": (
@@ -155,6 +160,111 @@ class ContainerConfig(BaseModel):
     cap_add: list[str] = Field(default_factory=list)
 
 
+class CredentialsConfig(BaseModel):
+    mode: CredentialsMode = "inject"
+
+
+class CleanupPolicy(BaseModel):
+    completed_action: CompletedAction = "stop"
+
+
+class TerminalConfig(BaseModel):
+    mode: TerminalMode = "none"
+
+
+class ProfileConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    id: str
+    type: WorkerType
+    model: str
+    base_url: str | None = None
+    provider_api: str | None = None
+    api_key: str | None = None
+    context_window: int | None = Field(default=None, gt=0)
+
+    @field_validator("id", "model", "base_url", "provider_api", "api_key")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        return text
+
+
+class DockerEnvironmentConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    id: str
+    label: str
+    backend: Literal["docker"] = "docker"
+    container: ContainerConfig
+    cleanup: CleanupPolicy = Field(default_factory=CleanupPolicy)
+
+
+class SshEnvironmentConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    id: str
+    label: str
+    backend: Literal["ssh"] = "ssh"
+    workspace_root: str
+    harness: Literal["pi"] = "pi"
+    ssh_command: str | None = None
+    host: str | None = None
+    user: str | None = None
+    port: int | None = Field(default=None, gt=0, le=65535)
+    ssh_config: str | None = None
+    identity_file: str | None = None
+    credentials: CredentialsConfig = Field(default_factory=CredentialsConfig)
+    cleanup: CleanupPolicy = Field(default_factory=CleanupPolicy)
+    terminal: TerminalConfig = Field(default_factory=TerminalConfig)
+    runner_path: str | None = None
+
+    @field_validator("workspace_root")
+    @classmethod
+    def validate_workspace_root(cls, value: str) -> str:
+        text = value.rstrip("/") or "/"
+        if text in {"/", "/home", "/home/kali", "/home/kali/ctf"}:
+            raise ValueError(f"unsafe SSH workspace_root: {text}")
+        if text.startswith("/home/kali/ctf/"):
+            raise ValueError("SSH workspace_root must not be inside /home/kali/ctf")
+        return text
+
+    @model_validator(mode="after")
+    def validate_ssh_target(self) -> "SshEnvironmentConfig":
+        if self.ssh_command:
+            argv = shlex.split(self.ssh_command)
+            if not argv:
+                raise ValueError("ssh_command must not be empty")
+            if argv[0] != "ssh":
+                raise ValueError("ssh_command must start with ssh")
+            return self
+        if not self.host:
+            raise ValueError("SSH environment requires ssh_command or host")
+        return self
+
+    def ssh_argv(self) -> list[str]:
+        if self.ssh_command:
+            return shlex.split(self.ssh_command)
+        argv = ["ssh"]
+        if self.ssh_config:
+            argv.extend(["-F", self.ssh_config])
+        if self.identity_file:
+            argv.extend(["-i", self.identity_file])
+        if self.port:
+            argv.extend(["-p", str(self.port)])
+        target = self.host if not self.user else f"{self.user}@{self.host}"
+        assert target is not None
+        argv.append(target)
+        return argv
+
+
+EnvironmentConfig = DockerEnvironmentConfig | SshEnvironmentConfig
+
+
 class RuntimeConfig(BaseModel):
     max_workers: int = Field(gt=0)
     max_running_projects: int = Field(gt=0)
@@ -165,14 +275,16 @@ class RuntimeConfig(BaseModel):
 
 
 class WorkerConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     name: str
     type: WorkerType
+    profile: str | None = None
     task_types: list[TaskType]
     max_running: int = Field(gt=0)
     priority: int = Field(ge=0)
     env: dict[str, str] = Field(default_factory=dict)
+    allowed_environments: list[str] | None = None
 
     @field_validator("task_types")
     @classmethod
@@ -185,10 +297,6 @@ class WorkerConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_env(self) -> "WorkerConfig":
-        required = WORKER_ENV_KEYS[self.type]
-        missing = [key for key in required if not self.env.get(key)]
-        if missing:
-            raise ValueError(f"worker {self.name} missing env keys: {', '.join(missing)}")
         if self.type == "pi":
             _validate_optional_positive_int_env(self.name, self.env, "PI_MODEL_CONTEXT_WINDOW")
         if self.type == "mock":
@@ -197,12 +305,14 @@ class WorkerConfig(BaseModel):
 
 
 class DispatchConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     server: str
     runtime: RuntimeConfig
     tasks: TasksConfig
-    container: ContainerConfig
+    container: ContainerConfig | None = None
+    environments: list[EnvironmentConfig]
+    profiles: list[ProfileConfig] = Field(default_factory=list)
     common_env: dict[str, str] = Field(default_factory=dict)
     workers: list[WorkerConfig]
 
@@ -211,6 +321,7 @@ class DispatchConfig(BaseModel):
     def merge_common_env(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
+        data = cls._normalize_environments(data)
         common_env = data.get("common_env")
         if common_env is None:
             common_env = {}
@@ -231,9 +342,45 @@ class DispatchConfig(BaseModel):
                 merged_workers.append(worker)
                 continue
             worker_copy = dict(worker)
-            worker_copy["env"] = {**common_env, **worker_env}
+            worker_copy["env"] = {
+                key: _expand_env_vars(value)
+                for key, value in {**common_env, **worker_env}.items()
+            }
             merged_workers.append(worker_copy)
         merged["workers"] = merged_workers
+        return merged
+
+    @staticmethod
+    def _normalize_environments(data: dict[str, Any]) -> dict[str, Any]:
+        merged = dict(data)
+        environments = merged.get("environments")
+        container = merged.get("container")
+        if environments is None:
+            if container is None:
+                return merged
+            merged["environments"] = [
+                {
+                    "id": "docker-default",
+                    "label": "Docker Default",
+                    "backend": "docker",
+                    "container": container,
+                    "cleanup": {"completed_action": container.get("completed_action", "stop") if isinstance(container, dict) else "stop"},
+                }
+            ]
+            return merged
+        if container is not None and isinstance(environments, list):
+            has_docker_default = any(isinstance(env, dict) and env.get("id") == "docker-default" for env in environments)
+            if not has_docker_default:
+                merged["environments"] = [
+                    {
+                        "id": "docker-default",
+                        "label": "Docker Default",
+                        "backend": "docker",
+                        "container": container,
+                        "cleanup": {"completed_action": container.get("completed_action", "stop") if isinstance(container, dict) else "stop"},
+                    },
+                    *environments,
+                ]
         return merged
 
     @model_validator(mode="after")
@@ -245,7 +392,42 @@ class DispatchConfig(BaseModel):
             raise ValueError("workers must not be empty")
         if self.runtime.max_project_workers > self.runtime.max_workers:
             raise ValueError("max_project_workers cannot exceed max_workers")
+        environment_ids = [environment.id for environment in self.environments]
+        if len(set(environment_ids)) != len(environment_ids):
+            raise ValueError("environment ids must be unique")
+        profile_ids = [profile.id for profile in self.profiles]
+        if len(set(profile_ids)) != len(profile_ids):
+            raise ValueError("profile ids must be unique")
+        profiles_by_id = {profile.id: profile for profile in self.profiles}
+        for worker in self.workers:
+            profile = profiles_by_id.get(worker.profile or "")
+            if worker.type == "mock":
+                if worker.profile is not None and profile is None:
+                    raise ValueError(f"worker {worker.name} references unknown profile: {worker.profile}")
+                if profile is not None and profile.type != worker.type:
+                    raise ValueError(f"worker {worker.name} profile {profile.id} type {profile.type} does not match worker type {worker.type}")
+                continue
+            if not worker.profile:
+                raise ValueError(f"worker {worker.name} requires profile")
+            if profile is None:
+                raise ValueError(f"worker {worker.name} references unknown profile: {worker.profile}")
+            if profile.type != worker.type:
+                raise ValueError(f"worker {worker.name} profile {profile.id} type {profile.type} does not match worker type {worker.type}")
+            missing = _required_profile_fields(profile)
+            if missing:
+                raise ValueError(f"profile {profile.id} missing fields: {', '.join(missing)}")
         return self
+
+    @property
+    def default_environment_id(self) -> str:
+        return self.environments[0].id
+
+    def environment_config(self, environment_id: str | None) -> EnvironmentConfig:
+        target = environment_id or self.default_environment_id
+        for environment in self.environments:
+            if environment.id == target:
+                return environment
+        raise KeyError(target)
 
     @classmethod
     def load(cls, path: Path) -> "DispatchConfig":
@@ -253,6 +435,59 @@ class DispatchConfig(BaseModel):
         config = cls.model_validate(data)
         validate_prompt_resources(config.runtime.prompt_group)
         return config
+
+    def profile_config(self, worker: WorkerConfig) -> ProfileConfig | None:
+        if worker.profile is None:
+            return None
+        for profile in self.profiles:
+            if profile.id == worker.profile:
+                return profile
+        raise KeyError(worker.profile)
+
+    def worker_with_profile_env(self, worker: WorkerConfig) -> WorkerConfig:
+        profile = self.profile_config(worker)
+        if profile is None:
+            return worker
+        return worker.model_copy(update={"env": resolve_worker_env(worker, profile)})
+
+
+def resolve_worker_env(worker: WorkerConfig, profile: ProfileConfig) -> dict[str, str]:
+    profile_env: dict[str, str] = {}
+    if profile.type == "pi":
+        profile_env["PI_MODEL"] = profile.model
+        if profile.base_url:
+            profile_env["PI_BASE_URL"] = profile.base_url
+        if profile.provider_api:
+            profile_env["PI_PROVIDER_API"] = profile.provider_api
+        if profile.api_key:
+            profile_env["PI_API_KEY"] = profile.api_key
+        if profile.context_window is not None:
+            profile_env["PI_MODEL_CONTEXT_WINDOW"] = str(profile.context_window)
+    elif profile.type == "codex":
+        profile_env["CODEX_MODEL"] = profile.model
+        if profile.base_url:
+            profile_env["CODEX_BASE_URL"] = profile.base_url
+        if profile.api_key:
+            profile_env["OPENAI_API_KEY"] = profile.api_key
+    elif profile.type == "claudecode":
+        profile_env["ANTHROPIC_MODEL"] = profile.model
+        if profile.base_url:
+            profile_env["ANTHROPIC_BASE_URL"] = profile.base_url
+        if profile.api_key:
+            profile_env["ANTHROPIC_AUTH_TOKEN"] = profile.api_key
+    return {**worker.env, **profile_env}
+
+
+def _required_profile_fields(profile: ProfileConfig) -> list[str]:
+    missing: list[str] = []
+    if profile.type in {"pi", "codex", "claudecode"}:
+        if not profile.base_url:
+            missing.append("base_url")
+        if not profile.api_key:
+            missing.append("api_key")
+    if profile.type == "pi" and not profile.provider_api:
+        missing.append("provider_api")
+    return missing
 
 
 def _validate_optional_positive_int_env(worker_name: str, env: dict[str, str], key: str) -> None:
@@ -265,6 +500,12 @@ def _validate_optional_positive_int_env(worker_name: str, env: dict[str, str], k
         raise ValueError(f"worker {worker_name} env {key} must be an integer") from exc
     if parsed <= 0:
         raise ValueError(f"worker {worker_name} env {key} must be greater than 0")
+
+
+def _expand_env_vars(value: str) -> str:
+    if not isinstance(value, str):
+        return value
+    return os.path.expandvars(value)
 
 
 def validate_prompt_resources(prompt_group: str) -> None:

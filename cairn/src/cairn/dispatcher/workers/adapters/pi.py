@@ -110,13 +110,24 @@ class PiDriver(WorkerDriver):
         return "\n".join(parts).strip() or stdout
 
     def _wrap_with_models(self, worker: WorkerConfig, pi_argv: list[str], *, enable_tools: bool = True) -> list[str]:
+        remote_credentials = not worker.env.get("PI_API_KEY")
         script = (
-            'agent_dir="$1"\n'
-            'models_json="$2"\n'
-            "shift 2\n"
+            'base_dir="${CAIRN_WORKSPACE:-/tmp}"\n'
+            f'agent_dir="$base_dir/.cairn/pi/{worker.name}"\n'
             'mkdir -p "$agent_dir"\n'
             'mkdir -p "$agent_dir/sessions"\n'
-            'printf "%s" "$models_json" > "$agent_dir/models.json"\n'
+            'if [ "${CAIRN_PI_REMOTE_CREDENTIALS:-0}" != "1" ]; then\n'
+            "python3 - <<'PY' \"$agent_dir\"\n"
+            "import json, os, sys\n"
+            "model = {'id': os.environ['PI_MODEL'], 'name': os.environ['PI_MODEL']}\n"
+            "context = os.environ.get('PI_MODEL_CONTEXT_WINDOW')\n"
+            "if context:\n"
+            "    model['contextWindow'] = int(context)\n"
+            "payload = {'providers': {'cairn': {'baseUrl': os.environ['PI_BASE_URL'], 'api': os.environ['PI_PROVIDER_API'], 'apiKey': os.environ['PI_API_KEY'], 'models': [model]}}}\n"
+            "open(os.path.join(sys.argv[1], 'models.json'), 'w', encoding='utf-8').write(json.dumps(payload, ensure_ascii=True, separators=(',', ':')))\n"
+            "PY\n"
+            "chmod 600 \"$agent_dir/models.json\"\n"
+            "fi\n"
             'exec env PI_CODING_AGENT_DIR="$agent_dir" pi "$@"\n'
         )
         argv = [
@@ -128,16 +139,9 @@ class PiDriver(WorkerDriver):
         ]
         if enable_tools:
             argv.extend(["--tools", "read,write,edit,bash,grep,find,ls"])
-        return [
-            "/bin/sh",
-            "-lc",
-            script,
-            "--",
-            self._agent_dir(worker),
-            self._models_json(worker),
-            *argv,
-            *pi_argv,
-        ]
+        wrapped_env = {"CAIRN_PI_REMOTE_CREDENTIALS": "1"} if remote_credentials else {}
+        prefix = ["env", *[f"{key}={value}" for key, value in wrapped_env.items()]]
+        return [*prefix, "/bin/sh", "-lc", script, "--", *argv, *pi_argv]
 
     @staticmethod
     def _agent_dir(worker: WorkerConfig) -> str:

@@ -965,7 +965,7 @@ workers:
     env:
       ANTHROPIC_MODEL: "claude-sonnet-4-6"
       ANTHROPIC_BASE_URL: "https://api.example.com"
-      ANTHROPIC_AUTH_TOKEN: "sk-ant-worker-a"
+      ANTHROPIC_AUTH_TOKEN: "<anthropic-worker-a-key>"
 
   - name: "claude-sonnet-doer"
     type: "claudecode"
@@ -975,7 +975,7 @@ workers:
     env:
       ANTHROPIC_MODEL: "claude-sonnet-4-6"
       ANTHROPIC_BASE_URL: "https://api.example.com"
-      ANTHROPIC_AUTH_TOKEN: "sk-ant-worker-b"
+      ANTHROPIC_AUTH_TOKEN: "<anthropic-worker-b-key>"
 
   - name: "codex-gpt54"
     type: "codex"
@@ -985,7 +985,7 @@ workers:
     env:
       CODEX_MODEL: "gpt-5.4"
       CODEX_BASE_URL: "https://api.example.com/v1"
-      OPENAI_API_KEY: "sk-worker-c"
+      OPENAI_API_KEY: "<openai-worker-c-key>"
 
   - name: "codex-gpt54-alt"
     type: "codex"
@@ -995,7 +995,7 @@ workers:
     env:
       CODEX_MODEL: "gpt-5.4"
       CODEX_BASE_URL: "https://api.example.com/v1"
-      OPENAI_API_KEY: "sk-worker-d"
+      OPENAI_API_KEY: "<openai-worker-d-key>"
 
   - name: "mock-observer"
     type: "mock"

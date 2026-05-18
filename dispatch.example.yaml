@@ -1,10 +1,8 @@
 # Cairn server API endpoint.
 server: "http://cairn-server:8000"
 
-# Shared environment variables merged into every worker.
-common_env:
-  TSEC_SERVER_HOST: "127.0.0.1:8000"
-  TSEC_AGENT_TOKEN: "replace-me"
+# Shared non-secret environment variables merged into every worker.
+common_env: {}
 
 runtime:
   # Scheduler tick interval in seconds.
@@ -49,39 +47,50 @@ container:
   #   - "NET_RAW"
   #   - "NET_ADMIN"
 
+profiles:
+  - id: "claudecode-example"
+    type: "claudecode"
+    model: "your-model-name"
+    base_url: "https://your-anthropic-compatible-endpoint"
+    api_key: "<anthropic-api-key>"
+
+  - id: "codex-example"
+    type: "codex"
+    model: "your-model-name"
+    base_url: "https://your-openai-compatible-endpoint/v1"
+    api_key: "<openai-api-key>"
+
+  - id: "pi-example"
+    type: "pi"
+    model: "your-model-name"
+    base_url: "https://your-openai-compatible-endpoint/v1"
+    provider_api: "openai-completions"
+    api_key: "<pi-api-key>"
+    context_window: 262144
+
 workers:
   # Worker priority is ascending: lower numbers are preferred first.
   # max_running is per-worker concurrency. Slower backends such as Pi usually benefit from lower values.
   - name: "claudecode-example"
     type: "claudecode"
+    profile: "claudecode-example"
     task_types: [bootstrap, reason, explore]
     max_running: 2
     priority: 0
-    env:
-      ANTHROPIC_MODEL: "your-model-name"
-      ANTHROPIC_BASE_URL: "https://your-anthropic-compatible-endpoint"
-      ANTHROPIC_AUTH_TOKEN: "sk-replace-me"
 
   - name: "codex-example"
     type: "codex"
+    profile: "codex-example"
     task_types: [bootstrap, reason, explore]
     max_running: 2
     priority: 0
     env:
-      CODEX_MODEL: "your-model-name"
-      CODEX_BASE_URL: "https://your-openai-compatible-endpoint/v1"
       # Set to "true" if your Responses API endpoint rejects non-streaming requests.
       CODEX_HEALTHCHECK_STREAM: "false"
-      OPENAI_API_KEY: "sk-replace-me"
 
   - name: "pi-example"
     type: "pi"
+    profile: "pi-example"
     task_types: [bootstrap, reason, explore]
     max_running: 2
     priority: 0
-    env:
-      PI_MODEL: "your-model-name"
-      PI_BASE_URL: "https://your-openai-compatible-endpoint/v1"
-      PI_API_KEY: "sk-replace-me"
-      PI_PROVIDER_API: "openai-completions"
-      PI_MODEL_CONTEXT_WINDOW: "262144"

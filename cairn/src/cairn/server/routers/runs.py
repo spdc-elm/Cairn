@@ -29,6 +29,7 @@ class RunLogSummary(BaseModel):
     returncode: int | None = None
     timed_out: bool | None = None
     cancelled: bool | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class RunLogEvent(BaseModel):
@@ -130,6 +131,7 @@ def _read_summary(path: Path) -> RunLogSummary | None:
         returncode=_optional_int(last_finished.get("returncode") if last_finished else None),
         timed_out=_optional_bool(last_finished.get("timed_out") if last_finished else None),
         cancelled=_optional_bool(last_finished.get("cancelled") if last_finished else None),
+        metadata=first.get("metadata") if isinstance(first.get("metadata"), dict) else None,
     )
 
 

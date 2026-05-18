@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS projects (
     title TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL,
+    environment_id TEXT,
     reason_worker TEXT,
     reason_trigger TEXT,
     reason_started_at TEXT,
@@ -78,6 +79,27 @@ CREATE TABLE IF NOT EXISTS scoped_counters (
     value INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (project_id, kind)
 );
+
+CREATE TABLE IF NOT EXISTS work_environments (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    backend TEXT NOT NULL,
+    ssh_command TEXT,
+    workspace_root TEXT,
+    harness TEXT NOT NULL DEFAULT 'pi',
+    cleanup_json TEXT,
+    terminal_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_health_status TEXT,
+    last_healthcheck_json TEXT
+);
+
+INSERT OR IGNORE INTO work_environments (
+    id, label, backend, workspace_root, harness, cleanup_json, terminal_json, created_at, updated_at
+) VALUES (
+    'docker-default', 'Docker Default', 'docker', NULL, 'pi', '{"completed_action":"stop"}', '{"mode":"none"}', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')
+);
 """
 
 
@@ -89,6 +111,20 @@ def configure(path: Path) -> None:
     _db_path.parent.mkdir(parents=True, exist_ok=True)
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    project_columns = {row["name"] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+    if "environment_id" not in project_columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN environment_id TEXT")
+    environment_columns = {row["name"] for row in conn.execute("PRAGMA table_info(work_environments)").fetchall()}
+    for name, ddl in {
+        "cleanup_json": "ALTER TABLE work_environments ADD COLUMN cleanup_json TEXT",
+        "terminal_json": "ALTER TABLE work_environments ADD COLUMN terminal_json TEXT",
+    }.items():
+        if name not in environment_columns:
+            conn.execute(ddl)
 
 
 @contextmanager

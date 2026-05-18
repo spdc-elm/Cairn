@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from cairn.dispatcher.redaction import redact_text
+
 
 DEFAULT_RUN_LOG_DIR = Path.home() / ".local" / "share" / "cairn" / "runs"
 
@@ -24,13 +26,24 @@ def run_log_root() -> Path:
 
 
 class RunLogWriter:
-    def __init__(self, *, project_id: str, task_type: str, phase: str, worker_name: str, intent_id: str | None, metadata: dict[str, Any]):
+    def __init__(
+        self,
+        *,
+        project_id: str,
+        task_type: str,
+        phase: str,
+        worker_name: str,
+        intent_id: str | None,
+        metadata: dict[str, Any],
+        secrets: list[str] | None = None,
+    ):
         self.run_id = f"run_{uuid.uuid4().hex}"
         self.project_id = project_id
         self.task_type = task_type
         self.phase = phase
         self.worker_name = worker_name
         self.intent_id = intent_id
+        self._secrets = secrets or []
         self.path = run_log_root() / project_id / f"{self.run_id}.jsonl"
         self._lock = threading.Lock()
         self._seq = 0
@@ -50,7 +63,7 @@ class RunLogWriter:
             "stream",
             {
                 "stream": stream,
-                "text": text,
+                "text": redact_text(text, self._secrets),
             },
         )
 

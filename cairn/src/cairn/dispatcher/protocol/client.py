@@ -9,7 +9,7 @@ from pydantic import TypeAdapter
 import requests
 from requests.adapters import HTTPAdapter
 
-from cairn.server.models import Intent, ProjectDetail, ProjectSummary, Settings
+from cairn.server.models import Intent, ProjectDetail, ProjectSummary, Settings, WorkEnvironmentPublic
 
 LOG = logging.getLogger(__name__)
 
@@ -37,6 +37,7 @@ class CairnClient:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._summary_adapter = TypeAdapter(list[ProjectSummary])
+        self._environment_adapter = TypeAdapter(list[WorkEnvironmentPublic])
         self._local = threading.local()
         self._sessions: dict[int, requests.Session] = {}
         self._sessions_lock = threading.Lock()
@@ -62,6 +63,15 @@ class CairnClient:
         response = self._session().get(self._url("/settings"), timeout=self._timeout)
         response.raise_for_status()
         return Settings.model_validate(response.json())
+
+    def list_environments(self, *, include_secrets: bool = False) -> list[WorkEnvironmentPublic]:
+        response = self._session().get(
+            self._url("/environments"),
+            params={"include_secrets": str(include_secrets).lower()},
+            timeout=self._timeout,
+        )
+        response.raise_for_status()
+        return self._environment_adapter.validate_python(response.json())
 
     def export_project(self, project_id: str) -> str:
         response = self._session().get(
