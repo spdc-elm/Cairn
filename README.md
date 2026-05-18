@@ -148,7 +148,7 @@ Pull the base image used to build Cairn:
 docker pull ghcr.io/astral-sh/uv:python3.13-trixie
 ```
  
-Copy `dispatch.example.yaml` to gitignored `dispatch.dev.yaml`, fill in local profile endpoints and API keys, then start both services:
+Copy `dispatch.example.yaml` to gitignored `dispatch.dev.yaml`, configure model profiles/workers there, then add provider endpoints and API keys in the server Environment UI. Start both services:
  
 ```bash
 docker compose up --build
@@ -158,7 +158,7 @@ This starts `cairn-server` on port `8000` and `cairn-dispatcher` once the server
  
 ### Manual
  
-Copy `dispatch.example.yaml` to gitignored `dispatch.dev.yaml`, fill in local profile endpoints and API keys, then:
+Copy `dispatch.example.yaml` to gitignored `dispatch.dev.yaml`, configure model profiles/workers there, then add provider endpoints and API keys in the server Environment UI:
  
 ```bash
 # Start the server

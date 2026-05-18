@@ -43,6 +43,53 @@ class ProjectReason(BaseModel):
     last_heartbeat_at: str
 
 
+ProviderEndpointType = Literal["claudecode", "codex", "pi", "mock"]
+
+
+class ProviderEndpointPublic(BaseModel):
+    id: str
+    type: ProviderEndpointType
+    base_url: str
+    provider_api: str | None = None
+    has_api_key: bool = False
+    api_key_preview: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ProviderEndpointSecret(ProviderEndpointPublic):
+    api_key: str | None = None
+
+
+class ProviderEndpointUpsert(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    type: ProviderEndpointType
+    base_url: str
+    provider_api: str | None = None
+    api_key: str | None = None
+    clear_api_key: bool = False
+
+    @field_validator("id", "base_url")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+    @field_validator("provider_api", "api_key")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        return text
+
+
 class WorkEnvironmentPublic(BaseModel):
     id: str
     label: str
@@ -56,6 +103,7 @@ class WorkEnvironmentPublic(BaseModel):
     updated_at: str | None = None
     last_health_status: str | None = None
     last_healthcheck: dict | None = None
+    provider_endpoints: list[ProviderEndpointPublic] = Field(default_factory=list)
 
 
 class WorkEnvironmentUpsert(BaseModel):
@@ -69,6 +117,7 @@ class WorkEnvironmentUpsert(BaseModel):
     harness: str = "pi"
     cleanup: dict | None = None
     terminal: dict | None = None
+    provider_endpoints: list[ProviderEndpointUpsert] = Field(default_factory=list)
 
     @field_validator("id", "label", "ssh_command", "workspace_root", "harness")
     @classmethod

@@ -556,20 +556,20 @@
       <section class="slide-shell">
         <article class="slide active">
           <div>
-            <h2>结论先行：server 管任务与地点，dispatcher 管兵力与凭据</h2>
-            <p class="lead">v1 的目标不是继续扩展 v0，而是把已跑通的 SSH 能力收束成清晰边界。地点由 Web UI 与 server 管理，模型、profile、secret、worker fleet 由 dispatcher 配置管理。</p>
+            <h2>结论先行：server 管任务、地点与 endpoint，dispatcher 管兵力与模型</h2>
+            <p class="lead">v1.1 的修正是承认 base_url 与 api_key 通常同属一个 provider endpoint。地点与 endpoint 由 Web UI 与 server 管理，模型与 worker fleet 由 dispatcher 配置管理。</p>
           </div>
           <div class="thesis">
             <div class="thesis-card server">
               <strong>server.db</strong>
-              <p>保存 project、environment、project-environment binding、地点 healthcheck。</p>
+              <p>保存 project、environment、project-environment binding、provider endpoint、healthcheck。</p>
             </div>
             <div class="thesis-card dispatcher">
               <strong>dispatcher config</strong>
-              <p>保存 runtime、worker 列表、profile、secret 引用、调度策略。</p>
+              <p>保存 runtime、worker 列表、model profile、调度策略。</p>
             </div>
           </div>
-          <div class="note">一句话：project 绑定执行地点，worker/profile 决定模型能力。environment 只回答“命令在哪里运行”。</div>
+          <div class="note">一句话：project 绑定执行地点，environment endpoint 决定从哪里调 provider，worker/model_profile 决定用什么模型。</div>
         </article>
 
         <article class="slide">
@@ -608,9 +608,9 @@
               <header>v1 收口</header>
               <div class="body">
                 <ul class="list">
-                  <li><span class="mark"></span><span>environment 只描述执行地点。</span></li>
-                  <li><span class="mark"></span><span>profile 描述模型、provider、secret 引用。</span></li>
-                  <li><span class="mark"></span><span>server healthcheck 只测地点，dispatcher healthcheck 测完整 worker matrix。</span></li>
+                  <li><span class="mark"></span><span>environment 描述执行地点与该地点的 provider endpoint。</span></li>
+                  <li><span class="mark"></span><span>model_profile 只描述模型与上下文能力。</span></li>
+                  <li><span class="mark"></span><span>server API redacted 返回 endpoint，dispatcher healthcheck 测完整 worker matrix。</span></li>
                   <li><span class="mark"></span><span>project 只持久化 environment_id。</span></li>
                 </ul>
               </div>
@@ -650,11 +650,11 @@
             <p class="lead">新增需求的关键是 environment registry 热刷新。server-side environment 是用户操作面，不应要求重启 dispatcher 才生效。</p>
           </div>
           <div class="flow">
-            <div class="step"><b>1. 读配置</b><small>dispatcher 解析 runtime、workers、profiles。配置文件显式选择 dev/local。</small></div>
-            <div class="step"><b>2. 拉地点</b><small>定期从 server 拉 /environments，检测增删改。</small></div>
-            <div class="step"><b>3. 校验矩阵</b><small>allowed_environments 必须存在于 server 或内置地点。</small></div>
+            <div class="step"><b>1. 读配置</b><small>dispatcher 解析 runtime、workers、model_profiles。配置文件显式选择 dev/local。</small></div>
+            <div class="step"><b>2. 拉地点</b><small>定期从 server 拉 environments 与 redacted endpoints。</small></div>
+            <div class="step"><b>3. 校验矩阵</b><small>allowed_environments 与 worker.endpoint 必须存在。</small></div>
             <div class="step"><b>4. 选择 worker</b><small>project.environment_id 过滤 worker fleet。</small></div>
-            <div class="step"><b>5. 执行任务</b><small>worker.profile 注入 Pi 所需模型与 secret。</small></div>
+            <div class="step"><b>5. 执行任务</b><small>model_profile + server endpoint 解析 Pi 所需 env。</small></div>
           </div>
           <div class="workspace-bar">
             <b>Project 顶栏展示</b>
@@ -664,26 +664,24 @@
 
         <article class="slide">
           <div>
-            <h2>配置形态：地点在 server，profile 在 dispatcher</h2>
-            <p class="lead">这里是实现接口的最小稳定形态。secret 只用引用，真实值只在 dispatcher 进程内解析。</p>
+            <h2>配置形态：endpoint 在 server，model 在 dispatcher</h2>
+            <p class="lead">这里是 v1.1 的最小稳定形态。server 保存 endpoint 与 key 但 redacted 输出；dispatcher 保存模型与 worker 调度。</p>
           </div>
           <div class="toggle-row">
             <button class="config-tab active" data-config="yaml">dispatch.local.yaml</button>
             <button class="config-tab" data-config="json">server environment</button>
           </div>
-          <pre id="config-yaml">profiles:
-  - id: pi-gpt54-local
+          <pre id="config-yaml">model_profiles:
+  - id: pi-gpt54
     type: pi
     model: gpt-5.4
-    base_url: "http://host.docker.internal:3000/v1"
-    provider_api: "openai-completions"
-    api_key: "&lt;api-key&gt;"
     context_window: 200000
 
 workers:
   - name: pi-worker-1
     type: pi
-    profile: pi-gpt54-local
+    model_profile: pi-gpt54
+    endpoint: pi-default
     task_types: [bootstrap, reason, explore]
     max_running: 1
     priority: 0
@@ -696,7 +694,16 @@ workers:
   "workspace_root": "/home/kali/cairn-workspaces",
   "harness": "pi",
   "cleanup": {"completed_action": "stop"},
-  "terminal": {"mode": "none"}
+  "terminal": {"mode": "none"},
+  "provider_endpoints": [
+    {
+      "id": "pi-default",
+      "type": "pi",
+      "base_url": "http://10.0.0.44:3000/v1",
+      "provider_api": "openai-completions",
+      "has_api_key": true
+    }
+  ]
 }</pre>
         </article>
 
@@ -712,11 +719,11 @@ workers:
             </div>
             <div class="risk-item">
               <button><span>healthcheck 归因</span><span>+</span></button>
-              <div class="content">server 只测地点；dispatcher 测 worker + profile + secret + environment。模型失败不应污染 environment 健康状态。</div>
+              <div class="content">server 测地点与 endpoint 配置；dispatcher 测 worker + model_profile + endpoint + environment。模型失败不应污染单纯地点健康状态。</div>
             </div>
             <div class="risk-item">
               <button><span>secret 泄露</span><span>+</span></button>
-              <div class="content">dev/local 中的 API key 不得进入 server、run log、request.json、静态 HTML 或 project metadata；只有 dispatch.example.yaml 可提交。</div>
+              <div class="content">server DB 可保存 key，但 API/UI 默认 redacted；run log、request.json、静态 HTML 与 project metadata 不得出现明文 key。</div>
             </div>
             <div class="risk-item">
               <button><span>environment 热刷新</span><span>+</span></button>

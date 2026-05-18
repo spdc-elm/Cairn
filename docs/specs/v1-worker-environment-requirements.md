@@ -1,65 +1,54 @@
-# Cairn Worker Environment Requirements v1
+# Cairn Worker Environment Requirements v1.1
 
 日期：2026-05-18
 
-状态：当前需求基线。取代 `docs/plan/v0-worker-environment-refactor-plan.html` 与 `docs/plan/v0-worker-environment-execution-plan.md` 中关于 snapshot、兼容旧 `container.*`、server 持久化 LLM 配置的设计。
+状态：当前需求基线。v1.1 修订 v1 中“server 完全不持久化 LLM endpoint/secret”的判断：`base_url` 与 `api_key` 在实际部署中通常同属一个 provider endpoint，并且 endpoint 往往随 execution environment 的网络位置变化。因此 endpoint 应归属于 server-side environment；worker 仍只描述模型与调度能力。
 
 ## 1. 核心判断
 
 Cairn 的边界应是：
 
-- server 管“任务与地点”。
-- dispatcher 管“兵力与凭据”。
+- server 管“任务、地点、该地点可用的 provider endpoint”。
+- dispatcher 管“兵力、模型 profile、调度策略”。
 
-换言之，project 绑定 execution environment；worker/profile 决定用什么模型、什么 provider、什么 secret。environment 只描述命令在哪里运行，不描述模型如何调用。
+换言之，project 绑定 execution environment；environment 描述代码在哪里运行，以及从该地点如何访问 LLM provider；worker/model_profile 决定用什么模型、什么上下文能力、多少并发、可跑哪些任务。
 
-## 2. v0 已完成的 SSH 大改动
+关键修正：
 
-v0 已经证明 SSH backend 可行，主要成果如下：
+- `base_url + provider_api + api_key` 是一个 provider endpoint，通常不可拆开。
+- endpoint 与执行地点强相关，应随 environment 存在。
+- `model` 不属于 environment；同一 environment endpoint 可被多个 model worker 复用。
+
+## 2. v0/v1 已完成基础
+
+已有基础：
 
 - dispatcher 任务层已从 `ContainerManager` 解耦到 `WorkEnvironment`。
-- 已有 Docker backend adapter，旧 Docker 路径可作为地点 backend。
-- 已有 SSH backend：通过 OpenSSH 命令连接远端，准备 workspace，安装/调用远端 `cairn-runner`，支持 stdout/stderr 回流、timeout、cancel、cleanup。
-- server 已有 environment CRUD、environment healthcheck、project 创建时选择 environment 的 UI/API。
-- dispatcher 已能从 server 拉取 SSH environments，并按 project `environment_id` 选择 backend。
+- Docker 与 SSH 都是 environment backend。
+- SSH backend 可通过 OpenSSH 连接远端，准备 workspace，安装/调用远端 `cairn-runner`，支持 stdout/stderr 回流、timeout、cancel、cleanup。
+- server 已有 environment CRUD、healthcheck、project 创建选择 environment 的 UI/API。
+- dispatcher 已能从 server 拉取 environments，并按 project `environment_id` 选择 backend。
 - Pi worker 已能在远端 workspace 下生成私有 `.cairn/pi/<worker>` 配置并运行。
-- 已用 `pentestVM` over SSH 跑通过 dispatcher 拉起 Pi agent worker 的端到端调用。
 
-v0 的主要问题是职责混叠：server environment 中混入了 `pi_model`、`pi_base_url`、`pi_api_key`、`pi_provider_api` 等 worker/profile 配置；execution plan 还保留了 snapshot 与兼容旧配置的思路。v1 需收口。
+v1 的不足：
+
+- 将 `base_url` 与 `api_key` 放在 dispatcher profile 中，假设同一 worker profile 在所有 environment 中都能用同一个 endpoint。
+- 实际上 Docker、宿主机、SSH 远端、内网机器访问同一服务的 URL 可能不同；换中转 API 时 key 往往也随之变化。
+- 因此 v1.1 将 endpoint 移入 server environment。
 
 ## 3. 目标分工
 
 ### server.db
 
-server 持久化用户与项目事实：
+server 持久化：
 
 - projects
 - work environments
 - project -> environment binding
+- environment provider endpoints
 - environment healthcheck result
 
-server 不持久化 LLM API key，不持久化 provider profile，不负责选择 worker。
-
-### dispatcher config files
-
-dispatcher 配置运行时与 worker fleet：
-
-- dispatcher runtime：server URL、poll interval、timeouts、并发上限。
-- scheduling policy：worker priority、max_running、task_types、allowed_environments。
-- workers：worker 类型、profile 引用、任务能力。
-- profiles：model、base_url、provider_api、context_window、API key。
-
-配置文件分三类：
-
-- `dispatch.example.yaml`：唯一可提交的样例配置；不得包含真实 secret。
-- `dispatch.dev.yaml`：本机开发配置；必须 gitignored；可放 mock/dev 场景的具体参数。
-- `dispatch.local.yaml`：个人私密配置；必须 gitignored；可直接放真实 LLM API key。
-
-不再使用 `dispatch.yaml` 作为主配置文件名。运行 dispatcher 时应显式选择 `--config dispatch.dev.yaml` 或 `--config dispatch.local.yaml`。
-
-### environment
-
-environment 只描述执行地点：
+environment 字段：
 
 - `id`
 - `label`
@@ -69,102 +58,159 @@ environment 只描述执行地点：
 - `harness`
 - `cleanup`
 - `terminal`
+- `provider_endpoints[]`
 
-environment 不包含 `model/base_url/provider_api/api_key`。
+provider endpoint 字段：
 
-### worker/profile
+- `id`
+- `type`: `pi`、`codex`、`claudecode` 等
+- `base_url`
+- `provider_api`
+- `api_key`
+- `created_at`
+- `updated_at`
 
-worker/profile 描述模型能力与凭据：
+server 不负责选择 worker，不持久化 model，不持久化 worker 并发/优先级策略。
 
-- `profile.id`
-- `profile.type`
-- `profile.model`
-- `profile.base_url`
-- `profile.provider_api`
-- `profile.api_key`
-- `profile.context_window`
+### dispatcher config files
 
-MVP 不引入 secret ref 体系。`api_key` 可直接写在 gitignored 的 `dispatch.dev.yaml` 或 `dispatch.local.yaml` 中。server、run log、project metadata、UI 静态文件均不得出现 API key 明文。
+dispatcher 配置：
 
-## 4. 不做 snapshot
+- dispatcher runtime：server URL、poll interval、timeouts、并发上限。
+- scheduling policy：worker priority、max_running、task_types、allowed_environments。
+- model profiles：model、context_window、driver type。
+- workers：worker 类型、model_profile 引用、endpoint id 引用、任务能力。
 
-v1 MVP 不做 `environment_snapshot_json`。
+配置文件分三类：
 
-理由：
+- `dispatch.example.yaml`：唯一可提交样例；不得含真实 secret 或真实 endpoint。
+- `dispatch.dev.yaml`：本机开发配置；必须 gitignored；通常用于 mock/dev。
+- `dispatch.local.yaml`：个人私密配置；必须 gitignored；v1.1 起不再需要放 LLM API key，除非后续显式支持 local endpoint override。
 
-- 当前仍未形成稳定用户数据契约，审计复现不是 MVP 主目标。
-- snapshot 会制造第二个 environment truth source。
-- 执行真相应唯一：`project.environment_id -> current server environment`。
+不再使用 `dispatch.yaml` 主文件名。运行 dispatcher 时显式选择 `--config dispatch.dev.yaml` 或 `--config dispatch.local.yaml`。
 
-若以后需要审计，可新增只含非敏感地点信息的历史记录；不得把 snapshot 用作调度输入。
+### model_profile
 
-## 5. 不做兼容
+model_profile 描述模型能力：
 
-v1 不兼容 v0 schema。
+- `id`
+- `type`
+- `model`
+- `context_window`
 
-理由：
+model_profile 不包含 `base_url`、`provider_api`、`api_key`。
 
-- 当前还未完成 MVP，无需为了临时实现保留双语义。
-- 兼容旧 `container.*` 与 server-side `pi_*` 会继续污染边界。
-- 破坏式改干净，比在错误抽象上迁就更低成本。
+### worker
 
-允许保留 `docker-default` 作为内置地点，但它必须仍是 environment，而非 worker/profile 配置容器。
+worker 描述调度与执行能力：
 
-## 6. Healthcheck 分层
+- `name`
+- `type`
+- `model_profile`
+- `endpoint`
+- `task_types`
+- `max_running`
+- `priority`
+- `allowed_environments`
+- 非 secret `env`
 
-healthcheck 必须拆成两类。
+`worker.endpoint` 是逻辑 endpoint id。dispatcher 在具体 environment 上运行该 worker 时，从该 environment 的 `provider_endpoints` 中查找同名 endpoint。
+
+## 4. Secret 边界
+
+v1.1 允许 server DB 存 `api_key`，但必须按 secret 处理。
+
+最低要求：
+
+- 普通 `GET /environments` 不返回明文 key。
+- 响应只可返回 `has_api_key: true`、`api_key_preview` 或 redacted 标记。
+- 只有 dispatcher 使用的内部/显式参数可请求 endpoint secret。
+- UI input 允许写入/更新 key，但默认永不展示明文。
+- update 时空 key 表示保留旧 key；显式 `clear_api_key: true` 才删除。
+- run log、startup healthcheck、server healthcheck、error preview 不得出现 API key 明文。
+
+MVP 可先使用 SQLite 明文存储，但文档与 UI 必须明确这是 local/trusted deployment 假设。后续可加 DB encryption、keychain、Vault 或 per-endpoint secret backend；这些不改变外部模型。
+
+## 5. 不做 snapshot
+
+v1.1 仍不做 `environment_snapshot_json`。
+
+执行真相仍是：
+
+```text
+project.environment_id -> current server environment -> current provider endpoint
+```
+
+若以后需要审计，可新增只含 redacted endpoint metadata 的历史记录；不得把明文 key 或完整 snapshot 用作调度输入。
+
+## 6. 不做兼容
+
+v1.1 不兼容 v1 临时 dispatcher profile schema：
+
+- 不再接受 `profiles[].base_url`。
+- 不再接受 `profiles[].provider_api`。
+- 不再接受 `profiles[].api_key`。
+- `profiles[]` 重命名为 `model_profiles[]`。
+- worker 使用 `model_profile` 与 `endpoint`，不再使用 `profile`。
+
+理由：v1 尚未成为稳定用户数据契约，破坏式改正比保留双语义更低成本。
+
+## 7. Healthcheck 分层
 
 ### server environment healthcheck
 
-server 只能检查地点：
+server 检查地点与 endpoint 配置：
 
 - SSH 是否免交互可连。
 - `workspace_root` 是否可创建、读写、清理 probe 文件。
 - `harness` 是否存在，例如 `pi --version`。
 - runner 是否可安装或调用。
 - terminal backend 是否存在；缺失时按 optional 标记。
+- provider endpoint 是否配置完整：`base_url`、必要的 `provider_api`、是否有 key。
 
-server 不测试模型 endpoint，不读取 API key，不调用 LLM。
+server 不选择 model，不做模型语义测试。若 provider 支持 model-free ping，可作为 endpoint connectivity check；否则 endpoint 的真实模型调用由 dispatcher startup healthcheck 负责。
 
 ### dispatcher startup healthcheck
 
-dispatcher 检查完整调度矩阵：
+dispatcher 检查完整矩阵：
 
 - environment 是否可用。
 - worker 是否允许该 environment。
-- profile 是否完整。
-- API key 是否存在且不会被日志打印。
-- worker + profile + environment 是否能执行模型 ping。
+- worker.endpoint 是否存在于该 environment。
+- model_profile 是否完整。
+- endpoint key 是否存在且不会被日志打印。
+- worker + model_profile + endpoint + environment 是否能执行模型 ping。
 
-模型失败应归因到 dispatcher/profile/key，不归因到 server environment。
+模型失败应归因到 worker/model_profile/endpoint/environment 的具体组合，不应污染单纯地点健康。
 
-## 7. 调度规则
+## 8. 调度规则
 
 project 创建时选择 `environment_id`。
 
 dispatcher 执行时：
 
-1. 读显式传入的 dispatcher config，例如 `dispatch.dev.yaml` 或 `dispatch.local.yaml`，解析 runtime、workers、profiles。
-2. 从 server 拉取 environments。
-3. 校验 `allowed_environments` 引用是否存在于 server environments 或内置 environments。
-4. 对每个 project，按 `project.environment_id` 选择 environment。
-5. 从允许该 environment 的 workers 中选择 worker。
-6. 用 worker.profile 构造 agent 命令与注入环境变量。
+1. 读显式传入的 dispatcher config，解析 runtime、workers、model_profiles。
+2. 从 server 拉取 environments 与 redacted endpoint metadata。
+3. 在需要执行 worker 时，按受控路径拉取该 environment 的 endpoint secret。
+4. 校验 `allowed_environments` 引用存在于 server environments 或内置 environments。
+5. 对每个 project，按 `project.environment_id` 选择 environment。
+6. 从允许该 environment 且 endpoint 存在的 workers 中选择 worker。
+7. 用 worker.model_profile + environment.provider_endpoint 构造 agent 命令与注入环境变量。
 
-若 project 绑定的 environment 不存在，dispatcher 不应回退到默认环境；应跳过该 project 并给出明确日志。
+若 project 绑定的 environment 不存在，dispatcher 不回退默认环境；应跳过并明确日志。
 
-dispatcher 必须支持 environment 配置热刷新：
+若 worker 引用的 endpoint 在目标 environment 不存在，该 worker 对该 environment 不可用；不得静默改用其它 endpoint。
 
-- server-side environments 是用户通过 Web UI 管理的地点配置，dispatcher 不应只在启动时读取一次。
-- dispatcher 应定期拉取 `/environments`，检测新增、修改、删除。
-- 新增 environment 应进入后续调度与 healthcheck 矩阵。
-- 修改 environment 应对后续新任务生效；已经运行中的任务继续使用启动时的 handle，不被中途打断。
-- 删除 environment 后，绑定该 environment 的 project 应被跳过并明确记录原因；不自动回退。
-- 若 environment 正在运行任务，删除只影响新任务；清理由 dispatcher 按既有 running task 生命周期处理。
+dispatcher 必须支持 environment 与 endpoint 热刷新：
 
-## 8. 配置形态
+- 新增 endpoint 应进入后续调度与 startup healthcheck 矩阵。
+- 修改 endpoint 应对后续新任务生效；运行中 task 使用启动时解析出的 endpoint，不被中途替换。
+- 删除 endpoint 后，新任务跳过引用它的 worker/environment 组合。
+- endpoint healthcheck 更新不应导致 backend 对象无意义重建。
 
-示例：
+## 9. 配置形态
+
+dispatcher config 示例：
 
 ```yaml
 server: "http://127.0.0.1:8000"
@@ -177,19 +223,17 @@ runtime:
   healthcheck_timeout: 10
   prompt_group: "default"
 
-profiles:
-  - id: pi-gpt54-local
+model_profiles:
+  - id: pi-gpt54
     type: pi
     model: gpt-5.4
-    base_url: "http://host.docker.internal:3000/v1"
-    provider_api: "openai-completions"
-    api_key: "<api-key>"
-    context_window: 200000
+    context_window: 262144
 
 workers:
   - name: pi-worker-1
     type: pi
-    profile: pi-gpt54-local
+    model_profile: pi-gpt54
+    endpoint: pi-default
     task_types: [bootstrap, reason, explore]
     max_running: 1
     priority: 0
@@ -207,47 +251,68 @@ server environment 示例：
   "workspace_root": "/home/kali/cairn-workspaces",
   "harness": "pi",
   "cleanup": {"completed_action": "stop"},
-  "terminal": {"mode": "none"}
+  "terminal": {"mode": "none"},
+  "provider_endpoints": [
+    {
+      "id": "pi-default",
+      "type": "pi",
+      "base_url": "http://10.0.0.44:3000/v1",
+      "provider_api": "openai-completions",
+      "api_key": "<api-key>"
+    }
+  ]
 }
 ```
 
-## 9. v1 MVP 改造清单
+redacted API response 示例：
 
-- 删除 server models/API/UI 中的 `pi_model`、`pi_base_url`、`pi_api_key`、`pi_provider_api`。
-- 删除 server environment healthcheck 对模型 endpoint 的检查。
-- 删除 `projects.environment_snapshot_json` 新写入逻辑；新 schema 不再依赖该字段。
-- 删除 dispatcher 从 server environment 生成 worker env override 的逻辑。
-- 在 dispatcher config 中新增 `profiles[]`，worker 改为引用 `profile`。
-- 删除 `dispatch.yaml` 主文件概念；保留 `dispatch.example.yaml`、`dispatch.dev.yaml`、`dispatch.local.yaml` 三类配置。
-- 确保只有 `dispatch.example.yaml` 可提交；`dispatch.dev.yaml` 与 `dispatch.local.yaml` 必须 gitignored。
-- 修改 `allowed_environments` 校验：允许引用 server-side environment；启动后统一校验。
-- 修改 Pi driver 输入：从 resolved profile 生成 `PI_MODEL`、`PI_BASE_URL`、`PI_PROVIDER_API`、`PI_API_KEY`。
-- 更新 UI Environment 面板：只配置地点字段。
-- 更新 New Project：只选择 environment，不选择 worker/profile。
-- 增加 dispatcher environment registry 热刷新；不要求重启 dispatcher 才能使用 Web UI 新增/修改的 environment。
-- Project detail 顶栏显示该 project 的 workspace 路径；SSH workspace 路径按 `workspace_root/project_id` 展示，Docker workspace 按 backend 能提供的路径展示。
-- 更新测试：server 测地点与绑定；dispatcher 测 profile、secret、worker/environment matrix。
+```json
+{
+  "id": "pi-default",
+  "type": "pi",
+  "base_url": "http://10.0.0.44:3000/v1",
+  "provider_api": "openai-completions",
+  "has_api_key": true,
+  "api_key_preview": "sk-...IoX9y"
+}
+```
 
-## 10. 验收标准
+## 10. v1.1 改造清单
 
-- server DB 不再新增或展示任何 LLM key/provider 字段。
-- 创建 project 后只持久化 `environment_id`。
-- repo 中不存在 `dispatch.yaml`；只有 `dispatch.example.yaml` 可提交。
+- server DB 增加 environment provider endpoint 存储。
+- server models/API/UI 增加 endpoint CRUD 或 environment 内嵌 endpoint 编辑。
+- API 默认 redacted；dispatcher 专用读取路径可取 secret。
+- dispatcher config 将 `profiles[]` 改为 `model_profiles[]`。
+- worker 将 `profile` 改为 `model_profile`，新增 `endpoint`。
+- 删除 dispatcher profile 中的 `base_url`、`provider_api`、`api_key`。
+- 修改 profile resolution：`model_profile + provider_endpoint -> driver env`。
+- Pi/Codex/Claude driver 不直接读取 worker profile endpoint 字段；只接收 resolved env。
+- startup healthcheck report 包含 environment、worker、model_profile、endpoint。
+- run log metadata 可记录 endpoint id、base_url redacted/host 信息；不得记录 key。
+- UI Environment panel 显示与编辑 endpoint；key input 默认空且不会回显。
+- Project detail 可显示 environment 与 workspace；不显示 endpoint key。
+- 更新 `dispatch.example.yaml`、`dispatch.dev.yaml`、`dispatch.local.yaml` 到 v1.1 schema。
+- 更新 docs/README/docker-compose 中对 config schema 的引用。
+
+## 11. 验收标准
+
+- server DB 不再有 `environment_snapshot_json`。
+- server environment 中可保存 provider endpoint，并能 redacted 返回。
+- 普通 API/UI 不返回 API key 明文。
+- dispatcher config 中不存在 `profiles[].api_key`、`profiles[].base_url`、`profiles[].provider_api`。
+- dispatcher 能用 server endpoint + dispatcher model_profile 跑 Pi worker。
+- 同一 environment 可配置多个 endpoint，多个 worker 可引用不同 endpoint。
+- 同一 worker 在不同 environment 中使用同名 endpoint，但具体 base_url/key 可不同。
+- endpoint 缺失时 worker/environment 组合不可用，不回退其它 endpoint。
+- run log、healthcheck、error preview 不包含 API key 明文。
 - `dispatch.dev.yaml` 与 `dispatch.local.yaml` 被 gitignore 排除。
-- Environment 面板可创建 SSH 地点并触发地点 healthcheck。
-- Web UI 新增或修改 environment 后，dispatcher 无需重启即可用于后续调度。
-- Project detail 顶栏显示当前 environment 与 workspace 路径。
-- Dispatcher 可用 gitignored dispatcher config 中的 profile + API key 在 server 配置的 SSH environment 上运行 Pi worker。
-- `allowed_environments` 能限制 worker 只跑指定地点。
-- run log 不包含 API key 明文。
-- 绑定缺失 environment 的 project 被跳过，不自动落到默认环境。
-- Docker backend 若保留，只作为 environment backend；模型配置仍来自 profile。
 
-## 11. 非目标
+## 12. 非目标
 
 - 不做 snapshot。
-- 不兼容 v0 临时 schema。
-- 不做 server-side secret storage。
-- 不做 secret ref/keychain/env-var 体系；MVP 直接使用 gitignored dispatcher config。
+- 不兼容 v1 临时 schema。
+- 不做多用户 RBAC。
+- 不做远端 agent secret manager。
+- 不做完整 Vault/keychain 集成；可作为后续 secret backend。
 - 不做多 host 负载均衡。
 - 不做 terminal 交互 UI；tmux/zellij 可作为后续增强。

@@ -95,6 +95,18 @@ CREATE TABLE IF NOT EXISTS work_environments (
     last_healthcheck_json TEXT
 );
 
+CREATE TABLE IF NOT EXISTS environment_provider_endpoints (
+    environment_id TEXT NOT NULL REFERENCES work_environments(id) ON DELETE CASCADE,
+    endpoint_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    provider_api TEXT,
+    api_key TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (environment_id, endpoint_id)
+);
+
 INSERT OR IGNORE INTO work_environments (
     id, label, backend, workspace_root, harness, cleanup_json, terminal_json, created_at, updated_at
 ) VALUES (
@@ -125,6 +137,21 @@ def _migrate(conn: sqlite3.Connection) -> None:
     }.items():
         if name not in environment_columns:
             conn.execute(ddl)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS environment_provider_endpoints (
+            environment_id TEXT NOT NULL REFERENCES work_environments(id) ON DELETE CASCADE,
+            endpoint_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            base_url TEXT NOT NULL,
+            provider_api TEXT,
+            api_key TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (environment_id, endpoint_id)
+        )
+        """
+    )
 
 
 @contextmanager

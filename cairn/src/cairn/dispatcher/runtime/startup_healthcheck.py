@@ -3,12 +3,14 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from typing import Callable
 
 from cairn.dispatcher.config import DispatchConfig, WorkerConfig
 from cairn.dispatcher.redaction import redact_text
 from cairn.dispatcher.runtime.environments.base import WorkEnvironment
 from cairn.dispatcher.tasks.common import run_healthcheck
 from cairn.dispatcher.workers.registry import get_driver
+from cairn.server.models import ProviderEndpointSecret, WorkEnvironmentPublic
 
 LOG = logging.getLogger("runtime.startup")
 STARTUP_HEALTHCHECK_PREVIEW_LIMIT = 50
@@ -19,7 +21,8 @@ class StartupHealthcheckResult:
     environment_id: str
     backend: str
     worker_name: str
-    profile_id: str | None
+    model_profile_id: str | None
+    endpoint_id: str | None
     ok: bool
     returncode: int
     duration_ms: int
@@ -33,6 +36,8 @@ def run_startup_healthchecks(
     config: DispatchConfig,
     environments: dict[str, WorkEnvironment],
     *,
+    environment_metadata: dict[str, WorkEnvironmentPublic] | None = None,
+    endpoint_loader: Callable[[str, str], ProviderEndpointSecret] | None = None,
     show_commands: bool = False,
 ) -> list[StartupHealthcheckResult]:
     jobs: list[tuple[WorkEnvironment, WorkerConfig]] = []
@@ -48,17 +53,45 @@ def run_startup_healthchecks(
         len(environments),
         parallelism,
     )
+    results: list[StartupHealthcheckResult] = []
     with ThreadPoolExecutor(max_workers=parallelism) as executor:
-        future_map = {
-            executor.submit(
-                _run_worker_healthcheck,
-                environment,
-                config.worker_with_profile_env(worker),
-                config.runtime.healthcheck_timeout,
-            ): (environment, worker)
-            for environment, worker in jobs
-        }
-        results: list[StartupHealthcheckResult] = []
+        future_map = {}
+        for environment, worker in jobs:
+            try:
+                resolved_worker = _resolve_worker_for_healthcheck(
+                    config,
+                    worker,
+                    environment,
+                    environment_metadata or {},
+                    endpoint_loader,
+                )
+            except Exception as exc:
+                LOG.warning("startup healthcheck skipped environment=%s worker=%s error=%s", environment.id, worker.name, exc)
+                results.append(
+                    StartupHealthcheckResult(
+                        environment_id=environment.id,
+                        backend=environment.backend,
+                        worker_name=worker.name,
+                        model_profile_id=worker.model_profile,
+                        endpoint_id=worker.endpoint,
+                        ok=False,
+                        returncode=1,
+                        duration_ms=0,
+                        http_status=None,
+                        response_preview="",
+                        stderr_preview=str(exc),
+                        command="-",
+                    )
+                )
+                continue
+            future_map[
+                executor.submit(
+                    _run_worker_healthcheck,
+                    environment,
+                    resolved_worker,
+                    config.runtime.healthcheck_timeout,
+                )
+            ] = (environment, worker)
         for future in as_completed(future_map):
             environment, worker = future_map[future]
             try:
@@ -69,7 +102,8 @@ def run_startup_healthchecks(
                     environment_id=environment.id,
                     backend=environment.backend,
                     worker_name=worker.name,
-                    profile_id=worker.profile,
+                    model_profile_id=worker.model_profile,
+                    endpoint_id=worker.endpoint,
                     ok=False,
                     returncode=1,
                     duration_ms=0,
@@ -119,7 +153,8 @@ def _run_worker_healthcheck(
             environment_id=environment.id,
             backend=environment.backend,
             worker_name=worker.name,
-            profile_id=worker.profile,
+            model_profile_id=worker.model_profile,
+            endpoint_id=worker.endpoint,
             ok=result.returncode == 0,
             returncode=result.returncode,
             duration_ms=healthcheck.duration_ms,
@@ -198,3 +233,33 @@ def _worker_secrets(worker: WorkerConfig) -> list[str]:
         for key, value in worker.env.items()
         if value and ("KEY" in key or "TOKEN" in key or "SECRET" in key)
     ]
+
+
+def _resolve_worker_for_healthcheck(
+    config: DispatchConfig,
+    worker: WorkerConfig,
+    environment: WorkEnvironment,
+    environment_metadata: dict[str, WorkEnvironmentPublic],
+    endpoint_loader: Callable[[str, str], ProviderEndpointSecret] | None,
+) -> WorkerConfig:
+    if worker.type == "mock":
+        return config.worker_with_endpoint_env(worker, None)
+    if not worker.endpoint:
+        raise ValueError(f"worker {worker.name} requires endpoint")
+    metadata = environment_metadata.get(environment.id)
+    if metadata is None:
+        raise ValueError(f"environment {environment.id} metadata unavailable")
+    endpoint_meta = next(
+        (
+            endpoint
+            for endpoint in metadata.provider_endpoints
+            if endpoint.id == worker.endpoint and endpoint.type == worker.type
+        ),
+        None,
+    )
+    if endpoint_meta is None:
+        raise ValueError(f"environment {environment.id} missing endpoint {worker.endpoint}")
+    if endpoint_loader is None:
+        raise ValueError("endpoint secret loader unavailable")
+    endpoint = endpoint_loader(environment.id, worker.endpoint)
+    return config.worker_with_endpoint_env(worker, endpoint)

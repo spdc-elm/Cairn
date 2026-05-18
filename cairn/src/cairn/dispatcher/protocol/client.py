@@ -9,7 +9,7 @@ from pydantic import TypeAdapter
 import requests
 from requests.adapters import HTTPAdapter
 
-from cairn.server.models import Intent, ProjectDetail, ProjectSummary, Settings, WorkEnvironmentPublic
+from cairn.server.models import Intent, ProjectDetail, ProjectSummary, ProviderEndpointSecret, Settings, WorkEnvironmentPublic
 
 LOG = logging.getLogger(__name__)
 
@@ -72,6 +72,21 @@ class CairnClient:
         )
         response.raise_for_status()
         return self._environment_adapter.validate_python(response.json())
+
+    def get_environment_endpoint(
+        self,
+        environment_id: str,
+        endpoint_id: str,
+        *,
+        include_secret: bool = True,
+    ) -> ProviderEndpointSecret:
+        response = self._session().get(
+            self._url(f"/environments/{environment_id}/endpoints/{endpoint_id}"),
+            params={"include_secret": str(include_secret).lower()},
+            timeout=self._timeout,
+        )
+        response.raise_for_status()
+        return ProviderEndpointSecret.model_validate(response.json())
 
     def export_project(self, project_id: str) -> str:
         response = self._session().get(

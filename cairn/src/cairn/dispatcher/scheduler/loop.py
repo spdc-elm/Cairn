@@ -37,6 +37,7 @@ class WorkerSelection:
     blocked_rejected: list[str]
     blocked_task_type: list[str]
     blocked_environment: list[str]
+    blocked_endpoint: list[str]
 
 
 class DispatcherLoop:
@@ -45,6 +46,7 @@ class DispatcherLoop:
         self.config = DispatchConfig.load(config_path)
         self.client = CairnClient(self.config.server)
         self._environment_hashes: dict[str, str] = {}
+        self.environment_metadata: dict[str, WorkEnvironmentPublic] = {}
         self.environments = self._build_environment_registry()
         self.executor = ThreadPoolExecutor(max_workers=self.config.runtime.max_workers)
         self.cleanup_executor = ThreadPoolExecutor(max_workers=max(1, min(8, self.config.runtime.max_workers)))
@@ -79,12 +81,14 @@ class DispatcherLoop:
         for environment in self.config.environments:
             registry[environment.id] = build_environment(environment)
             self._environment_hashes[environment.id] = _environment_config_hash(environment)
+            self.environment_metadata[environment.id] = _environment_public_from_config(environment)
         try:
             server_environments = self.client.list_environments()
         except Exception as exc:
             LOG.info("server environments unavailable during dispatcher startup; using config only error=%s", exc)
             return registry
         for environment in server_environments:
+            self.environment_metadata[environment.id] = environment
             config = _server_environment_config(environment)
             if config is None or environment.id in registry:
                 continue
@@ -101,6 +105,7 @@ class DispatcherLoop:
         config_ids = {environment.id for environment in self.config.environments}
         seen_server_ids: set[str] = set()
         for environment in server_environments:
+            self.environment_metadata[environment.id] = environment
             config = _server_environment_config(environment)
             if config is None or environment.id in config_ids:
                 continue
@@ -119,6 +124,7 @@ class DispatcherLoop:
                 continue
             self.environments.pop(environment_id).close()
             self._environment_hashes.pop(environment_id, None)
+            self.environment_metadata.pop(environment_id, None)
             LOG.info("environment registry removed environment=%s", environment_id)
 
     def run(self, once: bool = False) -> None:
@@ -385,7 +391,9 @@ class DispatcherLoop:
                 selection.blocked_rejected,
             )
             return False
-        worker = self.config.worker_with_profile_env(worker)
+        worker = self._worker_with_environment_endpoint(worker, environment.id)
+        if worker is None:
+            return False
         self._clear_log_state(f"project:{project.project.id}:worker:reason")
         claim = self.client.claim_reason(project.project.id, worker.name, trigger)
         if claim.status_code in (403, 409):
@@ -451,7 +459,9 @@ class DispatcherLoop:
                 selection.blocked_rejected,
             )
             return False
-        worker = self.config.worker_with_profile_env(worker)
+        worker = self._worker_with_environment_endpoint(worker, environment.id)
+        if worker is None:
+            return False
         self._clear_log_state(f"project:{project.project.id}:worker:bootstrap")
         claim = self.client.heartbeat(project.project.id, intent.id, worker.name)
         if claim.status_code in (403, 409):
@@ -510,7 +520,9 @@ class DispatcherLoop:
                 selection.blocked_rejected,
             )
             return False
-        worker = self.config.worker_with_profile_env(worker)
+        worker = self._worker_with_environment_endpoint(worker, environment.id)
+        if worker is None:
+            return False
         self._clear_log_state(f"project:{project.project.id}:worker:explore")
         claim = self.client.heartbeat(project.project.id, intent.id, worker.name)
         if claim.status_code in (403, 409):
@@ -563,10 +575,14 @@ class DispatcherLoop:
         blocked_rejected: list[str] = []
         blocked_task_type: list[str] = []
         blocked_environment: list[str] = []
+        blocked_endpoint: list[str] = []
         running_counts = self._worker_counts()
         for worker in self.config.workers:
             if worker.allowed_environments is not None and environment_id not in worker.allowed_environments:
                 blocked_environment.append(worker.name)
+                continue
+            if not self._worker_endpoint_available(worker, environment_id):
+                blocked_endpoint.append(worker.name)
                 continue
             if task_type not in worker.task_types:
                 blocked_task_type.append(worker.name)
@@ -586,13 +602,14 @@ class DispatcherLoop:
             candidates.append(worker)
         if not candidates:
             LOG.debug(
-                "worker selection project=%s task=%s no candidates blocked_busy=%s blocked_unhealthy=%s blocked_rejected=%s blocked_task_type=%s",
+                "worker selection project=%s task=%s no candidates blocked_busy=%s blocked_unhealthy=%s blocked_rejected=%s blocked_task_type=%s blocked_endpoint=%s",
                 project_id,
                 task_type,
                 blocked_busy,
                 blocked_unhealthy,
                 blocked_rejected,
                 blocked_task_type,
+                blocked_endpoint,
             )
             return WorkerSelection(
                 worker=None,
@@ -601,10 +618,11 @@ class DispatcherLoop:
                 blocked_rejected=blocked_rejected,
                 blocked_task_type=blocked_task_type,
                 blocked_environment=blocked_environment,
+                blocked_endpoint=blocked_endpoint,
             )
         ordered = choose_worker(candidates, running_counts)
         LOG.debug(
-            "worker selection project=%s task=%s candidates=%s blocked_busy=%s blocked_unhealthy=%s blocked_rejected=%s blocked_task_type=%s chosen=%s",
+            "worker selection project=%s task=%s candidates=%s blocked_busy=%s blocked_unhealthy=%s blocked_rejected=%s blocked_task_type=%s blocked_endpoint=%s chosen=%s",
             project_id,
             task_type,
             [f"{worker.name}({running_counts.get(worker.name, 0)}/{worker.max_running},p{worker.priority})" for worker in candidates],
@@ -612,6 +630,7 @@ class DispatcherLoop:
             blocked_unhealthy,
             blocked_rejected,
             blocked_task_type,
+            blocked_endpoint,
             ordered[0].name if ordered else None,
         )
         return WorkerSelection(
@@ -621,7 +640,39 @@ class DispatcherLoop:
             blocked_rejected=blocked_rejected,
             blocked_task_type=blocked_task_type,
             blocked_environment=blocked_environment,
+            blocked_endpoint=blocked_endpoint,
         )
+
+    def _worker_endpoint_available(self, worker: WorkerConfig, environment_id: str) -> bool:
+        if worker.type == "mock":
+            return True
+        if not worker.endpoint:
+            return False
+        metadata = self.environment_metadata.get(environment_id)
+        if metadata is None:
+            return False
+        return any(endpoint.id == worker.endpoint and endpoint.type == worker.type for endpoint in metadata.provider_endpoints)
+
+    def _worker_with_environment_endpoint(self, worker: WorkerConfig, environment_id: str) -> WorkerConfig | None:
+        if worker.type == "mock":
+            return self.config.worker_with_endpoint_env(worker, None)
+        assert worker.endpoint is not None
+        try:
+            endpoint = self.client.get_environment_endpoint(
+                environment_id,
+                worker.endpoint,
+                include_secret=True,
+            )
+            return self.config.worker_with_endpoint_env(worker, endpoint)
+        except Exception as exc:
+            LOG.warning(
+                "worker endpoint resolution failed environment=%s worker=%s endpoint=%s error=%s",
+                environment_id,
+                worker.name,
+                worker.endpoint,
+                exc,
+            )
+            return None
 
     def _worker_counts(self) -> dict[str, int]:
         counts: dict[str, int] = {}
@@ -953,7 +1004,13 @@ class DispatcherLoop:
             )
 
     def _run_startup_healthchecks(self, *, show_commands: bool) -> None:
-        results = run_startup_healthchecks(self.config, self.environments, show_commands=show_commands)
+        results = run_startup_healthchecks(
+            self.config,
+            self.environments,
+            environment_metadata=self.environment_metadata,
+            endpoint_loader=self.client.get_environment_endpoint,
+            show_commands=show_commands,
+        )
         if any(result.ok for result in results):
             return
         raise RuntimeError(format_failure_summary(results))
@@ -986,6 +1043,28 @@ def _server_environment_hash(environment: WorkEnvironmentPublic) -> str:
         "terminal": environment.terminal,
     }
     return json.dumps(payload, ensure_ascii=True, sort_keys=True)
+
+
+def _environment_public_from_config(environment) -> WorkEnvironmentPublic:
+    if environment.backend == "ssh":
+        return WorkEnvironmentPublic(
+            id=environment.id,
+            label=environment.label,
+            backend="ssh",
+            ssh_command=environment.ssh_command,
+            workspace_root=environment.workspace_root,
+            harness=environment.harness,
+            cleanup=environment.cleanup.model_dump(mode="json"),
+            terminal=environment.terminal.model_dump(mode="json"),
+            provider_endpoints=[],
+        )
+    return WorkEnvironmentPublic(
+        id=environment.id,
+        label=environment.label,
+        backend="docker",
+        cleanup=environment.cleanup.model_dump(mode="json"),
+        provider_endpoints=[],
+    )
 
 
 def _environment_config_hash(environment) -> str:

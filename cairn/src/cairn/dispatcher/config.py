@@ -11,6 +11,8 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cairn.server.models import ProviderEndpointPublic
+
 
 TaskType = Literal["reason", "explore", "bootstrap"]
 WorkerType = Literal["claudecode", "codex", "pi", "mock"]
@@ -172,25 +174,20 @@ class TerminalConfig(BaseModel):
     mode: TerminalMode = "none"
 
 
-class ProfileConfig(BaseModel):
+class ModelProfileConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     id: str
     type: WorkerType
     model: str
-    base_url: str | None = None
-    provider_api: str | None = None
-    api_key: str | None = None
     context_window: int | None = Field(default=None, gt=0)
 
-    @field_validator("id", "model", "base_url", "provider_api", "api_key")
+    @field_validator("id", "model")
     @classmethod
-    def validate_optional_text(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
+    def validate_text(cls, value: str) -> str:
         text = value.strip()
         if not text:
-            return None
+            raise ValueError("must not be empty")
         return text
 
 
@@ -279,7 +276,8 @@ class WorkerConfig(BaseModel):
 
     name: str
     type: WorkerType
-    profile: str | None = None
+    model_profile: str | None = None
+    endpoint: str | None = None
     task_types: list[TaskType]
     max_running: int = Field(gt=0)
     priority: int = Field(ge=0)
@@ -312,7 +310,7 @@ class DispatchConfig(BaseModel):
     tasks: TasksConfig
     container: ContainerConfig | None = None
     environments: list[EnvironmentConfig]
-    profiles: list[ProfileConfig] = Field(default_factory=list)
+    model_profiles: list[ModelProfileConfig] = Field(default_factory=list)
     common_env: dict[str, str] = Field(default_factory=dict)
     workers: list[WorkerConfig]
 
@@ -395,27 +393,26 @@ class DispatchConfig(BaseModel):
         environment_ids = [environment.id for environment in self.environments]
         if len(set(environment_ids)) != len(environment_ids):
             raise ValueError("environment ids must be unique")
-        profile_ids = [profile.id for profile in self.profiles]
-        if len(set(profile_ids)) != len(profile_ids):
-            raise ValueError("profile ids must be unique")
-        profiles_by_id = {profile.id: profile for profile in self.profiles}
+        model_profile_ids = [profile.id for profile in self.model_profiles]
+        if len(set(model_profile_ids)) != len(model_profile_ids):
+            raise ValueError("model_profile ids must be unique")
+        profiles_by_id = {profile.id: profile for profile in self.model_profiles}
         for worker in self.workers:
-            profile = profiles_by_id.get(worker.profile or "")
+            profile = profiles_by_id.get(worker.model_profile or "")
             if worker.type == "mock":
-                if worker.profile is not None and profile is None:
-                    raise ValueError(f"worker {worker.name} references unknown profile: {worker.profile}")
+                if worker.model_profile is not None and profile is None:
+                    raise ValueError(f"worker {worker.name} references unknown model_profile: {worker.model_profile}")
                 if profile is not None and profile.type != worker.type:
-                    raise ValueError(f"worker {worker.name} profile {profile.id} type {profile.type} does not match worker type {worker.type}")
+                    raise ValueError(f"worker {worker.name} model_profile {profile.id} type {profile.type} does not match worker type {worker.type}")
                 continue
-            if not worker.profile:
-                raise ValueError(f"worker {worker.name} requires profile")
+            if not worker.model_profile:
+                raise ValueError(f"worker {worker.name} requires model_profile")
+            if not worker.endpoint:
+                raise ValueError(f"worker {worker.name} requires endpoint")
             if profile is None:
-                raise ValueError(f"worker {worker.name} references unknown profile: {worker.profile}")
+                raise ValueError(f"worker {worker.name} references unknown model_profile: {worker.model_profile}")
             if profile.type != worker.type:
-                raise ValueError(f"worker {worker.name} profile {profile.id} type {profile.type} does not match worker type {worker.type}")
-            missing = _required_profile_fields(profile)
-            if missing:
-                raise ValueError(f"profile {profile.id} missing fields: {', '.join(missing)}")
+                raise ValueError(f"worker {worker.name} model_profile {profile.id} type {profile.type} does not match worker type {worker.type}")
         return self
 
     @property
@@ -436,58 +433,60 @@ class DispatchConfig(BaseModel):
         validate_prompt_resources(config.runtime.prompt_group)
         return config
 
-    def profile_config(self, worker: WorkerConfig) -> ProfileConfig | None:
-        if worker.profile is None:
+    def model_profile_config(self, worker: WorkerConfig) -> ModelProfileConfig | None:
+        if worker.model_profile is None:
             return None
-        for profile in self.profiles:
-            if profile.id == worker.profile:
+        for profile in self.model_profiles:
+            if profile.id == worker.model_profile:
                 return profile
-        raise KeyError(worker.profile)
+        raise KeyError(worker.model_profile)
 
-    def worker_with_profile_env(self, worker: WorkerConfig) -> WorkerConfig:
-        profile = self.profile_config(worker)
+    def worker_with_endpoint_env(
+        self,
+        worker: WorkerConfig,
+        endpoint: ProviderEndpointPublic | None,
+    ) -> WorkerConfig:
+        profile = self.model_profile_config(worker)
         if profile is None:
             return worker
-        return worker.model_copy(update={"env": resolve_worker_env(worker, profile)})
+        if endpoint is None:
+            raise ValueError(f"worker {worker.name} requires endpoint")
+        return worker.model_copy(update={"env": resolve_worker_env(worker, profile, endpoint)})
 
 
-def resolve_worker_env(worker: WorkerConfig, profile: ProfileConfig) -> dict[str, str]:
+def resolve_worker_env(
+    worker: WorkerConfig,
+    profile: ModelProfileConfig,
+    endpoint: ProviderEndpointPublic,
+) -> dict[str, str]:
+    if profile.type != worker.type or endpoint.type != worker.type:
+        raise ValueError(
+            f"worker {worker.name} type={worker.type} requires matching model_profile and endpoint types"
+        )
     profile_env: dict[str, str] = {}
     if profile.type == "pi":
         profile_env["PI_MODEL"] = profile.model
-        if profile.base_url:
-            profile_env["PI_BASE_URL"] = profile.base_url
-        if profile.provider_api:
-            profile_env["PI_PROVIDER_API"] = profile.provider_api
-        if profile.api_key:
-            profile_env["PI_API_KEY"] = profile.api_key
+        profile_env["PI_BASE_URL"] = _required_endpoint_field(endpoint, "base_url")
+        profile_env["PI_PROVIDER_API"] = _required_endpoint_field(endpoint, "provider_api")
+        profile_env["PI_API_KEY"] = _required_endpoint_field(endpoint, "api_key")
         if profile.context_window is not None:
             profile_env["PI_MODEL_CONTEXT_WINDOW"] = str(profile.context_window)
     elif profile.type == "codex":
         profile_env["CODEX_MODEL"] = profile.model
-        if profile.base_url:
-            profile_env["CODEX_BASE_URL"] = profile.base_url
-        if profile.api_key:
-            profile_env["OPENAI_API_KEY"] = profile.api_key
+        profile_env["CODEX_BASE_URL"] = _required_endpoint_field(endpoint, "base_url")
+        profile_env["OPENAI_API_KEY"] = _required_endpoint_field(endpoint, "api_key")
     elif profile.type == "claudecode":
         profile_env["ANTHROPIC_MODEL"] = profile.model
-        if profile.base_url:
-            profile_env["ANTHROPIC_BASE_URL"] = profile.base_url
-        if profile.api_key:
-            profile_env["ANTHROPIC_AUTH_TOKEN"] = profile.api_key
+        profile_env["ANTHROPIC_BASE_URL"] = _required_endpoint_field(endpoint, "base_url")
+        profile_env["ANTHROPIC_AUTH_TOKEN"] = _required_endpoint_field(endpoint, "api_key")
     return {**worker.env, **profile_env}
 
 
-def _required_profile_fields(profile: ProfileConfig) -> list[str]:
-    missing: list[str] = []
-    if profile.type in {"pi", "codex", "claudecode"}:
-        if not profile.base_url:
-            missing.append("base_url")
-        if not profile.api_key:
-            missing.append("api_key")
-    if profile.type == "pi" and not profile.provider_api:
-        missing.append("provider_api")
-    return missing
+def _required_endpoint_field(endpoint: ProviderEndpointPublic, name: str) -> str:
+    value = getattr(endpoint, name, None)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"endpoint {endpoint.id} missing field: {name}")
+    return value.strip()
 
 
 def _validate_optional_positive_int_env(worker_name: str, env: dict[str, str], key: str) -> None:

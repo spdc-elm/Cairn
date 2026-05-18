@@ -2,7 +2,7 @@
 
 依据：`docs/specs/v1-worker-environment-requirements.md`
 
-状态：待执行。
+状态：已被 v1.1 取代。新的 endpoint/secret 设计见 `docs/plan/v1.1-worker-environment-endpoint-secret-plan.md`；本文仅作为 v1 历史计划保留。
 
 原则：不为 v0 临时设计保兼容。凡与 v1 边界冲突者，直接删除或重写。server 管任务与地点；dispatcher 管兵力与凭据。
 

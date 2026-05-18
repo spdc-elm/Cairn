@@ -7,7 +7,16 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
-from cairn.server.models import Intent, ProjectMeta, ProjectReason, WorkEnvironmentPublic, WorkEnvironmentUpsert
+from cairn.server.models import (
+    Intent,
+    ProjectMeta,
+    ProjectReason,
+    ProviderEndpointPublic,
+    ProviderEndpointSecret,
+    ProviderEndpointUpsert,
+    WorkEnvironmentPublic,
+    WorkEnvironmentUpsert,
+)
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -216,7 +225,12 @@ def project_meta_from_row(row: sqlite3.Row, environment: WorkEnvironmentPublic |
     )
 
 
-def environment_row_to_public(row: sqlite3.Row, *, include_secret: bool = False) -> WorkEnvironmentPublic:
+def environment_row_to_public(
+    row: sqlite3.Row,
+    *,
+    conn: sqlite3.Connection | None = None,
+    include_secret: bool = False,
+) -> WorkEnvironmentPublic:
     health = None
     raw_health = row["last_healthcheck_json"] if "last_healthcheck_json" in row.keys() else None
     if raw_health:
@@ -224,6 +238,13 @@ def environment_row_to_public(row: sqlite3.Row, *, include_secret: bool = False)
             health = json.loads(raw_health)
         except json.JSONDecodeError:
             health = None
+    endpoints: list[ProviderEndpointPublic] = []
+    if conn is not None:
+        endpoints = list_environment_provider_endpoints(
+            conn,
+            row["id"],
+            include_secret=include_secret,
+        )
     return WorkEnvironmentPublic(
         id=row["id"],
         label=row["label"],
@@ -237,6 +258,7 @@ def environment_row_to_public(row: sqlite3.Row, *, include_secret: bool = False)
         updated_at=row["updated_at"],
         last_health_status=row["last_health_status"],
         last_healthcheck=health,
+        provider_endpoints=endpoints,
     )
 
 
@@ -244,7 +266,7 @@ def get_environment_or_404(conn: sqlite3.Connection, environment_id: str, *, inc
     row = conn.execute("SELECT * FROM work_environments WHERE id = ?", (environment_id,)).fetchone()
     if row is None:
         raise HTTPException(404, "Environment not found")
-    return environment_row_to_public(row, include_secret=include_secret)
+    return environment_row_to_public(row, conn=conn, include_secret=include_secret)
 
 
 def default_environment(conn: sqlite3.Connection) -> WorkEnvironmentPublic:
@@ -252,7 +274,142 @@ def default_environment(conn: sqlite3.Connection) -> WorkEnvironmentPublic:
         "SELECT * FROM work_environments ORDER BY CASE WHEN id = 'docker-default' THEN 0 ELSE 1 END, created_at LIMIT 1"
     ).fetchone()
     assert row is not None
-    return environment_row_to_public(row)
+    return environment_row_to_public(row, conn=conn)
+
+
+def endpoint_row_to_public(
+    row: sqlite3.Row,
+    *,
+    include_secret: bool = False,
+) -> ProviderEndpointPublic:
+    api_key = row["api_key"]
+    model_type = ProviderEndpointSecret if include_secret else ProviderEndpointPublic
+    payload = {
+        "id": row["endpoint_id"],
+        "type": row["type"],
+        "base_url": row["base_url"],
+        "provider_api": row["provider_api"],
+        "has_api_key": bool(api_key),
+        "api_key_preview": _api_key_preview(api_key),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+    if include_secret:
+        payload["api_key"] = api_key
+    return model_type.model_validate(payload)
+
+
+def list_environment_provider_endpoints(
+    conn: sqlite3.Connection,
+    environment_id: str,
+    *,
+    include_secret: bool = False,
+) -> list[ProviderEndpointPublic]:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM environment_provider_endpoints
+        WHERE environment_id = ?
+        ORDER BY endpoint_id
+        """,
+        (environment_id,),
+    ).fetchall()
+    return [endpoint_row_to_public(row, include_secret=include_secret) for row in rows]
+
+
+def get_environment_provider_endpoint_or_404(
+    conn: sqlite3.Connection,
+    environment_id: str,
+    endpoint_id: str,
+    *,
+    include_secret: bool = False,
+) -> ProviderEndpointPublic:
+    get_environment_or_404(conn, environment_id)
+    row = conn.execute(
+        """
+        SELECT *
+        FROM environment_provider_endpoints
+        WHERE environment_id = ? AND endpoint_id = ?
+        """,
+        (environment_id, endpoint_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, "Provider endpoint not found")
+    return endpoint_row_to_public(row, include_secret=include_secret)
+
+
+def upsert_environment_provider_endpoint(
+    conn: sqlite3.Connection,
+    environment_id: str,
+    body: ProviderEndpointUpsert,
+) -> ProviderEndpointPublic:
+    get_environment_or_404(conn, environment_id)
+    now = utcnow()
+    existing = conn.execute(
+        """
+        SELECT *
+        FROM environment_provider_endpoints
+        WHERE environment_id = ? AND endpoint_id = ?
+        """,
+        (environment_id, body.id),
+    ).fetchone()
+    api_key = _next_api_key(existing["api_key"] if existing is not None else None, body)
+    if existing is None:
+        conn.execute(
+            """
+            INSERT INTO environment_provider_endpoints (
+                environment_id, endpoint_id, type, base_url, provider_api, api_key, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                environment_id,
+                body.id,
+                body.type,
+                body.base_url,
+                body.provider_api,
+                api_key,
+                now,
+                now,
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE environment_provider_endpoints
+            SET type = ?,
+                base_url = ?,
+                provider_api = ?,
+                api_key = ?,
+                updated_at = ?
+            WHERE environment_id = ? AND endpoint_id = ?
+            """,
+            (
+                body.type,
+                body.base_url,
+                body.provider_api,
+                api_key,
+                now,
+                environment_id,
+                body.id,
+            ),
+        )
+    return get_environment_provider_endpoint_or_404(conn, environment_id, body.id)
+
+
+def _api_key_preview(api_key: str | None) -> str | None:
+    if not api_key:
+        return None
+    if len(api_key) <= 8:
+        return "***"
+    return f"{api_key[:3]}...{api_key[-4:]}"
+
+
+def _next_api_key(existing: str | None, body: ProviderEndpointUpsert) -> str | None:
+    if body.clear_api_key:
+        return None
+    if body.api_key is None:
+        return existing
+    return body.api_key
 
 
 def slugify_environment_id(label: str) -> str:

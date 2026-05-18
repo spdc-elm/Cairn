@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from cairn.dispatcher.config import DispatchConfig, resolve_worker_env
+from cairn.server.models import ProviderEndpointSecret
 
 
 BASE_CONFIG = {
@@ -29,41 +30,25 @@ BASE_CONFIG = {
 }
 
 
-class DispatchConfigProfileTests(unittest.TestCase):
+class DispatchConfigModelProfileTests(unittest.TestCase):
     def test_dispatch_example_loads(self) -> None:
         config = DispatchConfig.load(Path(__file__).parents[3] / "dispatch.example.yaml")
 
-        self.assertTrue(config.profiles)
+        self.assertTrue(config.model_profiles)
         self.assertTrue(config.workers)
 
-    def test_non_mock_worker_requires_declared_profile(self) -> None:
-        with self.assertRaises(ValueError):
-            DispatchConfig.model_validate(
-                {
-                    **BASE_CONFIG,
-                    "workers": [
-                        {
-                            "name": "pi",
-                            "type": "pi",
-                            "task_types": ["bootstrap"],
-                            "max_running": 1,
-                            "priority": 0,
-                        }
-                    ],
-                }
-            )
-
-    def test_profile_type_must_match_worker_type(self) -> None:
+    def test_v1_profiles_schema_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             DispatchConfig.model_validate(
                 {
                     **BASE_CONFIG,
                     "profiles": [
                         {
-                            "id": "codex-main",
-                            "type": "codex",
+                            "id": "pi-main",
+                            "type": "pi",
                             "model": "gpt-test",
                             "base_url": "https://example.test/v1",
+                            "provider_api": "openai-completions",
                             "api_key": "sk-test",
                         }
                     ],
@@ -71,7 +56,7 @@ class DispatchConfigProfileTests(unittest.TestCase):
                         {
                             "name": "pi",
                             "type": "pi",
-                            "profile": "codex-main",
+                            "profile": "pi-main",
                             "task_types": ["bootstrap"],
                             "max_running": 1,
                             "priority": 0,
@@ -80,18 +65,74 @@ class DispatchConfigProfileTests(unittest.TestCase):
                 }
             )
 
-    def test_pi_profile_resolves_worker_env(self) -> None:
+    def test_non_mock_worker_requires_model_profile_and_endpoint(self) -> None:
+        with self.assertRaisesRegex(ValueError, "model_profile"):
+            DispatchConfig.model_validate(
+                {
+                    **BASE_CONFIG,
+                    "workers": [
+                        {
+                            "name": "pi",
+                            "type": "pi",
+                            "task_types": ["bootstrap"],
+                            "max_running": 1,
+                            "priority": 0,
+                        }
+                    ],
+                }
+            )
+
+        with self.assertRaisesRegex(ValueError, "endpoint"):
+            DispatchConfig.model_validate(
+                {
+                    **BASE_CONFIG,
+                    "model_profiles": [
+                        {"id": "pi-main", "type": "pi", "model": "gpt-test"},
+                    ],
+                    "workers": [
+                        {
+                            "name": "pi",
+                            "type": "pi",
+                            "model_profile": "pi-main",
+                            "task_types": ["bootstrap"],
+                            "max_running": 1,
+                            "priority": 0,
+                        }
+                    ],
+                }
+            )
+
+    def test_model_profile_type_must_match_worker_type(self) -> None:
+        with self.assertRaises(ValueError):
+            DispatchConfig.model_validate(
+                {
+                    **BASE_CONFIG,
+                    "model_profiles": [
+                        {"id": "codex-main", "type": "codex", "model": "gpt-test"},
+                    ],
+                    "workers": [
+                        {
+                            "name": "pi",
+                            "type": "pi",
+                            "model_profile": "codex-main",
+                            "endpoint": "pi-default",
+                            "task_types": ["bootstrap"],
+                            "max_running": 1,
+                            "priority": 0,
+                        }
+                    ],
+                }
+            )
+
+    def test_pi_model_profile_and_endpoint_resolve_worker_env(self) -> None:
         config = DispatchConfig.model_validate(
             {
                 **BASE_CONFIG,
-                "profiles": [
+                "model_profiles": [
                     {
                         "id": "pi-main",
                         "type": "pi",
                         "model": "gpt-test",
-                        "base_url": "https://example.test/v1",
-                        "provider_api": "openai-completions",
-                        "api_key": "sk-test",
                         "context_window": 12345,
                     }
                 ],
@@ -99,7 +140,8 @@ class DispatchConfigProfileTests(unittest.TestCase):
                     {
                         "name": "pi",
                         "type": "pi",
-                        "profile": "pi-main",
+                        "model_profile": "pi-main",
+                        "endpoint": "pi-default",
                         "task_types": ["bootstrap"],
                         "max_running": 1,
                         "priority": 0,
@@ -110,9 +152,17 @@ class DispatchConfigProfileTests(unittest.TestCase):
         )
 
         worker = config.workers[0]
-        profile = config.profile_config(worker)
+        profile = config.model_profile_config(worker)
         assert profile is not None
-        env = resolve_worker_env(worker, profile)
+        endpoint = ProviderEndpointSecret(
+            id="pi-default",
+            type="pi",
+            base_url="https://example.test/v1",
+            provider_api="openai-completions",
+            has_api_key=True,
+            api_key="sk-test",
+        )
+        env = resolve_worker_env(worker, profile, endpoint)
 
         self.assertEqual(env["PI_MODEL"], "gpt-test")
         self.assertEqual(env["PI_BASE_URL"], "https://example.test/v1")
@@ -120,7 +170,7 @@ class DispatchConfigProfileTests(unittest.TestCase):
         self.assertEqual(env["PI_API_KEY"], "sk-test")
         self.assertEqual(env["PI_MODEL_CONTEXT_WINDOW"], "12345")
 
-    def test_mock_worker_can_omit_profile(self) -> None:
+    def test_mock_worker_can_omit_model_profile_and_endpoint(self) -> None:
         config = DispatchConfig.model_validate(
             {
                 **BASE_CONFIG,
@@ -136,7 +186,8 @@ class DispatchConfigProfileTests(unittest.TestCase):
             }
         )
 
-        self.assertIsNone(config.workers[0].profile)
+        self.assertIsNone(config.workers[0].model_profile)
+        self.assertIsNone(config.workers[0].endpoint)
 
 
 if __name__ == "__main__":

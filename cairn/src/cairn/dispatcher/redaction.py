@@ -4,7 +4,7 @@ import re
 
 
 AUTH_BEARER_RE = re.compile(r"(Authorization:\s*Bearer\s+)([^\s'\"\\]+)", re.IGNORECASE)
-JSON_API_KEY_RE = re.compile(r'("apiKey"\s*:\s*")([^"]+)(")', re.IGNORECASE)
+JSON_API_KEY_RE = re.compile(r'("(?:apiKey|api_key)"\s*:\s*")([^"]+)(")', re.IGNORECASE)
 SK_RE = re.compile(r"sk-[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
