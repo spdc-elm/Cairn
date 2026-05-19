@@ -25,6 +25,7 @@ SSH_PREVIEW_LIMIT = 1200
 
 RUNNER_SCRIPT = r'''#!/usr/bin/env python3
 import argparse
+import glob
 import json
 import os
 import select
@@ -41,7 +42,10 @@ def _now():
 def execute():
     req = json.load(sys.stdin)
     state_path = req["state_path"]
+    cancel_path = state_path + ".cancel"
     os.makedirs(os.path.dirname(state_path), exist_ok=True)
+    if os.path.exists(cancel_path):
+        return 130
     env = os.environ.copy()
     env.update({str(k): str(v) for k, v in (req.get("env") or {}).items()})
     process = subprocess.Popen(
@@ -57,6 +61,9 @@ def execute():
     pgid = os.getpgid(process.pid)
     with open(state_path, "w", encoding="utf-8") as handle:
         json.dump({"pid": process.pid, "pgid": pgid, "started_at": _now()}, handle)
+    if os.path.exists(cancel_path):
+        _kill_pgid(pgid)
+        return process.wait()
     timeout = req.get("timeout_seconds")
     kill_after = float(req.get("kill_after_seconds") or 5)
     deadline = time.monotonic() + float(timeout) if timeout else None
@@ -93,13 +100,7 @@ def execute():
     return process.wait()
 
 
-def cancel(state_path):
-    try:
-        with open(state_path, "r", encoding="utf-8") as handle:
-            state = json.load(handle)
-    except FileNotFoundError:
-        return 0
-    pgid = int(state.get("pgid") or 0)
+def _kill_pgid(pgid):
     if pgid <= 0:
         return 0
     try:
@@ -114,6 +115,29 @@ def cancel(state_path):
     return 0
 
 
+def cancel(state_path):
+    try:
+        os.makedirs(os.path.dirname(state_path), exist_ok=True)
+        with open(state_path + ".cancel", "w", encoding="utf-8") as handle:
+            json.dump({"cancelled_at": _now()}, handle)
+    except OSError:
+        pass
+    try:
+        with open(state_path, "r", encoding="utf-8") as handle:
+            state = json.load(handle)
+    except FileNotFoundError:
+        return 0
+    pgid = int(state.get("pgid") or 0)
+    return _kill_pgid(pgid)
+
+
+def cancel_workspace(workspace):
+    runs_dir = os.path.join(workspace, ".cairn", "runs")
+    for state_path in glob.glob(os.path.join(runs_dir, "*", "state.json")):
+        cancel(state_path)
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", action="store_true")
@@ -121,14 +145,18 @@ def main():
     sub.add_parser("execute")
     cancel_parser = sub.add_parser("cancel")
     cancel_parser.add_argument("state_path")
+    cancel_workspace_parser = sub.add_parser("cancel-workspace")
+    cancel_workspace_parser.add_argument("workspace")
     args = parser.parse_args()
     if args.version:
-        print("cairn-runner 1")
+        print("cairn-runner 2")
         return 0
     if args.cmd == "execute":
         return execute()
     if args.cmd == "cancel":
         return cancel(args.state_path)
+    if args.cmd == "cancel-workspace":
+        return cancel_workspace(args.workspace)
     parser.error("missing command")
 
 
@@ -238,7 +266,7 @@ class SshEnvironment:
         return self.config.cleanup.completed_action == "remove" and self._workspace_exists(project_id)
 
     def needs_stopped_cleanup(self, project_id: str) -> bool:
-        return False
+        return self._workspace_exists(project_id)
 
     def cleanup_completed(self, project_id: str) -> bool:
         if self.config.cleanup.completed_action != "remove":
@@ -246,6 +274,17 @@ class SshEnvironment:
         return self._remove_workspace(self._workspace_for(project_id))
 
     def cleanup_stopped(self, project_id: str) -> bool:
+        workspace = self._workspace_for(project_id)
+        self._ensure_runner()
+        result = self._remote_run([self.runner_path, "cancel-workspace", workspace], timeout=20, check=False)
+        if result.returncode != 0:
+            LOG.warning(
+                "failed to cancel stopped ssh workspace project=%s workspace=%s stderr=%s",
+                project_id,
+                workspace,
+                _preview(result.stderr or result.stdout),
+            )
+            return False
         return True
 
     def run_healthcheck(self, worker_types: Collection[WorkerType] | None = None) -> dict[str, Any]:
