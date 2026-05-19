@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 
 from cairn.server.models import (
+    Fact,
     Intent,
     ProjectMeta,
     ProjectReason,
@@ -115,6 +116,16 @@ def validate_intent_creator_worker(creator: str, worker: str | None) -> None:
         raise HTTPException(400, "worker must be null or equal to creator")
 
 
+def validate_requested_worker(worker: str | None) -> None:
+    if worker is not None and not worker.strip():
+        raise HTTPException(400, "requested_worker must not be empty")
+
+
+def validate_positive_timeout(value: int | None, field: str) -> None:
+    if value is not None and value <= 0:
+        raise HTTPException(400, f"{field} must be positive")
+
+
 def get_intent_or_404(
     conn: sqlite3.Connection, project_id: str, intent_id: str
 ) -> sqlite3.Row:
@@ -177,9 +188,24 @@ def intent_to_model(conn: sqlite3.Connection, row: sqlite3.Row, project_id: str)
         description=row["description"],
         creator=row["creator"],
         worker=row["worker"],
+        requested_worker=row["requested_worker"] if "requested_worker" in row.keys() else None,
+        timeout_override_seconds=row["timeout_override_seconds"] if "timeout_override_seconds" in row.keys() else None,
+        conclude_timeout_override_seconds=row["conclude_timeout_override_seconds"] if "conclude_timeout_override_seconds" in row.keys() else None,
+        control_state=row["control_state"] if "control_state" in row.keys() else "normal",
+        control_requested_at=row["control_requested_at"] if "control_requested_at" in row.keys() else None,
+        control_requested_by=row["control_requested_by"] if "control_requested_by" in row.keys() else None,
+        control_reason=row["control_reason"] if "control_reason" in row.keys() else None,
         last_heartbeat_at=row["last_heartbeat_at"],
         created_at=row["created_at"],
         concluded_at=row["concluded_at"],
+    )
+
+
+def fact_to_model(row: sqlite3.Row) -> Fact:
+    return Fact(
+        id=row["id"],
+        description=row["description"],
+        metadata=loads_json_object(row["metadata_json"] if "metadata_json" in row.keys() else None),
     )
 
 
@@ -202,7 +228,7 @@ def get_reason_timeout(conn: sqlite3.Connection) -> int:
 
 
 def project_reason_from_row(row: sqlite3.Row) -> ProjectReason | None:
-    if row["reason_worker"] is None:
+    if "reason_worker" not in row.keys() or row["reason_worker"] is None:
         return None
     return ProjectReason(
         worker=row["reason_worker"],
@@ -222,6 +248,10 @@ def project_meta_from_row(row: sqlite3.Row, environment: WorkEnvironmentPublic |
         environment_id=row["environment_id"] if "environment_id" in row.keys() else None,
         environment=environment,
         planned_workspace=planned_workspace_for(row["id"], environment),
+        auto_reason=bool(row["auto_reason"]) if "auto_reason" in row.keys() else False,
+        allowed_auto_workers=loads_json_list(row["allowed_auto_workers_json"] if "allowed_auto_workers_json" in row.keys() else None),
+        default_timeout_seconds=row["default_timeout_seconds"] if "default_timeout_seconds" in row.keys() else None,
+        default_conclude_timeout_seconds=row["default_conclude_timeout_seconds"] if "default_conclude_timeout_seconds" in row.keys() else None,
     )
 
 
@@ -441,8 +471,41 @@ def planned_workspace_for(project_id: str, environment: WorkEnvironmentPublic | 
         root = (environment.workspace_root or "/home/kali/cairn-workspaces").rstrip("/")
         return str(PurePosixPath(root) / clean_project_id)
     if environment.backend == "docker":
-        return f"docker:{clean_project_id}"
+        return f"/home/kali/workspace/.cairn/projects/{clean_project_id}"
     return None
+
+
+def loads_json_object(value: str | None) -> dict | None:
+    if not value:
+        return None
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def loads_json_list(value: str | None) -> list[str] | None:
+    if value is None:
+        return None
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, list):
+        return None
+    result: list[str] = []
+    for item in payload:
+        if not isinstance(item, str):
+            return None
+        result.append(item)
+    return result
+
+
+def dumps_json(value) -> str | None:
+    if value is None:
+        return None
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
 def _loads_optional_json(value: str | None) -> dict | None:

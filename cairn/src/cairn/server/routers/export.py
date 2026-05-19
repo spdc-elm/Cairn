@@ -4,7 +4,7 @@ from datetime import datetime
 import yaml
 
 from cairn.server.db import get_conn
-from cairn.server.services import expire_reason_leases, expire_workers, get_project_or_404
+from cairn.server.services import expire_reason_leases, expire_workers, get_project_or_404, loads_json_list, loads_json_object
 
 router = APIRouter(tags=["export"])
 
@@ -25,7 +25,7 @@ def _load_project_data(conn, project_id: str):
     proj = get_project_or_404(conn, project_id)
 
     facts = conn.execute(
-        "SELECT id, description FROM facts WHERE project_id = ?", (project_id,)
+        "SELECT id, description, metadata_json FROM facts WHERE project_id = ?", (project_id,)
     ).fetchall()
     hints = conn.execute(
         "SELECT content, creator, created_at FROM hints WHERE project_id = ? ORDER BY created_at",
@@ -63,6 +63,10 @@ def _export_yaml(conn, project_id: str) -> str:
             "title": proj["title"],
             "origin": origin_desc,
             "goal": goal_desc,
+            "auto_reason": bool(proj["auto_reason"]) if "auto_reason" in proj.keys() else False,
+            "allowed_auto_workers": loads_json_list(proj["allowed_auto_workers_json"] if "allowed_auto_workers_json" in proj.keys() else None),
+            "default_timeout_seconds": proj["default_timeout_seconds"] if "default_timeout_seconds" in proj.keys() else None,
+            "default_conclude_timeout_seconds": proj["default_conclude_timeout_seconds"] if "default_conclude_timeout_seconds" in proj.keys() else None,
         }
     }
 
@@ -76,7 +80,13 @@ def _export_yaml(conn, project_id: str) -> str:
             for h in hints
         ]
 
-    data["facts"] = [{"id": f["id"], "description": f["description"]} for f in facts]
+    data["facts"] = []
+    for f in facts:
+        fact_entry = {"id": f["id"], "description": f["description"]}
+        metadata = loads_json_object(f["metadata_json"] if "metadata_json" in f.keys() else None)
+        if metadata:
+            fact_entry["metadata"] = metadata
+        data["facts"].append(fact_entry)
 
     intent_list = []
     for i in intents:
@@ -86,6 +96,13 @@ def _export_yaml(conn, project_id: str) -> str:
             "description": i["description"],
             "creator": i["creator"],
             "worker": i["worker"],
+            "requested_worker": i["requested_worker"] if "requested_worker" in i.keys() else None,
+            "timeout_override_seconds": i["timeout_override_seconds"] if "timeout_override_seconds" in i.keys() else None,
+            "conclude_timeout_override_seconds": i["conclude_timeout_override_seconds"] if "conclude_timeout_override_seconds" in i.keys() else None,
+            "control_state": i["control_state"] if "control_state" in i.keys() else "normal",
+            "control_requested_at": format_export_timestamp(i["control_requested_at"] if "control_requested_at" in i.keys() else None),
+            "control_requested_by": i["control_requested_by"] if "control_requested_by" in i.keys() else None,
+            "control_reason": i["control_reason"] if "control_reason" in i.keys() else None,
             "created_at": format_export_timestamp(i["created_at"]),
             "concluded_at": format_export_timestamp(i["concluded_at"]),
         }

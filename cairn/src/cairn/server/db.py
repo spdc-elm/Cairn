@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS projects (
     title TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL,
+    auto_reason INTEGER NOT NULL DEFAULT 0,
+    allowed_auto_workers_json TEXT,
+    default_timeout_seconds INTEGER,
+    default_conclude_timeout_seconds INTEGER,
     environment_id TEXT,
     reason_worker TEXT,
     reason_trigger TEXT,
@@ -33,6 +37,7 @@ CREATE TABLE IF NOT EXISTS facts (
     id TEXT NOT NULL,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     description TEXT NOT NULL,
+    metadata_json TEXT,
     PRIMARY KEY (id, project_id)
 );
 
@@ -43,6 +48,13 @@ CREATE TABLE IF NOT EXISTS intents (
     description TEXT NOT NULL,
     creator TEXT NOT NULL,
     worker TEXT,
+    requested_worker TEXT,
+    timeout_override_seconds INTEGER,
+    conclude_timeout_override_seconds INTEGER,
+    control_state TEXT NOT NULL DEFAULT 'normal',
+    control_requested_at TEXT,
+    control_requested_by TEXT,
+    control_reason TEXT,
     last_heartbeat_at TEXT,
     created_at TEXT NOT NULL,
     concluded_at TEXT,
@@ -106,6 +118,18 @@ CREATE TABLE IF NOT EXISTS environment_provider_endpoints (
     PRIMARY KEY (environment_id, endpoint_id)
 );
 
+CREATE TABLE IF NOT EXISTS worker_inventory (
+    name TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    model_profile TEXT,
+    endpoint TEXT,
+    task_types_json TEXT NOT NULL,
+    max_running INTEGER NOT NULL,
+    priority INTEGER NOT NULL,
+    allowed_environments_json TEXT,
+    updated_at TEXT NOT NULL
+);
+
 INSERT OR IGNORE INTO work_environments (
     id, label, backend, workspace_root, cleanup_json, terminal_json, created_at, updated_at
 ) VALUES (
@@ -127,8 +151,34 @@ def configure(path: Path) -> None:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     project_columns = {row["name"] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
-    if "environment_id" not in project_columns:
-        conn.execute("ALTER TABLE projects ADD COLUMN environment_id TEXT")
+    for name, ddl in {
+        "environment_id": "ALTER TABLE projects ADD COLUMN environment_id TEXT",
+        "auto_reason": "ALTER TABLE projects ADD COLUMN auto_reason INTEGER NOT NULL DEFAULT 0",
+        "allowed_auto_workers_json": "ALTER TABLE projects ADD COLUMN allowed_auto_workers_json TEXT",
+        "default_timeout_seconds": "ALTER TABLE projects ADD COLUMN default_timeout_seconds INTEGER",
+        "default_conclude_timeout_seconds": "ALTER TABLE projects ADD COLUMN default_conclude_timeout_seconds INTEGER",
+        "reason_worker": "ALTER TABLE projects ADD COLUMN reason_worker TEXT",
+        "reason_trigger": "ALTER TABLE projects ADD COLUMN reason_trigger TEXT",
+        "reason_started_at": "ALTER TABLE projects ADD COLUMN reason_started_at TEXT",
+        "reason_last_heartbeat_at": "ALTER TABLE projects ADD COLUMN reason_last_heartbeat_at TEXT",
+    }.items():
+        if name not in project_columns:
+            conn.execute(ddl)
+    fact_columns = {row["name"] for row in conn.execute("PRAGMA table_info(facts)").fetchall()}
+    if "metadata_json" not in fact_columns:
+        conn.execute("ALTER TABLE facts ADD COLUMN metadata_json TEXT")
+    intent_columns = {row["name"] for row in conn.execute("PRAGMA table_info(intents)").fetchall()}
+    for name, ddl in {
+        "requested_worker": "ALTER TABLE intents ADD COLUMN requested_worker TEXT",
+        "timeout_override_seconds": "ALTER TABLE intents ADD COLUMN timeout_override_seconds INTEGER",
+        "conclude_timeout_override_seconds": "ALTER TABLE intents ADD COLUMN conclude_timeout_override_seconds INTEGER",
+        "control_state": "ALTER TABLE intents ADD COLUMN control_state TEXT NOT NULL DEFAULT 'normal'",
+        "control_requested_at": "ALTER TABLE intents ADD COLUMN control_requested_at TEXT",
+        "control_requested_by": "ALTER TABLE intents ADD COLUMN control_requested_by TEXT",
+        "control_reason": "ALTER TABLE intents ADD COLUMN control_reason TEXT",
+    }.items():
+        if name not in intent_columns:
+            conn.execute(ddl)
     environment_columns = {row["name"] for row in conn.execute("PRAGMA table_info(work_environments)").fetchall()}
     for name, ddl in {
         "cleanup_json": "ALTER TABLE work_environments ADD COLUMN cleanup_json TEXT",
@@ -148,6 +198,21 @@ def _migrate(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             PRIMARY KEY (environment_id, endpoint_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS worker_inventory (
+            name TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
+            model_profile TEXT,
+            endpoint TEXT,
+            task_types_json TEXT NOT NULL,
+            max_running INTEGER NOT NULL,
+            priority INTEGER NOT NULL,
+            allowed_environments_json TEXT,
+            updated_at TEXT NOT NULL
         )
         """
     )

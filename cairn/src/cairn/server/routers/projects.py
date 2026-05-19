@@ -14,6 +14,7 @@ from cairn.server.models import (
     ReopenRequest,
     ReopenResponse,
     ReasonClaimRequest,
+    UpdateProjectRequest,
     UpdateProjectTitleRequest,
     UpdateProjectStatusRequest,
 )
@@ -23,8 +24,10 @@ from cairn.server.services import (
     check_project_active,
     clear_project_reason,
     default_environment,
+    dumps_json,
     expire_reason_leases,
     expire_workers,
+    fact_to_model,
     get_completion_intent_or_409,
     get_project_or_404,
     get_environment_or_404,
@@ -62,15 +65,9 @@ def list_projects():
         summaries = []
         for row in rows:
             environment = _project_environment_or_none(conn, row["environment_id"])
+            meta = project_meta_from_row(row, environment=environment)
             summaries.append(ProjectSummary(
-                id=row["id"],
-                title=row["title"],
-                status=row["status"],
-                created_at=row["created_at"],
-                reason=project_reason_from_row(row),
-                environment_id=row["environment_id"],
-                environment=environment,
-                planned_workspace=planned_workspace_for(row["id"], environment),
+                **meta.model_dump(),
                 fact_count=row["fact_count"],
                 intent_count=row["intent_count"],
                 working_intent_count=row["working_intent_count"],
@@ -93,8 +90,22 @@ def create_project(body: CreateProjectRequest):
             raise
 
         conn.execute(
-            "INSERT INTO projects (id, title, status, created_at, environment_id) VALUES (?, ?, 'active', ?, ?)",
-            (pid, body.title, now, environment.id),
+            """
+            INSERT INTO projects (
+                id, title, status, created_at, auto_reason, allowed_auto_workers_json,
+                default_timeout_seconds, default_conclude_timeout_seconds, environment_id
+            ) VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                pid,
+                body.title,
+                now,
+                1 if body.auto_reason else 0,
+                dumps_json(body.allowed_auto_workers),
+                body.default_timeout_seconds,
+                body.default_conclude_timeout_seconds,
+                environment.id,
+            ),
         )
         conn.execute(
             "INSERT INTO facts (id, project_id, description) VALUES (?, ?, ?)",
@@ -125,6 +136,10 @@ def create_project(body: CreateProjectRequest):
                 environment_id=environment.id,
                 environment=environment,
                 planned_workspace=planned_workspace_for(pid, environment),
+                auto_reason=body.auto_reason,
+                allowed_auto_workers=body.allowed_auto_workers,
+                default_timeout_seconds=body.default_timeout_seconds,
+                default_conclude_timeout_seconds=body.default_conclude_timeout_seconds,
             ),
             facts=[
                 Fact(id="origin", description=body.origin),
@@ -154,7 +169,7 @@ def get_project(project_id: str):
         meta = project_meta_from_row(row, environment=environment)
         return ProjectDetail(
             project=meta,
-            facts=[Fact(**dict(f)) for f in facts],
+            facts=[fact_to_model(f) for f in facts],
             intents=build_intents(conn, project_id),
             hints=[Hint(**dict(h)) for h in hints],
         )
@@ -190,6 +205,37 @@ def update_project_title(project_id: str, body: UpdateProjectTitleRequest):
         )
         updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
         return project_meta_from_row(updated)
+
+
+@router.patch("/projects/{project_id}", response_model=ProjectMeta)
+def update_project(project_id: str, body: UpdateProjectRequest):
+    with get_conn() as conn:
+        row = get_project_or_404(conn, project_id)
+        updates: list[str] = []
+        params: list[object] = []
+        fields = body.model_fields_set
+        if "auto_reason" in fields:
+            updates.append("auto_reason = ?")
+            params.append(1 if body.auto_reason else 0)
+        if "allowed_auto_workers" in fields:
+            updates.append("allowed_auto_workers_json = ?")
+            params.append(dumps_json(body.allowed_auto_workers))
+        if "default_timeout_seconds" in fields:
+            updates.append("default_timeout_seconds = ?")
+            params.append(body.default_timeout_seconds)
+        if "default_conclude_timeout_seconds" in fields:
+            updates.append("default_conclude_timeout_seconds = ?")
+            params.append(body.default_conclude_timeout_seconds)
+        if not updates:
+            return project_meta_from_row(row)
+        params.append(project_id)
+        conn.execute(
+            f"UPDATE projects SET {', '.join(updates)} WHERE id = ?",
+            tuple(params),
+        )
+        updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        environment = _project_environment_or_none(conn, updated["environment_id"])
+        return project_meta_from_row(updated, environment=environment)
 
 
 @router.put("/projects/{project_id}/status", response_model=ProjectMeta)
@@ -323,6 +369,7 @@ def complete_project(project_id: str, body: CompleteRequest):
             description=body.description,
             creator=body.worker,
             worker=body.worker,
+            requested_worker=None,
             last_heartbeat_at=now,
             created_at=now,
             concluded_at=now,
