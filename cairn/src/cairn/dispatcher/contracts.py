@@ -56,7 +56,22 @@ def _looks_like_bootstrap_conclude_data(payload: dict[str, Any]) -> bool:
 
 
 def _looks_like_explore_data(payload: dict[str, Any]) -> bool:
-    return isinstance(payload, dict) and set(payload) == {"description"}
+    return isinstance(payload, dict) and set(payload) in ({"description"}, {"title", "description"})
+
+
+def _parse_fact_payload(fact: Any, *, field: str = "fact") -> dict[str, str | None]:
+    if not isinstance(fact, dict):
+        raise ValueError(f"{field} is required")
+    description = fact.get("description")
+    if not isinstance(description, str) or not description.strip():
+        raise ValueError(f"{field}.description is required")
+    title = fact.get("title")
+    if title is not None and (not isinstance(title, str) or not title.strip()):
+        raise ValueError(f"{field}.title must be a non-empty string")
+    return {
+        "title": title.strip() if isinstance(title, str) else None,
+        "description": description.strip(),
+    }
 
 
 def validate_reason_payload(
@@ -101,7 +116,7 @@ def validate_reason_payload(
     return "noop", None
 
 
-def validate_bootstrap_execute_payload(payload: dict[str, Any]) -> tuple[str, dict[str, str] | None]:
+def validate_bootstrap_execute_payload(payload: dict[str, Any]) -> tuple[str, dict[str, str | None] | None]:
     accepted, data = _unwrap_wrapped_payload(payload)
     if accepted is False:
         return "rejected", None
@@ -112,14 +127,11 @@ def validate_bootstrap_execute_payload(payload: dict[str, Any]) -> tuple[str, di
     if not isinstance(data, dict):
         raise ValueError("accepted must be true or false")
 
-    fact = data.get("fact")
-    if not isinstance(fact, dict):
-        raise ValueError("fact is required")
-    fact_description = fact.get("description")
-    if not isinstance(fact_description, str) or not fact_description.strip():
-        raise ValueError("fact.description is required")
-
-    result = {"fact_description": fact_description.strip()}
+    fact_data = _parse_fact_payload(data.get("fact"))
+    result = {
+        "fact_title": fact_data["title"],
+        "fact_description": fact_data["description"],
+    }
     complete = data.get("complete")
     if complete is None:
         raise ValueError("complete is required")
@@ -132,7 +144,7 @@ def validate_bootstrap_execute_payload(payload: dict[str, Any]) -> tuple[str, di
     return "complete", result
 
 
-def validate_bootstrap_conclude_payload(payload: dict[str, Any]) -> tuple[str, str | None]:
+def validate_bootstrap_conclude_payload(payload: dict[str, Any]) -> tuple[str, dict[str, str | None] | None]:
     accepted, data = _unwrap_wrapped_payload(payload)
     if accepted is False:
         return "rejected", None
@@ -145,16 +157,10 @@ def validate_bootstrap_conclude_payload(payload: dict[str, Any]) -> tuple[str, s
     extra_keys = set(data) - {"fact", "complete"}
     if extra_keys:
         raise ValueError("unexpected keys in conclude payload")
-    fact = data.get("fact")
-    if not isinstance(fact, dict):
-        raise ValueError("fact is required")
-    fact_description = fact.get("description")
-    if not isinstance(fact_description, str) or not fact_description.strip():
-        raise ValueError("fact.description is required")
-    return "fact", fact_description.strip()
+    return "fact", _parse_fact_payload(data.get("fact"))
 
 
-def validate_explore_payload(payload: dict[str, Any]) -> tuple[str, str | None]:
+def validate_explore_payload(payload: dict[str, Any]) -> tuple[str, dict[str, str | None] | None]:
     accepted, data = _unwrap_wrapped_payload(payload)
     if accepted is False:
         return "rejected", None
@@ -164,7 +170,5 @@ def validate_explore_payload(payload: dict[str, Any]) -> tuple[str, str | None]:
         data = payload
     if not isinstance(data, dict):
         raise ValueError("accepted must be true or false")
-    description = data.get("description")
-    if not isinstance(description, str) or not description.strip():
-        raise ValueError("description is required")
-    return "fact", description.strip()
+    fact_data = _parse_fact_payload(data, field="data")
+    return "fact", fact_data

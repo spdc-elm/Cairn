@@ -13,6 +13,7 @@ from cairn.server.models import (
     ProjectSummary,
     ReopenRequest,
     ReopenResponse,
+    UpdateFactRequest,
     ReasonClaimRequest,
     UpdateProjectRequest,
     UpdateProjectTitleRequest,
@@ -24,6 +25,7 @@ from cairn.server.services import (
     check_project_active,
     clear_project_reason,
     default_environment,
+    derive_fact_title,
     dumps_json,
     expire_reason_leases,
     expire_workers,
@@ -108,12 +110,12 @@ def create_project(body: CreateProjectRequest):
             ),
         )
         conn.execute(
-            "INSERT INTO facts (id, project_id, description) VALUES (?, ?, ?)",
-            ("origin", pid, body.origin),
+            "INSERT INTO facts (id, project_id, title, description) VALUES (?, ?, ?, ?)",
+            ("origin", pid, "Origin", body.origin),
         )
         conn.execute(
-            "INSERT INTO facts (id, project_id, description) VALUES (?, ?, ?)",
-            ("goal", pid, body.goal),
+            "INSERT INTO facts (id, project_id, title, description) VALUES (?, ?, ?, ?)",
+            ("goal", pid, "Goal", body.goal),
         )
 
         hints = []
@@ -142,8 +144,8 @@ def create_project(body: CreateProjectRequest):
                 default_conclude_timeout_seconds=body.default_conclude_timeout_seconds,
             ),
             facts=[
-                Fact(id="origin", description=body.origin),
-                Fact(id="goal", description=body.goal),
+                Fact(id="origin", title="Origin", description=body.origin),
+                Fact(id="goal", title="Goal", description=body.goal),
             ],
             intents=[],
             hints=hints,
@@ -184,6 +186,38 @@ def _project_environment_or_none(conn, environment_id: str | None):
         if exc.status_code == 404:
             return None
         raise
+
+
+@router.patch("/projects/{project_id}/facts/{fact_id}", response_model=Fact)
+def update_fact(project_id: str, fact_id: str, body: UpdateFactRequest):
+    with get_conn() as conn:
+        get_project_or_404(conn, project_id)
+        row = conn.execute(
+            "SELECT * FROM facts WHERE id = ? AND project_id = ?",
+            (fact_id, project_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "Fact not found")
+
+        updates: list[str] = []
+        params: list[object] = []
+        if body.title is not None:
+            updates.append("title = ?")
+            params.append(body.title)
+        if body.description is not None:
+            updates.append("description = ?")
+            params.append(body.description)
+        if updates:
+            params.extend([fact_id, project_id])
+            conn.execute(
+                f"UPDATE facts SET {', '.join(updates)} WHERE id = ? AND project_id = ?",
+                tuple(params),
+            )
+        updated = conn.execute(
+            "SELECT * FROM facts WHERE id = ? AND project_id = ?",
+            (fact_id, project_id),
+        ).fetchone()
+        return fact_to_model(updated)
 
 
 
@@ -402,8 +436,8 @@ def reopen_project(project_id: str, body: ReopenRequest):
             (completion["id"], project_id),
         )
         conn.execute(
-            "INSERT INTO facts (id, project_id, description) VALUES (?, ?, ?)",
-            (fact_id, project_id, description),
+            "INSERT INTO facts (id, project_id, title, description) VALUES (?, ?, ?, ?)",
+            (fact_id, project_id, derive_fact_title(description, fact_id), description),
         )
         conn.execute(
             "INSERT INTO intents (id, project_id, to_fact_id, description, creator, worker, last_heartbeat_at, created_at, concluded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -429,6 +463,6 @@ def reopen_project(project_id: str, body: ReopenRequest):
         assert updated_intent is not None
         return ReopenResponse(
             project=project_meta_from_row(updated_project),
-            fact=Fact(id=fact_id, description=description),
+            fact=Fact(id=fact_id, title=derive_fact_title(description, fact_id), description=description),
             intent=intent_to_model(conn, updated_intent, project_id),
         )

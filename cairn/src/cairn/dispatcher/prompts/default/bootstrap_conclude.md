@@ -13,7 +13,7 @@ When rejecting a task, return the following (under no circumstances should you r
 
 Normal return example:
 ```json
-{"accepted": true, "data": {"fact": {"description": "..."}}}
+{"accepted": true, "data": {"fact": {"title": "...", "description": "..."}}}
 ```
 
 ## Rules
@@ -23,6 +23,7 @@ Normal return example:
 - This JSON summary is your final output for this phase. After outputting it, stop.
 - Do not output `complete` in this phase. Even if Goal is not achieved or you want to explain status, put that information into `fact.description` only.
 - `fact.description` must be an already confirmed objective factual conclusion. Do not output plans, guesses, or explanatory filler.
+- `fact.title` must be a short human-facing label for graph display. It should help a human scan the board, but it is not a substitute for `fact.description`.
 - Do not put long data blobs in `fact.description`. Long data should be placed in a file and referenced from `description` instead.
 
 # Context

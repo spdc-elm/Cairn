@@ -11,7 +11,7 @@ When rejecting a task, return the following (under no circumstances should you r
 
 Only return the following after you have confirmed that Goal has been satisfied:
 ```json
-{"accepted": true, "data": {"fact": {"description": "..."}, "complete": {"description": "..."}}}
+{"accepted": true, "data": {"fact": {"title": "...", "description": "..."}, "complete": {"description": "..."}}}
 ```
 
 # Rules
@@ -19,6 +19,7 @@ Only return the following after you have confirmed that Goal has been satisfied:
 - If you later receive a conclude-phase instruction in the same session, that newer conclude instruction overrides this keep-working rule immediately. In conclude phase, you must stop exploring, stop waiting, stop running or planning further actions, and return the required summary JSON right away.
 - Output `complete` only if Goal has already been definitively achieved in this session. If Goal is not yet achieved, do not output `complete`, do not summarize partial progress as completion, and keep working until a conclude-phase instruction replaces this task.
 - `fact.description` must clearly state the confirmed key objective results. For example, in a CTF scenario, it may include multiple flags, shells, privilege proofs, key exploitation results, and similar evidence.
+- `fact.title` must be a short human-facing label for graph display. It should help a human scan the board, but it is not a substitute for `fact.description`.
 - `complete.description` should explain why the currently confirmed results are sufficient to prove that Goal has been achieved.
 - Do not put long data blobs in `description`. Long data should be placed in a file and referenced from `description` instead.
 

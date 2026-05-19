@@ -645,6 +645,7 @@
                   </div>
                 </div>
                 <div class="p-4 space-y-3">
+                  <h4 class="text-sm font-semibold text-slate-800 leading-snug break-words" x-text="factDisplayTitle(fact)"></h4>
                   <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words" x-text="fact.description"></p>
                   <div class="text-xs text-slate-400 space-y-1.5">
                     <template x-if="fact.id === 'origin'">
@@ -665,17 +666,25 @@
         <template x-if="selectedNode && selectedNode.type === 'fact' && selectedFactRecord() && selectedFacts.length <= 1">
           <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
             <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/80">
-              <div class="flex items-center gap-2">
-                <span class="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold"
-                  :class="{
-                    'bg-teal-50 text-teal-700': selectedFactId() === 'origin',
-                    'bg-rose-50 text-rose-600': selectedFactId() === 'goal',
-                    'bg-brand-50 text-brand-700': selectedFactId() !== 'origin' && selectedFactId() !== 'goal'
-                  }" x-text="selectedFactId()"></span>
-                <span class="text-[11px] text-slate-400 font-medium uppercase tracking-wider">Fact</span>
+              <div class="flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold shrink-0"
+                    :class="{
+                      'bg-teal-50 text-teal-700': selectedFactId() === 'origin',
+                      'bg-rose-50 text-rose-600': selectedFactId() === 'goal',
+                      'bg-brand-50 text-brand-700': selectedFactId() !== 'origin' && selectedFactId() !== 'goal'
+                    }" x-text="selectedFactId()"></span>
+                  <span class="text-[11px] text-slate-400 font-medium uppercase tracking-wider">Fact</span>
+                </div>
+                <button type="button" @click="openEditFact(selectedFactRecord())"
+                  class="px-2.5 py-1 text-[11px] rounded-lg border border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-white transition">Edit</button>
               </div>
             </div>
             <div class="p-4 space-y-4">
+              <div>
+                <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">Title</p>
+                <h3 class="text-base font-semibold text-slate-800 leading-snug break-words" x-text="factDisplayTitle(selectedFactRecord())"></h3>
+              </div>
               <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words" x-text="selectedFactRecord().description"></p>
               <template x-if="selectedFactRecord().metadata?.report_path">
                 <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
@@ -937,7 +946,7 @@
 <!-- ═══════════ MODALS ═══════════ -->
 
 <!-- New Project -->
-<div x-show="showNewProject" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showNewProject = false">
+<div x-show="showNewProject" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @pointerdown.capture="modalPointerDown($event)" @mousedown.capture="modalPointerDown($event)" @click.self="closeModalFromBackdrop($event, 'showNewProject')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-4">New Project</h3>
     <div class="space-y-3">
@@ -1018,7 +1027,7 @@
 </div>
 
 <!-- Create Intent -->
-<div x-show="showIntentModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showIntentModal = false">
+<div x-show="showIntentModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @pointerdown.capture="modalPointerDown($event)" @mousedown.capture="modalPointerDown($event)" @click.self="closeModalFromBackdrop($event, 'showIntentModal')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">New Intent</h3>
     <div class="mb-4">
@@ -1053,11 +1062,12 @@
 </div>
 
 <!-- Conclude -->
-<div x-show="showConcludeModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showConcludeModal = false">
+<div x-show="showConcludeModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @pointerdown.capture="modalPointerDown($event)" @mousedown.capture="modalPointerDown($event)" @click.self="closeModalFromBackdrop($event, 'showConcludeModal')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">Conclude Intent</h3>
     <p class="text-xs text-slate-400 mb-4 font-mono" x-text="concludeForm.intentId"></p>
     <div class="space-y-3">
+      <input x-model="concludeForm.title" placeholder="Fact title (optional)" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
       <textarea x-model="concludeForm.description" placeholder="What did you find? (new fact)" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
         Actor: <span class="font-medium text-slate-700" x-text="actorName()"></span>
@@ -1071,8 +1081,25 @@
   </div>
 </div>
 
+<!-- Edit Fact -->
+<div x-show="showFactEditModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @pointerdown.capture="modalPointerDown($event)" @mousedown.capture="modalPointerDown($event)" @click.self="closeModalFromBackdrop($event, 'showFactEditModal')">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
+    <h3 class="text-base font-semibold text-slate-700 mb-1">Edit Fact</h3>
+    <p class="text-xs text-slate-400 mb-4 font-mono" x-text="factForm.id"></p>
+    <div class="space-y-3">
+      <input x-model="factForm.title" placeholder="Title" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+      <textarea x-model="factForm.description" placeholder="Description" rows="5" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+    </div>
+    <div class="flex justify-end gap-2 mt-5">
+      <button @click="showFactEditModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Cancel</button>
+      <button @click="saveFact()" :disabled="!factForm.id || !factForm.title.trim() || !factForm.description.trim()"
+        class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Complete Project -->
-<div x-show="showCompleteModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showCompleteModal = false">
+<div x-show="showCompleteModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @pointerdown.capture="modalPointerDown($event)" @mousedown.capture="modalPointerDown($event)" @click.self="closeModalFromBackdrop($event, 'showCompleteModal')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">Complete Project</h3>
     <p class="text-xs text-slate-400 mb-4">Mark project as completed</p>
@@ -1099,7 +1126,7 @@
 </div>
 
 <!-- Hint -->
-<div x-show="showHintModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showHintModal = false">
+<div x-show="showHintModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @pointerdown.capture="modalPointerDown($event)" @mousedown.capture="modalPointerDown($event)" @click.self="closeModalFromBackdrop($event, 'showHintModal')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-4">Add Hint</h3>
     <div class="space-y-3">
@@ -1117,7 +1144,7 @@
 </div>
 
 <!-- Reopen -->
-<div x-show="showReopenModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showReopenModal = false">
+<div x-show="showReopenModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @pointerdown.capture="modalPointerDown($event)" @mousedown.capture="modalPointerDown($event)" @click.self="closeModalFromBackdrop($event, 'showReopenModal')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">Reopen Project</h3>
     <p class="text-xs text-slate-400 mb-4" x-text="projectLabel(reopenForm.projectId, reopenForm.projectTitle)"></p>
@@ -1136,7 +1163,7 @@
 </div>
 
 <!-- Rename Project -->
-<div x-show="showRenameModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showRenameModal = false">
+<div x-show="showRenameModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @pointerdown.capture="modalPointerDown($event)" @mousedown.capture="modalPointerDown($event)" @click.self="closeModalFromBackdrop($event, 'showRenameModal')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">Rename Project</h3>
     <p class="text-xs text-slate-400 mb-4" x-text="projectLabel(renameForm.projectId, renameForm.originalTitle)"></p>
@@ -1153,7 +1180,7 @@
 </div>
 
 <!-- Local Preferences -->
-<div x-show="showLocalPrefs" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showLocalPrefs = false">
+<div x-show="showLocalPrefs" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @pointerdown.capture="modalPointerDown($event)" @mousedown.capture="modalPointerDown($event)" @click.self="closeModalFromBackdrop($event, 'showLocalPrefs')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-4">Local Preferences</h3>
     <div class="space-y-4">
@@ -1182,7 +1209,7 @@
 </div>
 
 <!-- Environments -->
-<div x-show="showEnvironments" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showEnvironments = false">
+<div x-show="showEnvironments" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @pointerdown.capture="modalPointerDown($event)" @mousedown.capture="modalPointerDown($event)" @click.self="closeModalFromBackdrop($event, 'showEnvironments')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[calc(100vh-2rem)] mx-4 border border-slate-200/60 overflow-hidden flex flex-col" @click.stop>
     <div class="px-5 py-4 border-b border-slate-200/80 flex items-center justify-between gap-4 shrink-0">
       <div>
@@ -1295,7 +1322,7 @@
 </div>
 
 <!-- Settings -->
-<div x-show="showSettings" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showSettings = false">
+<div x-show="showSettings" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @pointerdown.capture="modalPointerDown($event)" @mousedown.capture="modalPointerDown($event)" @click.self="closeModalFromBackdrop($event, 'showSettings')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-4">Server Settings</h3>
     <div>
@@ -1315,7 +1342,7 @@
 </div>
 
 <!-- Export Preview -->
-<div x-show="showYamlModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showYamlModal = false">
+<div x-show="showYamlModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @pointerdown.capture="modalPointerDown($event)" @mousedown.capture="modalPointerDown($event)" @click.self="closeModalFromBackdrop($event, 'showYamlModal')">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl mx-4 border border-slate-200/60 overflow-hidden" @click.stop>
     <div class="px-5 py-4 border-b border-slate-200/80 flex items-center justify-between gap-4">
       <div class="min-w-0 flex items-center gap-3">
@@ -1341,7 +1368,7 @@
 </div>
 
 <!-- Delete Project -->
-<div x-show="showDeleteModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="closeDeleteModal()">
+<div x-show="showDeleteModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @pointerdown.capture="modalPointerDown($event)" @mousedown.capture="modalPointerDown($event)" @click.self="closeDeleteModalFromBackdrop($event)">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-200/60" @click.stop>
     <div class="flex items-start gap-3">
       <div class="w-10 h-10 rounded-2xl bg-rose-50 text-rose-500 flex items-center justify-center shrink-0">
@@ -1399,6 +1426,7 @@ function cairnApp() {
     showNewProject: false,
     showIntentModal: false,
     showConcludeModal: false,
+    showFactEditModal: false,
     showCompleteModal: false,
     showHintModal: false,
     showReopenModal: false,
@@ -1421,7 +1449,8 @@ function cairnApp() {
     projectSettingsDirty: false,
     projectSettingsSaving: false,
     intentForm: { description: '', requested_worker: '', timeout_override_seconds: null, conclude_timeout_override_seconds: null },
-    concludeForm: { description: '', intentId: '' },
+    concludeForm: { title: '', description: '', intentId: '' },
+    factForm: { id: '', title: '', description: '' },
     completeForm: { description: '' },
     hintForm: { content: '' },
     reopenForm: { projectId: '', projectTitle: '', description: '' },
@@ -1448,6 +1477,7 @@ function cairnApp() {
     _timelineEventsCacheProject: null,
     _timelineEventsCache: [],
     _centerAnimation: null,
+    _modalPointerStartedOnBackdrop: false,
     projectListScrollTop: 0,
     shouldRestoreProjectListScroll: false,
     isStoppingAllProjects: false,
@@ -1512,6 +1542,22 @@ function cairnApp() {
     showToast(msg, type = 'info') {
       this.toast = { show: true, message: msg, type };
       setTimeout(() => this.toast.show = false, 3000);
+    },
+
+    modalPointerDown(event) {
+      this._modalPointerStartedOnBackdrop = event.target === event.currentTarget;
+    },
+
+    closeModalFromBackdrop(event, modalKey) {
+      const shouldClose = this._modalPointerStartedOnBackdrop && event.target === event.currentTarget;
+      this._modalPointerStartedOnBackdrop = false;
+      if (shouldClose) this[modalKey] = false;
+    },
+
+    closeDeleteModalFromBackdrop(event) {
+      const shouldClose = this._modalPointerStartedOnBackdrop && event.target === event.currentTarget;
+      this._modalPointerStartedOnBackdrop = false;
+      if (shouldClose) this.closeDeleteModal();
     },
 
     cloneData(value) {
@@ -2771,7 +2817,7 @@ function cairnApp() {
       const edges = [];
       for (const f of this.project.facts) {
         const nodeType = f.id === 'origin' ? 'origin' : f.id === 'goal' ? 'goal' : 'fact';
-        const label = this.summarizeFactLabel(f);
+        const label = this.factDisplayTitle(f);
         const size = this.factNodeSize(label, nodeType);
         nodes.push({ data: {
           id: f.id,
@@ -3102,12 +3148,19 @@ function cairnApp() {
     },
 
     summarizeFactLabel(fact) {
+      if (!fact) return 'Fact';
       if (fact.id === 'origin') return 'Origin';
       if (fact.id === 'goal') return 'Goal';
-      const normalized = fact.description.replace(/\s+/g, ' ').trim();
+      const normalized = (fact.description || '').replace(/\s+/g, ' ').trim();
       const chars = Array.from(normalized);
       if (chars.length <= 24) return normalized || fact.id;
       return `${chars.slice(0, 24).join('')}…`;
+    },
+
+    factDisplayTitle(fact) {
+      if (!fact) return 'Fact';
+      const title = typeof fact.title === 'string' ? fact.title.trim() : '';
+      return title || this.summarizeFactLabel(fact);
     },
 
     factNodeSize(label, nodeType) {
@@ -3513,6 +3566,36 @@ function cairnApp() {
       return this.project ? this.project.facts.find(f => f.id === fid) || null : null;
     },
 
+    openEditFact(fact) {
+      if (!fact) return;
+      this.factForm = {
+        id: fact.id,
+        title: this.factDisplayTitle(fact),
+        description: fact.description || '',
+      };
+      this.showFactEditModal = true;
+    },
+
+    async saveFact() {
+      if (!this.selectedProjectId || !this.factForm.id) return;
+      try {
+        const updated = await this.api('PATCH', `/projects/${this.selectedProjectId}/facts/${encodeURIComponent(this.factForm.id)}`, {
+          title: this.factForm.title.trim(),
+          description: this.factForm.description.trim(),
+        });
+        if (this.project) {
+          const idx = this.project.facts.findIndex(f => f.id === updated.id);
+          if (idx >= 0) this.project.facts.splice(idx, 1, updated);
+        }
+        this.showFactEditModal = false;
+        await this.loadProject(this.selectedProjectId);
+        this.updateGraph();
+        this.showToast('Fact saved');
+      } catch(e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
     intentDotClass(i) {
       if (i.to) return 'bg-teal-400';
       if (i.control_state === 'conclude_requested') return i.worker ? 'bg-amber-500' : 'bg-rose-500';
@@ -3548,7 +3631,7 @@ function cairnApp() {
         timestamp: this.project.project.created_at,
         actor: 'system',
         title: this.project.project.title,
-        meta: [origin ? origin.description : null, goal ? `goal: ${goal.description}` : null].filter(Boolean),
+        meta: [origin ? origin.description : null, goal ? `goal: ${this.factDisplayTitle(goal)}` : null].filter(Boolean),
         targetType: 'fact',
         targetId: 'origin',
         order: order++,
@@ -3616,8 +3699,8 @@ function cairnApp() {
           type: 'intent_concluded',
           timestamp: intent.concluded_at,
           actor: intent.worker || intent.creator,
-          title: fact ? fact.description : intent.description,
-          meta: [intent.id, `produced ${intent.to}`, `from ${intent.from.join(', ')}`],
+          title: fact ? this.factDisplayTitle(fact) : intent.description,
+          meta: [intent.id, `produced ${intent.to}`, `from ${intent.from.join(', ')}`, fact ? fact.description : null].filter(Boolean),
           targetType: 'fact',
           targetId: intent.to,
           order: order++,
@@ -4049,12 +4132,14 @@ function cairnApp() {
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
-    openConclude(intent) { this.concludeForm = { description:'', intentId: intent.id }; this.showConcludeModal = true; },
+    openConclude(intent) { this.concludeForm = { title: '', description:'', intentId: intent.id }; this.showConcludeModal = true; },
 
     async concludeIntent() {
       try {
         const actor = this.actorName();
-        await this.api('POST', `/projects/${this.selectedProjectId}/intents/${this.concludeForm.intentId}/conclude`, { worker: actor, description: this.concludeForm.description });
+        const body = { worker: actor, description: this.concludeForm.description };
+        if (this.concludeForm.title?.trim()) body.title = this.concludeForm.title.trim();
+        await this.api('POST', `/projects/${this.selectedProjectId}/intents/${this.concludeForm.intentId}/conclude`, body);
         this.showConcludeModal = false;
         this.selectedNode = null;
         await this.loadProject(this.selectedProjectId);

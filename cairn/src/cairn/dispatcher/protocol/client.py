@@ -138,9 +138,12 @@ class CairnClient:
         intent_id: str,
         worker: str,
         description: str,
+        title: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> ApiResult:
         payload = {"worker": worker, "description": description}
+        if title is not None:
+            payload["title"] = title
         if metadata is not None:
             payload["metadata"] = metadata
         return self._request_json(

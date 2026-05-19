@@ -30,6 +30,7 @@ class CommandBlackboardV2SchemaTests(unittest.TestCase):
         self.assertIn("auto_reason", project_columns)
         self.assertIn("allowed_auto_workers_json", project_columns)
         self.assertIn("default_timeout_seconds", project_columns)
+        self.assertIn("title", fact_columns)
         self.assertIn("metadata_json", fact_columns)
         self.assertIn("requested_worker", intent_columns)
         self.assertIn("control_state", intent_columns)
@@ -65,6 +66,7 @@ class CommandBlackboardV2SchemaTests(unittest.TestCase):
 
         self.assertFalse(project.auto_reason)
         self.assertIsNone(project.allowed_auto_workers)
+        self.assertEqual(fact.title, "start")
         self.assertIsNone(fact.metadata)
         self.assertEqual(intent.control_state, "normal")
 

@@ -4,7 +4,7 @@ from datetime import datetime
 import yaml
 
 from cairn.server.db import get_conn
-from cairn.server.services import expire_reason_leases, expire_workers, get_project_or_404, loads_json_list, loads_json_object
+from cairn.server.services import derive_fact_title, expire_reason_leases, expire_workers, get_project_or_404, loads_json_list, loads_json_object
 
 router = APIRouter(tags=["export"])
 
@@ -25,7 +25,7 @@ def _load_project_data(conn, project_id: str):
     proj = get_project_or_404(conn, project_id)
 
     facts = conn.execute(
-        "SELECT id, description, metadata_json FROM facts WHERE project_id = ?", (project_id,)
+        "SELECT id, title, description, metadata_json FROM facts WHERE project_id = ?", (project_id,)
     ).fetchall()
     hints = conn.execute(
         "SELECT content, creator, created_at FROM hints WHERE project_id = ? ORDER BY created_at",
@@ -82,7 +82,11 @@ def _export_yaml(conn, project_id: str) -> str:
 
     data["facts"] = []
     for f in facts:
-        fact_entry = {"id": f["id"], "description": f["description"]}
+        fact_entry = {
+            "id": f["id"],
+            "title": f["title"] or derive_fact_title(f["description"], f["id"]),
+            "description": f["description"],
+        }
         metadata = loads_json_object(f["metadata_json"] if "metadata_json" in f.keys() else None)
         if metadata:
             fact_entry["metadata"] = metadata
@@ -118,6 +122,10 @@ def _export_timeline(conn, project_id: str) -> str:
     proj, facts, hints, intents, sources_by_intent = _load_project_data(conn, project_id)
 
     facts_by_id = {f["id"]: f["description"] for f in facts}
+    fact_titles_by_id = {
+        f["id"]: f["title"] or derive_fact_title(f["description"], f["id"])
+        for f in facts
+    }
 
     events: list[tuple[str, int, str]] = []  # (timestamp, order, text)
     order = 0
@@ -156,8 +164,9 @@ def _export_timeline(conn, project_id: str) -> str:
         if i["to_fact_id"] == "goal":
             block = f"[{ts}] PROJECT COMPLETED by {actor}\n  via: {i['id']} from {from_str}"
         else:
+            fact_title = fact_titles_by_id.get(i["to_fact_id"], i["to_fact_id"])
             fact_desc = facts_by_id.get(i["to_fact_id"], "")
-            block = f"[{ts}] INTENT CONCLUDED {i['id']} by {actor}\n  from: {from_str}\n  produced: {i['to_fact_id']}\n  {fact_desc}"
+            block = f"[{ts}] INTENT CONCLUDED {i['id']} by {actor}\n  from: {from_str}\n  produced: {i['to_fact_id']} {fact_title}\n  {fact_desc}"
 
         events.append((i["concluded_at"] or "", order, block))
         order += 1

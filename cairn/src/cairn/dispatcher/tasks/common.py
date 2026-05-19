@@ -228,6 +228,7 @@ def write_conclude_result(
     worker_name: str,
     description: str,
     *,
+    title: str | None = None,
     source: str,
     phase_ms: int,
     total_ms: int | None = None,
@@ -239,6 +240,7 @@ def write_conclude_result(
         intent_id,
         worker_name,
         description,
+        title=title,
         source=source,
         phase_ms=phase_ms,
         total_ms=total_ms,
@@ -261,12 +263,13 @@ def write_conclude_result_with_fact_id(
     worker_name: str,
     description: str,
     *,
+    title: str | None = None,
     source: str,
     phase_ms: int,
     total_ms: int | None = None,
     metadata: dict | None = None,
 ) -> ConcludeWriteResult:
-    response = client.conclude(project_id, intent_id, worker_name, description, metadata=metadata)
+    response = client.conclude(project_id, intent_id, worker_name, description, title=title, metadata=metadata)
     if response.ok:
         fact_id: str | None = None
         if isinstance(response.data, dict):

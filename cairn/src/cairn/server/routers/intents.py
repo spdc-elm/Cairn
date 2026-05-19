@@ -15,6 +15,7 @@ from cairn.server.models import (
 from cairn.server.services import (
     check_project_active,
     check_project_intent_delete_writable,
+    derive_fact_title,
     dumps_json,
     fact_to_model,
     get_claimable_open_intent_or_404,
@@ -246,10 +247,11 @@ def conclude(project_id: str, intent_id: str, body: ConcludeRequest):
 
         now = utcnow()
         fid = next_fact_id(conn, project_id)
+        title = body.title or derive_fact_title(body.description, fid)
 
         conn.execute(
-            "INSERT INTO facts (id, project_id, description, metadata_json) VALUES (?, ?, ?, ?)",
-            (fid, project_id, body.description, dumps_json(body.metadata)),
+            "INSERT INTO facts (id, project_id, title, description, metadata_json) VALUES (?, ?, ?, ?, ?)",
+            (fid, project_id, title, body.description, dumps_json(body.metadata)),
         )
         conn.execute(
             "UPDATE intents SET to_fact_id = ?, worker = ?, last_heartbeat_at = ?, concluded_at = ? WHERE id = ? AND project_id = ?",

@@ -207,7 +207,7 @@ def run_explore_task(
             try:
                 model_output = driver.extract_response_text(first.stdout, first.stderr)
                 payload = parse_json_output(model_output)
-                kind, description = validate_explore_payload(payload)
+                kind, fact_data = validate_explore_payload(payload)
             except Exception as exc:
                 LOG.warning(
                     "explore parse failed project=%s intent=%s worker=%s error=%s execute_ms=%s total_ms=%s stdout_preview=%s stderr_preview=%s",
@@ -272,15 +272,16 @@ def run_explore_task(
                     report_path,
                     run_id,
                 )
-            return write_conclude_result(
-                client,
-                project.project.id,
-                intent.id,
-                worker.name,
-                description,
-                source="explore_execute",
-                phase_ms=execute_ms,
-                total_ms=int((time.perf_counter() - task_started) * 1000),
+                return write_conclude_result(
+                    client,
+                    project.project.id,
+                    intent.id,
+                    worker.name,
+                    fact_data["description"],
+                    title=fact_data["title"],
+                    source="explore_execute",
+                    phase_ms=execute_ms,
+                    total_ms=int((time.perf_counter() - task_started) * 1000),
                 metadata=metadata_for_report(report_path, run_id, worker.name, intent.id),
             )
         if did_timeout(first):
@@ -471,7 +472,7 @@ def _try_conclude_fallback(
     try:
         model_output = driver.extract_response_text(result.stdout, result.stderr)
         payload = parse_json_output(model_output)
-        kind, description = validate_explore_payload(payload)
+        kind, fact_data = validate_explore_payload(payload)
     except Exception as exc:
         LOG.warning(
             "conclude parse failed project=%s intent=%s worker=%s error=%s conclude_ms=%s stdout_preview=%s stderr_preview=%s",
@@ -522,7 +523,8 @@ def _try_conclude_fallback(
         project_id,
         intent.id,
         worker.name,
-        description,
+        fact_data["description"],
+        title=fact_data["title"],
         source="explore_conclude",
         phase_ms=conclude_ms,
         metadata=metadata_for_report(report_path, run_id, worker.name, intent.id),

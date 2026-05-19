@@ -224,6 +224,7 @@ def run_bootstrap_task(
                 project.project.id,
                 intent.id,
                 worker.name,
+                data["fact_title"],
                 data["fact_description"],
                 data["complete_description"],
                 source="bootstrap",
@@ -393,7 +394,7 @@ def _try_conclude_fallback(
                 worker.name,
                 preview(str(conclude_data.get("complete"))),
             )
-        kind, fact_description = validate_bootstrap_conclude_payload(payload)
+        kind, fact_data = validate_bootstrap_conclude_payload(payload)
     except Exception as exc:
         LOG.warning(
             "bootstrap conclude parse failed project=%s intent=%s worker=%s error=%s conclude_ms=%s stdout_preview=%s stderr_preview=%s",
@@ -423,7 +424,8 @@ def _try_conclude_fallback(
         project.project.id,
         intent.id,
         worker.name,
-        fact_description,
+        fact_data["description"],
+        title=fact_data["title"],
         source="bootstrap_conclude",
         phase_ms=conclude_ms,
     )
@@ -452,6 +454,7 @@ def _write_bootstrap_complete_result(
     project_id: str,
     intent_id: str,
     worker_name: str,
+    fact_title: str | None,
     fact_description: str,
     complete_description: str,
     *,
@@ -465,6 +468,7 @@ def _write_bootstrap_complete_result(
         intent_id,
         worker_name,
         fact_description,
+        title=fact_title,
         source=source,
         phase_ms=phase_ms,
         total_ms=total_ms,

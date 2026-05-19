@@ -12,6 +12,7 @@ class Settings(BaseModel):
 
 class Fact(BaseModel):
     id: str
+    title: str
     description: str
     metadata: dict[str, Any] | None = None
 
@@ -320,11 +321,29 @@ class ReasonClaimRequest(BaseModel):
 class ConcludeRequest(BaseModel):
     worker: str
     description: str
+    title: str | None = None
     metadata: dict[str, Any] | None = None
 
-    @field_validator("worker", "description")
+    @field_validator("worker", "description", "title")
     @classmethod
-    def validate_non_empty_text(cls, value: str) -> str:
+    def validate_non_empty_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+
+class UpdateFactRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+
+    @field_validator("title", "description")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         text = value.strip()
         if not text:
             raise ValueError("must not be empty")

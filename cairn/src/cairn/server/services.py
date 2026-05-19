@@ -201,9 +201,21 @@ def intent_to_model(conn: sqlite3.Connection, row: sqlite3.Row, project_id: str)
     )
 
 
+def derive_fact_title(description: str, fact_id: str | None = None) -> str:
+    normalized = " ".join(description.split()).strip()
+    if not normalized:
+        return fact_id or "Fact"
+    chars = list(normalized)
+    if len(chars) <= 24:
+        return normalized
+    return "".join(chars[:24]) + "..."
+
+
 def fact_to_model(row: sqlite3.Row) -> Fact:
+    title = row["title"] if "title" in row.keys() else None
     return Fact(
         id=row["id"],
+        title=title or derive_fact_title(row["description"], row["id"]),
         description=row["description"],
         metadata=loads_json_object(row["metadata_json"] if "metadata_json" in row.keys() else None),
     )

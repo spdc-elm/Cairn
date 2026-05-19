@@ -13,7 +13,7 @@ When rejecting a task, return the following:
 
 Normal return example:
 ```json
-{"accepted": true, "data": {"description": "..."}}
+{"accepted": true, "data": {"title": "...", "description": "..."}}
 ```
 
 # Rules
@@ -24,6 +24,8 @@ Normal return example:
 - This JSON summary is your final output for this phase. After outputting it, stop.
 - `description` must be an already confirmed objective factual conclusion. Do not output plans, guesses, or explanatory filler. Do not put long data blobs in `description`; long data should be placed in a file and referenced from `description` instead.
 - `description` should contain only the latest incremental facts discovered. Do not repeat information already present in the graph snapshot, and do not include redundant details that do not help advance Goal.
+- `title` must be a short human-facing label for graph display. It should help a human scan the board, but it is not a substitute for `description`.
+- Existing fact titles in the graph are display summaries; use fact descriptions and reports as the source of truth.
 - In the report, record what is already confirmed, relevant artifacts, failures, and uncertainty. Keep the JSON description short.
 
 # Context

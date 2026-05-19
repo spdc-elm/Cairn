@@ -13,12 +13,13 @@ from cairn.server.models import (
     CreateProjectRequest,
     HeartbeatRequest,
     RequestConcludeRequest,
+    UpdateFactRequest,
     UpdateProjectRequest,
     UpdateIntentRequest,
 )
 from cairn.server.routers.export import _export_yaml
 from cairn.server.routers.intents import conclude, create_intent, delete_open_intent, heartbeat, request_conclude, update_intent
-from cairn.server.routers.projects import create_project, update_project
+from cairn.server.routers.projects import create_project, update_fact, update_project
 
 
 class CommandBlackboardV2ApiTests(unittest.TestCase):
@@ -33,6 +34,8 @@ class CommandBlackboardV2ApiTests(unittest.TestCase):
 
     def test_create_project_defaults_auto_reason_false(self) -> None:
         self.assertFalse(self.project.project.auto_reason)
+        self.assertEqual(self.project.facts[0].title, "Origin")
+        self.assertEqual(self.project.facts[1].title, "Goal")
 
     def test_create_project_saves_auto_scope_and_timeouts(self) -> None:
         project = create_project(
@@ -139,13 +142,38 @@ class CommandBlackboardV2ApiTests(unittest.TestCase):
         result = conclude(
             self.project.project.id,
             intent.id,
-            ConcludeRequest(worker="pi", description="found fact", metadata={"report_path": "/tmp/report.md"}),
+            ConcludeRequest(worker="pi", title="Found Fact", description="found fact", metadata={"report_path": "/tmp/report.md"}),
         )
+        self.assertEqual(result.fact.title, "Found Fact")
         self.assertEqual(result.fact.metadata["report_path"], "/tmp/report.md")
         with db.get_conn() as conn:
             exported = _export_yaml(conn, self.project.project.id)
         self.assertIn("requested_worker", exported)
+        self.assertIn("title: Found Fact", exported)
         self.assertIn("report_path", exported)
+
+    def test_conclude_without_title_derives_fact_title(self) -> None:
+        intent = create_intent(
+            self.project.project.id,
+            CreateIntentRequest(**{"from": ["origin"], "description": "run", "creator": "human"}),
+        )
+        result = conclude(
+            self.project.project.id,
+            intent.id,
+            ConcludeRequest(worker="pi", description="this is a long enough fact description that must be shortened"),
+        )
+
+        self.assertEqual(result.fact.title, "this is a long enough fa...")
+
+    def test_patch_fact_updates_title_and_description(self) -> None:
+        updated = update_fact(
+            self.project.project.id,
+            "origin",
+            UpdateFactRequest(title="Entry", description="updated start"),
+        )
+
+        self.assertEqual(updated.title, "Entry")
+        self.assertEqual(updated.description, "updated start")
 
 
 if __name__ == "__main__":

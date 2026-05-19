@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE TABLE IF NOT EXISTS facts (
     id TEXT NOT NULL,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    title TEXT,
     description TEXT NOT NULL,
     metadata_json TEXT,
     PRIMARY KEY (id, project_id)
@@ -165,6 +166,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if name not in project_columns:
             conn.execute(ddl)
     fact_columns = {row["name"] for row in conn.execute("PRAGMA table_info(facts)").fetchall()}
+    if "title" not in fact_columns:
+        conn.execute("ALTER TABLE facts ADD COLUMN title TEXT")
     if "metadata_json" not in fact_columns:
         conn.execute("ALTER TABLE facts ADD COLUMN metadata_json TEXT")
     intent_columns = {row["name"] for row in conn.execute("PRAGMA table_info(intents)").fetchall()}

@@ -92,9 +92,9 @@ if phase=="reason":
 
 if phase=="bootstrap":
     if outcome=="complete":
-        print(json.dumps({"accepted":True,"data":{"fact":{"description":"mock fact for bootstrap"},"complete":{"description":"mock bootstrap complete from fact"}}}, ensure_ascii=False))
+        print(json.dumps({"accepted":True,"data":{"fact":{"title":"Mock Bootstrap Fact","description":"mock fact for bootstrap"},"complete":{"description":"mock bootstrap complete from fact"}}}, ensure_ascii=False))
     elif outcome=="fact":
-        print(json.dumps({"accepted":True,"data":{"fact":{"description":"mock fact-only bootstrap result"}}}, ensure_ascii=False))
+        print(json.dumps({"accepted":True,"data":{"fact":{"title":"Mock Bootstrap Fact","description":"mock fact-only bootstrap result"}}}, ensure_ascii=False))
     elif outcome=="rejected":
         print(json.dumps({"accepted":False,"reason":"mock_rejected"}, ensure_ascii=False))
     else:
@@ -103,7 +103,7 @@ if phase=="bootstrap":
 
 if phase=="bootstrap_conclude":
     if outcome=="fact":
-        print(json.dumps({"accepted":True,"data":{"fact":{"description":"mock fact for bootstrap_conclude"}}}, ensure_ascii=False))
+        print(json.dumps({"accepted":True,"data":{"fact":{"title":"Mock Bootstrap Conclude","description":"mock fact for bootstrap_conclude"}}}, ensure_ascii=False))
     elif outcome=="rejected":
         print(json.dumps({"accepted":False,"reason":"mock_rejected"}, ensure_ascii=False))
     else:
@@ -121,7 +121,7 @@ if report_path:
 
 if outcome=="fact":
     label = prompt.get("intent_id") or phase
-    print(json.dumps({"accepted":True,"data":{"description":f"mock fact for {label}"}} , ensure_ascii=False))
+    print(json.dumps({"accepted":True,"data":{"title":f"Mock {label}","description":f"mock fact for {label}"}} , ensure_ascii=False))
 elif outcome=="rejected":
     print(json.dumps({"accepted":False,"reason":"mock_rejected"}, ensure_ascii=False))
 else:

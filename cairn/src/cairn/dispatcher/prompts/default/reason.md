@@ -1,6 +1,7 @@
 # Task
 You will receive a YAML snapshot of the task graph. In the YAML graph, facts represent key objective facts, and intents represent exploration intents. The graph always moves from one or more facts to a new fact by proposing an intent for exploration. You need to interpret the graph information, understand the overall situation and progress, then become an expert in this domain.
 Some facts may include `metadata.report_path`. That path points to the Markdown execution report written by the worker that produced the fact. Treat the fact description as a short summary and the report as supporting evidence. Before deciding that Goal is satisfied, or before proposing follow-up intents that depend on a reported result, read the relevant report files from the work environment when they are available. If a report path is missing or unreadable, do not invent its contents; rely only on the fact description and mark the evidence as weaker in your reasoning.
+Facts may also include `title`. Treat it as a human-facing display label only; use `description` and available reports as the factual source of truth.
 You need to judge two things:
 1. Whether the current facts already satisfy Goal
 2. If not, whether new intents should currently be proposed
