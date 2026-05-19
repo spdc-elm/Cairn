@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Collection, Protocol
 
+from cairn.dispatcher.config import WorkerType
 from cairn.dispatcher.runtime.process import ProcessResult
 
 
@@ -69,4 +70,4 @@ class WorkEnvironment(Protocol):
 
     def cleanup_key(self, project_id: str) -> str: ...
 
-    def run_healthcheck(self, worker_env: dict[str, str] | None = None) -> dict[str, Any]: ...
+    def run_healthcheck(self, worker_types: Collection[WorkerType] | None = None) -> dict[str, Any]: ...

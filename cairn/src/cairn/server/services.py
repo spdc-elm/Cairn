@@ -251,7 +251,6 @@ def environment_row_to_public(
         backend=row["backend"],
         ssh_command=row["ssh_command"],
         workspace_root=row["workspace_root"],
-        harness=row["harness"],
         cleanup=_loads_optional_json(row["cleanup_json"]) if "cleanup_json" in row.keys() else None,
         terminal=_loads_optional_json(row["terminal_json"]) if "terminal_json" in row.keys() else None,
         created_at=row["created_at"],

@@ -76,6 +76,27 @@ class DispatchConfigEnvironmentTests(unittest.TestCase):
         assert isinstance(environment, SshEnvironmentConfig)
         self.assertEqual(environment.ssh_argv(), ["ssh", "-F", "/tmp/cairn_pentestvm_ssh_config", "cairn-pentestvm"])
 
+    def test_ssh_config_ignores_legacy_harness_field(self) -> None:
+        config = DispatchConfig.model_validate(
+            {
+                **BASE_CONFIG,
+                "environments": [
+                    {
+                        "id": "ssh",
+                        "label": "SSH",
+                        "backend": "ssh",
+                        "ssh_command": "ssh host",
+                        "workspace_root": "/tmp/cairn",
+                        "harness": "pi",
+                    }
+                ],
+            }
+        )
+
+        environment = config.environments[0]
+        self.assertIsInstance(environment, SshEnvironmentConfig)
+        self.assertNotIn("harness", environment.model_dump())
+
     def test_rejects_duplicate_environment_id(self) -> None:
         data = {
             **BASE_CONFIG,

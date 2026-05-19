@@ -1309,7 +1309,7 @@ function cairnApp() {
 
     environments: [],
     envHealthcheckLoading: '',
-    environmentForm: { id: '', label: '', backend: 'ssh', ssh_command: '', workspace_root: '/home/kali/cairn-workspaces', harness: 'pi', cleanup: { completed_action: 'stop' }, terminal: { mode: 'none' } },
+    environmentForm: { id: '', label: '', backend: 'ssh', ssh_command: '', workspace_root: '/home/kali/cairn-workspaces', cleanup: { completed_action: 'stop' }, terminal: { mode: 'none' } },
     endpointForm: { environment_id: '', id: '', type: 'pi', base_url: '', provider_api: 'openai-completions', api_key: '', clear_api_key: false, editing: false },
     newProject: { title: '', origin: '', goal: '', hints: [{ content: '' }], executionMode: 'docker', environment_id: 'docker-default' },
     intentForm: { description: '' },
@@ -1581,7 +1581,7 @@ function cairnApp() {
     },
 
     resetEnvironmentForm() {
-      this.environmentForm = { id: '', label: '', backend: 'ssh', ssh_command: '', workspace_root: '/home/kali/cairn-workspaces', harness: 'pi', cleanup: { completed_action: 'stop' }, terminal: { mode: 'none' } };
+      this.environmentForm = { id: '', label: '', backend: 'ssh', ssh_command: '', workspace_root: '/home/kali/cairn-workspaces', cleanup: { completed_action: 'stop' }, terminal: { mode: 'none' } };
     },
 
     resetEndpointForm() {
@@ -1595,7 +1595,6 @@ function cairnApp() {
         backend: env.backend,
         ssh_command: env.ssh_command || '',
         workspace_root: env.workspace_root || '/home/kali/cairn-workspaces',
-        harness: env.harness || 'pi',
         cleanup: env.cleanup || { completed_action: 'stop' },
         terminal: env.terminal || { mode: 'none' },
       };

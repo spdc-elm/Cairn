@@ -36,8 +36,45 @@ esac
 """.strip()
 
 
-def build_verbose_curl_healthcheck(url: str, *, headers: list[str], payload: str) -> list[str]:
-    return ["/bin/sh", "-lc", _VERBOSE_CURL_SCRIPT, "--", url, payload, *headers]
+def build_curl_healthcheck(
+    url: str,
+    *,
+    headers: list[str],
+    payload: str,
+    required_executables: tuple[str, ...] = (),
+) -> list[str]:
+    return [
+        "/bin/sh",
+        "-lc",
+        _preflight_script(required_executables) + 'exec curl "$@"',
+        "--",
+        "-sS",
+        "--fail",
+        "-o",
+        "/dev/null",
+        url,
+        *headers,
+        "-d",
+        payload,
+    ]
+
+
+def build_verbose_curl_healthcheck(
+    url: str,
+    *,
+    headers: list[str],
+    payload: str,
+    required_executables: tuple[str, ...] = (),
+) -> list[str]:
+    return [
+        "/bin/sh",
+        "-lc",
+        _preflight_script(required_executables) + _VERBOSE_CURL_SCRIPT,
+        "--",
+        url,
+        payload,
+        *headers,
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,9 +87,33 @@ def expand_env(text: str) -> ShellArgument:
     return ShellArgument(text=text, expand_env=True)
 
 
-def render_curl_command(url: str, *, headers: list[str | ShellArgument], payload: str) -> str:
+def render_curl_command(
+    url: str,
+    *,
+    headers: list[str | ShellArgument],
+    payload: str,
+    required_executables: tuple[str, ...] = (),
+) -> str:
     parts = ["curl", "-sS", url, *headers, "-d", payload]
-    return " ".join(_render_shell_argument(part) for part in parts)
+    command = " ".join(_render_shell_argument(part) for part in parts)
+    preflight = " && ".join(
+        f"command -v {shlex.quote(executable)} >/dev/null"
+        for executable in required_executables
+    )
+    return f"{preflight} && {command}" if preflight else command
+
+
+def _preflight_script(required_executables: tuple[str, ...]) -> str:
+    lines = []
+    for executable in required_executables:
+        quoted = shlex.quote(executable)
+        lines.append(
+            f"command -v {quoted} >/dev/null || "
+            f"{{ echo 'missing executable: {executable}' >&2; exit 127; }}"
+        )
+    if not lines:
+        return ""
+    return "\n".join(lines) + "\n"
 
 
 def _render_shell_argument(part: str | ShellArgument) -> str:

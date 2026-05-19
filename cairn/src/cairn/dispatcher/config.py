@@ -208,7 +208,6 @@ class SshEnvironmentConfig(BaseModel):
     label: str
     backend: Literal["ssh"] = "ssh"
     workspace_root: str
-    harness: Literal["pi"] = "pi"
     ssh_command: str | None = None
     host: str | None = None
     user: str | None = None
@@ -219,6 +218,15 @@ class SshEnvironmentConfig(BaseModel):
     cleanup: CleanupPolicy = Field(default_factory=CleanupPolicy)
     terminal: TerminalConfig = Field(default_factory=TerminalConfig)
     runner_path: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def drop_legacy_harness(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "harness" in data:
+            cleaned = dict(data)
+            cleaned.pop("harness", None)
+            return cleaned
+        return data
 
     @field_validator("workspace_root")
     @classmethod

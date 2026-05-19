@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Collection
 
-from cairn.dispatcher.config import DockerEnvironmentConfig
+from cairn.dispatcher.config import DockerEnvironmentConfig, WorkerType
 from cairn.dispatcher.runtime.containers import ContainerManager
 from cairn.dispatcher.runtime.environments.base import EnvironmentHandle
 
@@ -83,7 +83,7 @@ class DockerEnvironment:
     def needs_orphan_cleanup(self, name: str) -> bool:
         return self._manager.needs_orphan_cleanup(name)
 
-    def run_healthcheck(self, worker_env: dict[str, str] | None = None) -> dict[str, Any]:
+    def run_healthcheck(self, worker_types: Collection[WorkerType] | None = None) -> dict[str, Any]:
         return {
             "environment_id": self.id,
             "backend": self.backend,

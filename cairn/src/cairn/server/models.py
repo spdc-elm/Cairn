@@ -96,7 +96,6 @@ class WorkEnvironmentPublic(BaseModel):
     backend: Literal["docker", "ssh"]
     ssh_command: str | None = None
     workspace_root: str | None = None
-    harness: str = "pi"
     cleanup: dict | None = None
     terminal: dict | None = None
     created_at: str | None = None
@@ -114,7 +113,7 @@ class WorkEnvironmentUpsert(BaseModel):
     backend: Literal["ssh", "docker"] = "ssh"
     ssh_command: str | None = None
     workspace_root: str | None = "/home/kali/cairn-workspaces"
-    harness: str = "pi"
+    harness: str | None = Field(default=None, exclude=True)
     cleanup: dict | None = None
     terminal: dict | None = None
     provider_endpoints: list[ProviderEndpointUpsert] = Field(default_factory=list)

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from fastapi import HTTPException
 
@@ -13,6 +15,7 @@ from cairn.server.routers.environments import (
     create_environment_endpoint,
     delete_environment,
     get_environment_endpoint,
+    healthcheck_environment,
     list_environments,
     update_environment_endpoint,
 )
@@ -130,6 +133,105 @@ class EnvironmentEndpointTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as ctx:
             get_environment_endpoint("pentestvm", "pi-default", include_secret=True)
         self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_new_schema_does_not_create_harness_column(self) -> None:
+        with db.get_conn() as conn:
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(work_environments)").fetchall()}
+
+        self.assertNotIn("harness", columns)
+
+    def test_legacy_harness_input_is_accepted_but_not_returned(self) -> None:
+        env = create_environment(
+            WorkEnvironmentUpsert(
+                id="legacy-input",
+                label="Legacy Input",
+                backend="ssh",
+                ssh_command="ssh legacy",
+                workspace_root="/home/kali/cairn-workspaces",
+                harness="pi",
+            )
+        )
+
+        self.assertNotIn("harness", env.model_dump())
+
+    def test_environment_healthcheck_derives_worker_types_from_endpoints(self) -> None:
+        create_environment_endpoint(
+            "pentestvm",
+            ProviderEndpointUpsert(
+                id="codex-default",
+                type="codex",
+                base_url="https://codex.example.test/v1",
+                api_key="sk-codex",
+            ),
+        )
+        create_environment_endpoint(
+            "pentestvm",
+            ProviderEndpointUpsert(
+                id="claude-default",
+                type="claudecode",
+                base_url="https://claude.example.test",
+                api_key="sk-claude",
+            ),
+        )
+        seen: list[list[str]] = []
+
+        class FakeSshEnvironment:
+            def __init__(self, _config):
+                pass
+
+            def run_healthcheck(self, worker_types=None):
+                seen.append(list(worker_types or []))
+                return {"environment_id": "pentestvm", "backend": "ssh", "status": "ok", "checks": []}
+
+            def close(self):
+                pass
+
+        with patch("cairn.server.routers.environments.SshEnvironment", FakeSshEnvironment):
+            result = healthcheck_environment("pentestvm")
+
+        self.assertEqual(seen, [["claudecode", "codex"]])
+        self.assertEqual(result["status"], "ok")
+
+    def test_existing_legacy_harness_column_is_tolerated(self) -> None:
+        legacy_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(legacy_tmp.cleanup)
+        legacy_path = Path(legacy_tmp.name) / "legacy.db"
+        with sqlite3.connect(str(legacy_path)) as conn:
+            conn.execute(
+                """
+                CREATE TABLE work_environments (
+                    id TEXT PRIMARY KEY,
+                    label TEXT NOT NULL,
+                    backend TEXT NOT NULL,
+                    ssh_command TEXT,
+                    workspace_root TEXT,
+                    harness TEXT NOT NULL DEFAULT 'pi',
+                    cleanup_json TEXT,
+                    terminal_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_health_status TEXT,
+                    last_healthcheck_json TEXT
+                )
+                """
+            )
+        db._db_path = None
+        db.configure(legacy_path)
+
+        env = create_environment(
+            WorkEnvironmentUpsert(
+                id="legacy-db",
+                label="Legacy DB",
+                backend="ssh",
+                ssh_command="ssh legacy-db",
+                workspace_root="/home/kali/cairn-workspaces",
+            )
+        )
+        environments = list_environments()
+
+        self.assertEqual(env.id, "legacy-db")
+        self.assertNotIn("harness", env.model_dump())
+        self.assertTrue(any(item.id == "legacy-db" for item in environments))
 
 
 if __name__ == "__main__":

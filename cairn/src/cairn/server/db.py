@@ -86,7 +86,6 @@ CREATE TABLE IF NOT EXISTS work_environments (
     backend TEXT NOT NULL,
     ssh_command TEXT,
     workspace_root TEXT,
-    harness TEXT NOT NULL DEFAULT 'pi',
     cleanup_json TEXT,
     terminal_json TEXT,
     created_at TEXT NOT NULL,
@@ -108,9 +107,9 @@ CREATE TABLE IF NOT EXISTS environment_provider_endpoints (
 );
 
 INSERT OR IGNORE INTO work_environments (
-    id, label, backend, workspace_root, harness, cleanup_json, terminal_json, created_at, updated_at
+    id, label, backend, workspace_root, cleanup_json, terminal_json, created_at, updated_at
 ) VALUES (
-    'docker-default', 'Docker Default', 'docker', NULL, 'pi', '{"completed_action":"stop"}', '{"mode":"none"}', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')
+    'docker-default', 'Docker Default', 'docker', NULL, '{"completed_action":"stop"}', '{"mode":"none"}', strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')
 );
 """
 

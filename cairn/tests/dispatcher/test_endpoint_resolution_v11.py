@@ -153,6 +153,49 @@ class EndpointResolutionTests(unittest.TestCase):
 
         self.assertEqual(selection.worker, config.workers[0])
 
+    def test_normal_startup_healthcheck_does_not_raise_when_all_workers_unavailable(self) -> None:
+        config = DispatchConfig.model_validate(BASE_CONFIG)
+        loop = DispatcherLoop.__new__(DispatcherLoop)
+        loop.config = config
+        loop.environments = {"pentestvm": SimpleNamespace(id="pentestvm", backend="ssh")}
+        loop.environment_metadata = {
+            "pentestvm": WorkEnvironmentPublic(
+                id="pentestvm",
+                label="pentestVM",
+                backend="ssh",
+                provider_endpoints=[],
+            )
+        }
+        loop.client = SimpleNamespace(
+            get_environment_endpoint=lambda _environment_id, _endpoint_id, include_secret=False: (_ for _ in ()).throw(
+                AssertionError("should not load")
+            )
+        )
+
+        loop._run_startup_healthchecks(show_commands=False, fail_on_all=False)
+
+    def test_startup_healthcheck_only_raises_when_all_workers_unavailable(self) -> None:
+        config = DispatchConfig.model_validate(BASE_CONFIG)
+        loop = DispatcherLoop.__new__(DispatcherLoop)
+        loop.config = config
+        loop.environments = {"pentestvm": SimpleNamespace(id="pentestvm", backend="ssh")}
+        loop.environment_metadata = {
+            "pentestvm": WorkEnvironmentPublic(
+                id="pentestvm",
+                label="pentestVM",
+                backend="ssh",
+                provider_endpoints=[],
+            )
+        }
+        loop.client = SimpleNamespace(
+            get_environment_endpoint=lambda _environment_id, _endpoint_id, include_secret=False: (_ for _ in ()).throw(
+                AssertionError("should not load")
+            )
+        )
+
+        with self.assertRaises(RuntimeError):
+            loop._run_startup_healthchecks(show_commands=False, fail_on_all=True)
+
 
 if __name__ == "__main__":
     unittest.main()

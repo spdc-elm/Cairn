@@ -24,6 +24,9 @@ class WorkerDriver(abc.ABC):
     def prepare_session(self) -> str | None:
         return None
 
+    def required_executables(self) -> tuple[str, ...]:
+        return ()
+
     def build_startup_healthcheck(self, worker: WorkerConfig) -> list[str]:
         return self.build_healthcheck(worker)
 

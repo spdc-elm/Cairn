@@ -129,7 +129,7 @@ class DispatcherLoop:
 
     def run(self, once: bool = False) -> None:
         try:
-            self.run_startup_healthchecks()
+            self.run_startup_healthchecks(fail_on_all=False)
             while True:
                 try:
                     if not self._settings_checked:
@@ -162,14 +162,14 @@ class DispatcherLoop:
 
     def run_startup_healthchecks_only(self) -> None:
         try:
-            self.run_startup_healthchecks(show_commands=True)
+            self.run_startup_healthchecks(show_commands=True, fail_on_all=True)
         finally:
             self.close()
 
     def run_environment_healthchecks_only(self) -> None:
         try:
             for environment in self.environments.values():
-                result = environment.run_healthcheck()
+                result = environment.run_healthcheck(self._worker_types_for_environment(environment.id))
                 LOG.info(
                     "environment healthcheck environment=%s backend=%s status=%s result=%s",
                     environment.id,
@@ -180,10 +180,10 @@ class DispatcherLoop:
         finally:
             self.close()
 
-    def run_startup_healthchecks(self, *, show_commands: bool = False) -> None:
+    def run_startup_healthchecks(self, *, show_commands: bool = False, fail_on_all: bool = True) -> None:
         if self._startup_healthchecks_checked:
             return
-        self._run_startup_healthchecks(show_commands=show_commands)
+        self._run_startup_healthchecks(show_commands=show_commands, fail_on_all=fail_on_all)
         self._startup_healthchecks_checked = True
 
     def _dispatch_available(self, summaries: list[ProjectSummary]) -> None:
@@ -1003,7 +1003,7 @@ class DispatcherLoop:
                 interval,
             )
 
-    def _run_startup_healthchecks(self, *, show_commands: bool) -> None:
+    def _run_startup_healthchecks(self, *, show_commands: bool, fail_on_all: bool) -> None:
         results = run_startup_healthchecks(
             self.config,
             self.environments,
@@ -1013,7 +1013,16 @@ class DispatcherLoop:
         )
         if any(result.ok for result in results):
             return
+        if not fail_on_all:
+            LOG.warning(format_failure_summary(results))
+            return
         raise RuntimeError(format_failure_summary(results))
+
+    def _worker_types_for_environment(self, environment_id: str) -> list:
+        metadata = self.environment_metadata.get(environment_id)
+        if metadata is None:
+            return []
+        return sorted({endpoint.type for endpoint in metadata.provider_endpoints})
 
 
 def _server_environment_config(environment: WorkEnvironmentPublic) -> SshEnvironmentConfig | None:
@@ -1025,7 +1034,6 @@ def _server_environment_config(environment: WorkEnvironmentPublic) -> SshEnviron
         backend="ssh",
         ssh_command=environment.ssh_command,
         workspace_root=environment.workspace_root or "/home/kali/cairn-workspaces",
-        harness="pi",
         cleanup=CleanupPolicy.model_validate(environment.cleanup or {"completed_action": "stop"}),
         terminal=TerminalConfig.model_validate(environment.terminal or {"mode": "none"}),
     )
@@ -1038,7 +1046,6 @@ def _server_environment_hash(environment: WorkEnvironmentPublic) -> str:
         "backend": environment.backend,
         "ssh_command": environment.ssh_command,
         "workspace_root": environment.workspace_root,
-        "harness": environment.harness,
         "cleanup": environment.cleanup,
         "terminal": environment.terminal,
     }
@@ -1053,7 +1060,6 @@ def _environment_public_from_config(environment) -> WorkEnvironmentPublic:
             backend="ssh",
             ssh_command=environment.ssh_command,
             workspace_root=environment.workspace_root,
-            harness=environment.harness,
             cleanup=environment.cleanup.model_dump(mode="json"),
             terminal=environment.terminal.model_dump(mode="json"),
             provider_endpoints=[],

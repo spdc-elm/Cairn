@@ -10,6 +10,10 @@ from cairn.dispatcher.workers.base import DriverResult, WorkerDriver
 
 class PiDriver(WorkerDriver):
     type_name = "pi"
+    _required_executables = ("pi",)
+
+    def required_executables(self) -> tuple[str, ...]:
+        return self._required_executables
 
     def build_healthcheck(self, worker: WorkerConfig) -> list[str]:
         env = worker.env

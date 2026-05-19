@@ -38,9 +38,9 @@ def create_environment(body: WorkEnvironmentUpsert):
         conn.execute(
             """
             INSERT INTO work_environments (
-                id, label, backend, ssh_command, workspace_root, harness, cleanup_json, terminal_json,
+                id, label, backend, ssh_command, workspace_root, cleanup_json, terminal_json,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 environment_id,
@@ -48,7 +48,6 @@ def create_environment(body: WorkEnvironmentUpsert):
                 body.backend,
                 body.ssh_command,
                 body.workspace_root,
-                body.harness,
                 json.dumps(body.cleanup or {"completed_action": "stop"}, ensure_ascii=True, sort_keys=True),
                 json.dumps(body.terminal or {"mode": "none"}, ensure_ascii=True, sort_keys=True),
                 now,
@@ -74,7 +73,6 @@ def update_environment(environment_id: str, body: WorkEnvironmentUpsert):
                 backend = ?,
                 ssh_command = ?,
                 workspace_root = ?,
-                harness = ?,
                 cleanup_json = ?,
                 terminal_json = ?,
                 updated_at = ?
@@ -85,7 +83,6 @@ def update_environment(environment_id: str, body: WorkEnvironmentUpsert):
                 body.backend,
                 body.ssh_command,
                 body.workspace_root,
-                body.harness,
                 json.dumps(body.cleanup or {"completed_action": "stop"}, ensure_ascii=True, sort_keys=True),
                 json.dumps(body.terminal or {"mode": "none"}, ensure_ascii=True, sort_keys=True),
                 now,
@@ -191,7 +188,7 @@ def healthcheck_environment(environment_id: str):
         else:
             ssh_environment = SshEnvironment(_ssh_config_from_public(environment))
             try:
-                result = ssh_environment.run_healthcheck()
+                result = ssh_environment.run_healthcheck(_worker_types_from_endpoints(environment))
             finally:
                 ssh_environment.close()
         _append_endpoint_healthchecks(result, environment)
@@ -218,7 +215,6 @@ def _ssh_config_from_public(environment: WorkEnvironmentPublic) -> SshEnvironmen
         backend="ssh",
         ssh_command=environment.ssh_command,
         workspace_root=environment.workspace_root or "/home/kali/cairn-workspaces",
-        harness="pi",
         cleanup=CleanupPolicy.model_validate(environment.cleanup or {"completed_action": "stop"}),
         terminal=TerminalConfig.model_validate(environment.terminal or {"mode": "none"}),
     )
@@ -235,7 +231,7 @@ def _append_endpoint_healthchecks(result: dict, environment: WorkEnvironmentPubl
             missing.append("provider_api")
         if not endpoint.has_api_key:
             missing.append("api_key")
-        status = "ok" if not missing else "fail"
+        status = "ok" if not missing else "failed"
         endpoint_statuses.append(status)
         checks.append(
             {
@@ -248,4 +244,8 @@ def _append_endpoint_healthchecks(result: dict, environment: WorkEnvironmentPubl
             }
         )
     if endpoint_statuses and any(status != "ok" for status in endpoint_statuses):
-        result["status"] = "fail"
+        result["status"] = "failed"
+
+
+def _worker_types_from_endpoints(environment: WorkEnvironmentPublic) -> list:
+    return sorted({endpoint.type for endpoint in environment.provider_endpoints})

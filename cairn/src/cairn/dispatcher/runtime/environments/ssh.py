@@ -10,11 +10,12 @@ import subprocess
 import threading
 import time
 import uuid
-from typing import Any
+from typing import Any, Collection
 
-from cairn.dispatcher.config import SshEnvironmentConfig
+from cairn.dispatcher.config import SshEnvironmentConfig, WorkerType
 from cairn.dispatcher.runtime.environments.base import EnvironmentHandle
 from cairn.dispatcher.runtime.process import ProcessResult
+from cairn.dispatcher.workers.registry import get_driver
 
 LOG = logging.getLogger(__name__)
 RUNNER_PATH = ".cairn/bin/cairn-runner"
@@ -231,7 +232,7 @@ class SshEnvironment:
     def cleanup_stopped(self, project_id: str) -> bool:
         return True
 
-    def run_healthcheck(self, worker_env: dict[str, str] | None = None) -> dict[str, Any]:
+    def run_healthcheck(self, worker_types: Collection[WorkerType] | None = None) -> dict[str, Any]:
         checks: list[dict[str, Any]] = []
         checks.append(self._check("connect", ["true"], timeout=10))
         if checks[-1]["status"] != "ok":
@@ -265,24 +266,19 @@ class SshEnvironment:
                 }
             )
             return self._health_result(checks)
-        checks.append(
-            self._check(
-                "harness",
-                [
-                    "sh",
-                    "-lc",
-                    (
-                        "set -e; "
-                        "command -v pi >/dev/null || { echo 'missing executable: pi' >&2; exit 127; }; "
-                        "pi --version; "
-                        "python3 --version; "
-                        "command -v timeout >/dev/null || { echo 'missing executable: timeout' >&2; exit 127; }; "
-                        "command -v setsid >/dev/null || { echo 'missing executable: setsid' >&2; exit 127; }"
-                    ),
-                ],
-                timeout=10,
+        checks.append(self._check("runner", [self.runner_path, "--version"], timeout=10))
+        if checks[-1]["status"] != "ok":
+            return self._health_result(checks)
+        executables = _required_executables(worker_types)
+        if executables:
+            checks.append(self._check("worker-cli", _worker_cli_check_command(executables), timeout=10))
+        else:
+            reason = (
+                "Configured worker types do not require remote CLIs."
+                if worker_types
+                else "No provider endpoints configured; no worker CLI capability declared."
             )
-        )
+            checks.append(_skipped_check("worker-cli", reason))
         checks.append(self._check("stream", ["sh", "-lc", "printf 'stdout-ok\\n'; printf 'stderr-ok\\n' >&2"], timeout=10))
         if self.config.terminal.mode != "none":
             checks.append(self._check("terminal", ["sh", "-lc", f"command -v {shlex.quote(self.config.terminal.mode)}"], timeout=10))
@@ -519,6 +515,27 @@ class SshManagedProcess:
             target.append(chunk)
             if self.run_logger is not None:
                 self.run_logger.write_stream(name, chunk)
+
+
+def _required_executables(worker_types: Collection[WorkerType] | None) -> tuple[str, ...]:
+    if not worker_types:
+        return ()
+    executables: set[str] = set()
+    for worker_type in worker_types:
+        executables.update(get_driver(worker_type).required_executables())
+    return tuple(sorted(executables))
+
+
+def _worker_cli_check_command(executables: tuple[str, ...]) -> list[str]:
+    lines = ["set -e"]
+    for executable in executables:
+        quoted = shlex.quote(executable)
+        lines.append(
+            f"command -v {quoted} >/dev/null || "
+            f"{{ echo 'missing executable: {executable}' >&2; exit 127; }}"
+        )
+        lines.append(f"{quoted} --version || true")
+    return ["sh", "-lc", "\n".join(lines)]
 
 
 def _preview(text: str) -> str:
