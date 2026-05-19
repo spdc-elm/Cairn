@@ -580,7 +580,7 @@
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 10V7.75A3.75 3.75 0 1 1 16.5 7"/><path d="M7.5 10.5h9A1.5 1.5 0 0 1 18 12v6A1.5 1.5 0 0 1 16.5 19.5h-9A1.5 1.5 0 0 1 6 18v-6A1.5 1.5 0 0 1 7.5 10.5Z"/><path d="M12 14.25v1.5"/></svg>
             Release
           </button>
-          <button @click="selectedActionableOpenIntentRecord() && openConclude(selectedActionableOpenIntentRecord())" :disabled="!selectedActionableOpenIntentRecord()"
+          <button @click="selectedConcludableOpenIntentRecord() && openConclude(selectedConcludableOpenIntentRecord())" :disabled="!selectedConcludableOpenIntentRecord()"
             class="px-3 py-1.5 bg-white/90 backdrop-blur border border-teal-200 text-teal-600 rounded-lg shadow-sm text-xs font-medium hover:bg-teal-50 transition disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.25 3H7.5A2.25 2.25 0 0 0 5.25 5.25v13.5A2.25 2.25 0 0 0 7.5 21h9a2.25 2.25 0 0 0 2.25-2.25V8.25L14.25 3Z"/><path d="M14.25 3v5.25h4.5"/><path d="M9 13.5 10.875 15.375 15 11.25"/></svg>
             Conclude
@@ -607,6 +607,8 @@
       <div class="flex border-b border-slate-100 shrink-0">
         <button @click="sideTab = 'detail'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
           :class="sideTab === 'detail' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">Detail</button>
+        <button @click="sideTab = 'settings'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
+          :class="sideTab === 'settings' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">Settings</button>
         <button @click="sideTab = 'hints'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
           :class="sideTab === 'hints' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">
           Hints <span class="ml-0.5 text-[10px] opacity-60" x-text="project.hints.length"></span>
@@ -675,6 +677,12 @@
             </div>
             <div class="p-4 space-y-4">
               <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words" x-text="selectedFactRecord().description"></p>
+              <template x-if="selectedFactRecord().metadata?.report_path">
+                <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                  <div class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">Report</div>
+                  <div class="font-mono text-slate-600 break-all" x-text="selectedFactRecord().metadata.report_path"></div>
+                </div>
+              </template>
               <div class="space-y-3 text-xs">
                 <template x-if="selectedFactId() === 'origin'">
                   <div class="pt-4 border-t border-slate-100">
@@ -724,12 +732,25 @@
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">To</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedIntentRecord().to || '—'"></span></div>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Creator</span><span class="text-slate-600 text-right break-all" x-text="selectedIntentRecord().creator"></span></div>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Worker</span><span class="text-slate-600 text-right break-all" x-text="selectedIntentRecord().worker || '—'"></span></div>
+                <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Requested</span><span class="text-slate-600 text-right break-all" x-text="selectedIntentRecord().requested_worker || '—'"></span></div>
+                <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Timeout</span><span class="text-slate-600 text-right break-all" x-text="selectedIntentRecord().timeout_override_seconds || project.project.default_timeout_seconds || '—'"></span></div>
+                <template x-if="selectedIntentRecord().control_state && selectedIntentRecord().control_state !== 'normal'">
+                  <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Control</span><span class="text-right break-all" :class="intentStatusClass(selectedIntentRecord())" x-text="intentStatusLabel(selectedIntentRecord())"></span></div>
+                </template>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Heartbeat</span><span class="text-slate-600 text-right break-words" x-text="selectedIntentRecord().last_heartbeat_at ? formatTime(selectedIntentRecord().last_heartbeat_at) : '—'"></span></div>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Created</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedIntentRecord().created_at)"></span></div>
                 <template x-if="selectedIntentRecord().concluded_at">
                   <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Concluded</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedIntentRecord().concluded_at)"></span></div>
                 </template>
               </div>
+              <template x-if="selectedIntentRecord().worker && !selectedIntentRecord().to && selectedIntentRecord().control_state !== 'conclude_requested'">
+                <button type="button" @click="requestConcludeSelectedIntent()"
+                  class="w-full px-3 py-2 rounded-xl border border-amber-200 bg-amber-50 text-sm font-medium text-amber-700 hover:bg-amber-100 transition">Request Conclude</button>
+              </template>
+              <template x-if="!selectedIntentRecord().worker && !selectedIntentRecord().to && selectedIntentRecord().control_state !== 'normal'">
+                <button type="button" @click="resumeSelectedIntentControl()"
+                  class="w-full px-3 py-2 rounded-xl border border-brand-200 bg-brand-50 text-sm font-medium text-brand-700 hover:bg-brand-100 transition">Resume Intent</button>
+              </template>
               <template x-if="selectedIntentRecord().worker">
                 <div class="pt-4 border-t border-slate-100 space-y-2">
                   <div class="rounded-xl border border-slate-200 bg-slate-50/70 overflow-hidden">
@@ -773,6 +794,55 @@
             </div>
           </section>
         </template>
+      </div>
+
+      <!-- Settings -->
+      <div x-show="sideTab === 'settings'" class="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/40">
+        <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/80">
+            <div class="flex items-center justify-between gap-3">
+              <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-widest">Project</p>
+              <span class="text-[11px] font-mono text-slate-400" x-text="project?.project?.id"></span>
+            </div>
+          </div>
+          <div class="p-4 space-y-4">
+            <label class="flex items-center justify-between gap-3 text-sm text-slate-700">
+              <span>Auto Reasoning</span>
+              <input type="checkbox" x-model="projectSettingsForm.auto_reason" @change="projectSettingsDirty = true" class="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-200">
+            </label>
+
+            <div class="grid grid-cols-1 gap-3">
+              <input type="number" min="1" x-model.number="projectSettingsForm.default_timeout_seconds" @input="projectSettingsDirty = true" placeholder="Default timeout seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+              <input type="number" min="1" x-model.number="projectSettingsForm.default_conclude_timeout_seconds" @input="projectSettingsDirty = true" placeholder="Default conclude timeout seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+            </div>
+
+            <div class="space-y-2">
+              <div class="flex items-center justify-between gap-3">
+                <label class="text-[11px] text-slate-400 block font-medium">Auto workers</label>
+                <div class="flex items-center gap-2 text-[11px]">
+                  <button type="button" @click="selectAllProjectAutoWorkers()" :disabled="!projectSettingsForm.auto_reason" class="text-brand-500 hover:text-brand-600 disabled:text-slate-300">All</button>
+                  <button type="button" @click="clearProjectAutoWorkers()" :disabled="!projectSettingsForm.auto_reason" class="text-slate-500 hover:text-slate-700 disabled:text-slate-300">None</button>
+                </div>
+              </div>
+              <div class="rounded-xl border border-slate-200 bg-white p-2 space-y-1" :class="{ 'opacity-50': !projectSettingsForm.auto_reason }">
+                <template x-if="exploreWorkers().length === 0">
+                  <div class="px-2 py-1.5 text-sm text-slate-400">No workers published</div>
+                </template>
+                <template x-for="worker in exploreWorkers()" :key="worker.name">
+                  <label class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 text-sm text-slate-600">
+                    <input type="checkbox" :checked="isProjectAutoWorkerSelected(worker.name)" @change="toggleProjectAutoWorker(worker.name)" :disabled="!projectSettingsForm.auto_reason" class="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-200">
+                    <span class="truncate" x-text="workerLabel(worker)"></span>
+                  </label>
+                </template>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button type="button" @click="resetProjectSettingsForm()" class="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm text-slate-500 hover:bg-slate-50">Reset</button>
+              <button type="button" @click="saveProjectSettings()" :disabled="projectSettingsSaving" class="px-3 py-2 rounded-xl bg-brand-500 text-white text-sm font-medium hover:bg-brand-600 disabled:opacity-40">Save</button>
+            </div>
+          </div>
+        </section>
       </div>
 
       <!-- Hints -->
@@ -897,6 +967,33 @@
           <button type="button" @click="openEnvironmentPanel()" class="font-medium underline underline-offset-2">Configure</button>
         </div>
       </template>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <label class="flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-sm text-slate-600">
+          <span>Auto reason</span>
+          <input type="checkbox" x-model="newProject.auto_reason" class="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-200">
+        </label>
+        <input type="number" min="1" x-model.number="newProject.default_timeout_seconds" placeholder="Default timeout seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+      </div>
+      <div>
+        <div class="flex items-center justify-between gap-3 mb-1">
+          <label class="text-[11px] text-slate-400 block font-medium">Auto workers</label>
+          <div class="flex items-center gap-2 text-[11px]">
+            <button type="button" @click="selectAllAutoWorkers()" :disabled="!newProject.auto_reason" class="text-brand-500 hover:text-brand-600 disabled:text-slate-300">All</button>
+            <button type="button" @click="clearAutoWorkers()" :disabled="!newProject.auto_reason" class="text-slate-500 hover:text-slate-700 disabled:text-slate-300">None</button>
+          </div>
+        </div>
+        <div class="rounded-xl border border-slate-200 bg-white p-2 space-y-1" :class="{ 'opacity-50': !newProject.auto_reason }">
+          <template x-if="exploreWorkers().length === 0">
+            <div class="px-2 py-1.5 text-sm text-slate-400">No workers published</div>
+          </template>
+          <template x-for="worker in exploreWorkers()" :key="worker.name">
+            <label class="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-slate-700 hover:bg-slate-50">
+              <input type="checkbox" :checked="isAutoWorkerSelected(worker.name)" @change="toggleAutoWorker(worker.name)" :disabled="!newProject.auto_reason" class="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-200">
+              <span class="break-all" x-text="workerLabel(worker)"></span>
+            </label>
+          </template>
+        </div>
+      </div>
 
       <div>
         <div class="flex items-center justify-between mb-2">
@@ -934,16 +1031,23 @@
     </div>
     <div class="space-y-3">
       <textarea x-model="intentForm.description" placeholder="What will you explore?" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <select x-model="intentForm.requested_worker" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+          <option value="">Dispatcher chooses</option>
+          <template x-for="worker in exploreWorkers()" :key="worker.name">
+            <option :value="worker.name" x-text="workerLabel(worker)"></option>
+          </template>
+        </select>
+        <input type="number" min="1" x-model.number="intentForm.timeout_override_seconds" placeholder="Timeout override seconds" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+      </div>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
         Actor: <span class="font-medium text-slate-700" x-text="actorName()"></span>
       </div>
     </div>
     <div class="flex justify-end gap-2 mt-5">
       <button @click="showIntentModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Cancel</button>
-      <button @click="createIntent(false)" :disabled="!intentForm.description"
-        class="px-5 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl font-medium hover:bg-slate-50 transition disabled:opacity-30">Declare</button>
-      <button @click="createIntent(true)" :disabled="!intentForm.description"
-        class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">Declare &amp; Claim</button>
+      <button @click="createIntent()" :disabled="!intentForm.description"
+        class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">Declare</button>
     </div>
   </div>
 </div>
@@ -1308,11 +1412,15 @@ function cairnApp() {
     showDeleteModal: false,
 
     environments: [],
+    workers: [],
     envHealthcheckLoading: '',
     environmentForm: { id: '', label: '', backend: 'ssh', ssh_command: '', workspace_root: '/home/kali/cairn-workspaces', cleanup: { completed_action: 'stop' }, terminal: { mode: 'none' } },
     endpointForm: { environment_id: '', id: '', type: 'pi', base_url: '', provider_api: 'openai-completions', api_key: '', clear_api_key: false, editing: false },
-    newProject: { title: '', origin: '', goal: '', hints: [{ content: '' }], executionMode: 'docker', environment_id: 'docker-default' },
-    intentForm: { description: '' },
+    newProject: { title: '', origin: '', goal: '', hints: [{ content: '' }], executionMode: 'docker', environment_id: 'docker-default', auto_reason: false, allowed_auto_workers: [], default_timeout_seconds: null, default_conclude_timeout_seconds: null },
+    projectSettingsForm: { auto_reason: false, allowed_auto_workers: [], default_timeout_seconds: null, default_conclude_timeout_seconds: null },
+    projectSettingsDirty: false,
+    projectSettingsSaving: false,
+    intentForm: { description: '', requested_worker: '', timeout_override_seconds: null, conclude_timeout_override_seconds: null },
     concludeForm: { description: '', intentId: '' },
     completeForm: { description: '' },
     hintForm: { content: '' },
@@ -1351,6 +1459,7 @@ function cairnApp() {
       window.addEventListener('pointerup', this._panelResizeStop);
       this.loadLocalPrefs();
       await this.loadEnvironments();
+      await this.loadWorkers();
       await this.loadProjects();
       await this.loadSettings();
       this.startPolling();
@@ -1507,15 +1616,18 @@ function cairnApp() {
     },
 
     openIntentNodeType(intent) {
+      if (intent.control_state === 'conclude_requested') return intent.worker ? 'concluding' : 'conclude_failed';
       if (this.isBootstrapIntent(intent)) return intent.worker ? 'bootstrap_running' : 'bootstrap_pending';
       return intent.worker ? 'in_progress' : 'unclaimed';
     },
 
     openIntentNodeLabel(intent) {
+      if (intent.control_state === 'conclude_requested') return intent.worker ? 'Concluding' : 'Conclude Failed';
       return this.isBootstrapIntent(intent) ? 'Bootstrap' : '?';
     },
 
     openIntentNodeSize(intent) {
+      if (intent.control_state === 'conclude_requested') return { width: intent.worker ? 92 : 104, height: 32 };
       if (this.isBootstrapIntent(intent)) return { width: 82, height: 30 };
       return { width: 22, height: 22 };
     },
@@ -1549,6 +1661,71 @@ function cairnApp() {
         this.environments = await this.api('GET', '/environments');
         this.syncNewProjectEnvironment();
       } catch(e) { console.error(e); }
+    },
+
+    async loadWorkers() {
+      try { this.workers = await this.api('GET', '/workers'); } catch(e) { console.error(e); }
+    },
+
+    exploreWorkers() {
+      return this.workers.filter(worker => Array.isArray(worker.task_types) && worker.task_types.includes('explore'));
+    },
+
+    workerLabel(worker) {
+      const profile = worker.model_profile ? ` · ${worker.model_profile}` : '';
+      return `${worker.name}${profile}`;
+    },
+
+    isAutoWorkerSelected(workerName) {
+      return this.newProject.allowed_auto_workers.includes(workerName);
+    },
+
+    toggleAutoWorker(workerName) {
+      const current = new Set(this.newProject.allowed_auto_workers);
+      if (current.has(workerName)) current.delete(workerName);
+      else current.add(workerName);
+      this.newProject.allowed_auto_workers = Array.from(current);
+    },
+
+    selectAllAutoWorkers() {
+      this.newProject.allowed_auto_workers = this.exploreWorkers().map(worker => worker.name);
+    },
+
+    clearAutoWorkers() {
+      this.newProject.allowed_auto_workers = [];
+    },
+
+    resetProjectSettingsForm() {
+      if (!this.project?.project) return;
+      this.projectSettingsForm = {
+        auto_reason: Boolean(this.project.project.auto_reason),
+        allowed_auto_workers: Array.isArray(this.project.project.allowed_auto_workers) ? [...this.project.project.allowed_auto_workers] : [],
+        default_timeout_seconds: this.project.project.default_timeout_seconds ?? null,
+        default_conclude_timeout_seconds: this.project.project.default_conclude_timeout_seconds ?? null,
+      };
+      this.projectSettingsDirty = false;
+    },
+
+    isProjectAutoWorkerSelected(workerName) {
+      return this.projectSettingsForm.allowed_auto_workers.includes(workerName);
+    },
+
+    toggleProjectAutoWorker(workerName) {
+      const current = new Set(this.projectSettingsForm.allowed_auto_workers);
+      if (current.has(workerName)) current.delete(workerName);
+      else current.add(workerName);
+      this.projectSettingsForm.allowed_auto_workers = Array.from(current);
+      this.projectSettingsDirty = true;
+    },
+
+    selectAllProjectAutoWorkers() {
+      this.projectSettingsForm.allowed_auto_workers = this.exploreWorkers().map(worker => worker.name);
+      this.projectSettingsDirty = true;
+    },
+
+    clearProjectAutoWorkers() {
+      this.projectSettingsForm.allowed_auto_workers = [];
+      this.projectSettingsDirty = true;
     },
 
     selectableEnvironments() {
@@ -1950,6 +2127,7 @@ function cairnApp() {
     async loadProject(id) {
       try {
         this.project = await this.api('GET', `/projects/${id}`);
+        if (!this.projectSettingsDirty) this.resetProjectSettingsForm();
         await this.loadSelectedIntentRunLog();
       } catch(e) { this.showToast(e.message, 'error'); }
     },
@@ -2662,12 +2840,16 @@ function cairnApp() {
         { selector: 'node[nodeType="fact"]', style: { ...common, shape:'round-rectangle','background-color':'#6366f1',label:'data(label)',color:'#fff','font-size':'10px','font-weight':'bold','text-wrap':'wrap','text-max-width':'116px','text-overflow-wrap':'anywhere',width:'data(width)',height:'data(height)','border-width':0 }},
         { selector: 'node[nodeType="in_progress"]', style: { ...common, shape:'ellipse','background-color':'#f59e0b','background-opacity':0.8,label:'?',color:'#fff','font-size':'11px','font-weight':'bold',width:22,height:22,'border-width':2,'border-color':'#d97706' }},
         { selector: 'node[nodeType="unclaimed"]', style: { ...common, shape:'ellipse','background-color':'#cbd5e1','background-opacity':0.5,label:'?',color:'#94a3b8','font-size':'11px','font-weight':'bold',width:20,height:20,'border-width':1.5,'border-color':'#94a3b8','border-style':'dashed' }},
+        { selector: 'node[nodeType="concluding"]', style: { ...common, shape:'round-rectangle','background-color':'#fffbeb','background-opacity':0.96,label:'data(label)',color:'#b45309','font-size':'10px','font-weight':'bold',width:'data(width)',height:'data(height)','border-width':2,'border-color':'#f59e0b','border-style':'dashed','text-wrap':'wrap','text-max-width':'82px' }},
+        { selector: 'node[nodeType="conclude_failed"]', style: { ...common, shape:'round-rectangle','background-color':'#fff1f2','background-opacity':0.96,label:'data(label)',color:'#be123c','font-size':'10px','font-weight':'bold',width:'data(width)',height:'data(height)','border-width':2,'border-color':'#fb7185','border-style':'dashed','text-wrap':'wrap','text-max-width':'90px' }},
         { selector: 'node[nodeType="bootstrap_pending"]', style: { ...common, shape:'round-rectangle','background-color':'#fff7ed','background-opacity':0.96,label:'data(label)',color:'#c2410c','font-size':'10px','font-weight':'bold',width:'data(width)',height:'data(height)','border-width':1.5,'border-color':'#fdba74','border-style':'dashed','text-wrap':'wrap','text-max-width':'70px' }},
         { selector: 'node[nodeType="bootstrap_running"]', style: { ...common, shape:'round-rectangle','background-color':'#fb923c','background-opacity':0.96,label:'data(label)',color:'#fff7ed','font-size':'10px','font-weight':'bold',width:'data(width)',height:'data(height)','border-width':2,'border-color':'#ea580c','text-wrap':'wrap','text-max-width':'70px' }},
 
         { selector: 'edge[status="concluded"]', style: { width:2,'line-color':'#6ee7b7','target-arrow-color':'#6ee7b7','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#94a3b8','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'80px','text-wrap':'ellipsis','text-background-color':'#f8fafc','text-background-opacity':0.85,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.9 }},
         { selector: 'edge[status="in_progress"]', style: { width:2,'line-color':'#fbbf24','line-style':'dashed','line-dash-pattern':[8,4],'line-dash-offset':0,'target-arrow-color':'#fbbf24','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#b45309','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'80px','text-wrap':'ellipsis','text-background-color':'#fffbeb','text-background-opacity':0.85,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.9 }},
         { selector: 'edge[status="unclaimed"]', style: { width:1.5,'line-color':'#cbd5e1','line-style':'dashed','line-dash-pattern':[5,5],'target-arrow-color':'#cbd5e1','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#94a3b8','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'80px','text-wrap':'ellipsis','text-background-color':'#f8fafc','text-background-opacity':0.85,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.7 }},
+        { selector: 'edge[status="concluding"]', style: { width:2,'line-color':'#f59e0b','line-style':'dashed','line-dash-pattern':[6,5],'target-arrow-color':'#f59e0b','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#b45309','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'88px','text-wrap':'ellipsis','text-background-color':'#fffbeb','text-background-opacity':0.9,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.8 }},
+        { selector: 'edge[status="conclude_failed"]', style: { width:2,'line-color':'#fb7185','line-style':'dashed','line-dash-pattern':[6,5],'target-arrow-color':'#fb7185','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#be123c','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'88px','text-wrap':'ellipsis','text-background-color':'#fff1f2','text-background-opacity':0.9,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.8 }},
         { selector: 'edge[status="bootstrap_pending"]', style: { width:2,'line-color':'#fdba74','line-style':'dashed','line-dash-pattern':[8,4],'line-dash-offset':0,'target-arrow-color':'#fdba74','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#c2410c','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'88px','text-wrap':'ellipsis','text-background-color':'#fff7ed','text-background-opacity':0.92,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.85 }},
         { selector: 'edge[status="bootstrap_running"]', style: { width:2.5,'line-color':'#fb923c','line-style':'dashed','line-dash-pattern':[10,4],'line-dash-offset':0,'target-arrow-color':'#fb923c','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#c2410c','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'88px','text-wrap':'ellipsis','text-background-color':'#fff7ed','text-background-opacity':0.92,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.95 }},
         { selector: 'edge[edgeType="bootstrap_scope"]', style: { label:'',width:1.8,'curve-style':'bezier','line-style':'dotted','line-dash-pattern':[2,5],'target-arrow-shape':'triangle-backcurve','arrow-scale':0.75,'target-distance-from-node':2 }},
@@ -3097,7 +3279,7 @@ function cairnApp() {
       const nt = node.data('nodeType');
       const keepLogFocus = this.sideTab === 'log';
 
-      if (['in_progress', 'unclaimed', 'bootstrap_pending', 'bootstrap_running'].includes(nt)) {
+      if (['in_progress', 'unclaimed', 'concluding', 'conclude_failed', 'bootstrap_pending', 'bootstrap_running'].includes(nt)) {
         this.selectIntent(node.data('intentId'));
         if (keepLogFocus) this.scrollTimelineToSelection();
         else this.sideTab = 'detail';
@@ -3301,6 +3483,14 @@ function cairnApp() {
     selectedActionableOpenIntentRecord() {
       const intent = this.selectedOpenIntentRecord();
       if (!intent || !this.projectIsActive()) return null;
+      if (intent.control_state && intent.control_state !== 'normal') return null;
+      const actor = this.actorName();
+      return !intent.worker || intent.worker === actor ? intent : null;
+    },
+
+    selectedConcludableOpenIntentRecord() {
+      const intent = this.selectedOpenIntentRecord();
+      if (!intent || !this.projectIsActive()) return null;
       const actor = this.actorName();
       return !intent.worker || intent.worker === actor ? intent : null;
     },
@@ -3314,6 +3504,7 @@ function cairnApp() {
     selectedIntentPrimaryActionLabel() {
       const intent = this.selectedOpenIntentRecord();
       if (!intent) return 'Claim';
+      if (intent.control_state && intent.control_state !== 'normal') return 'Paused';
       if (!intent.worker) return 'Claim';
       return intent.worker === this.actorName() ? 'Heartbeat' : 'Claimed';
     },
@@ -3324,16 +3515,19 @@ function cairnApp() {
 
     intentDotClass(i) {
       if (i.to) return 'bg-teal-400';
+      if (i.control_state === 'conclude_requested') return i.worker ? 'bg-amber-500' : 'bg-rose-500';
       if (this.isBootstrapIntent(i)) return i.worker ? 'bg-orange-400' : 'bg-orange-200';
       return i.worker ? 'bg-amber-400' : 'bg-slate-300';
     },
     intentStatusClass(i) {
       if (i.to) return 'text-teal-600';
+      if (i.control_state === 'conclude_requested') return i.worker ? 'text-amber-600' : 'text-rose-600';
       if (this.isBootstrapIntent(i)) return i.worker ? 'text-orange-600' : 'text-orange-400';
       return i.worker ? 'text-amber-600' : 'text-slate-400';
     },
     intentStatusLabel(i) {
       if (i.to) return 'Concluded';
+      if (i.control_state === 'conclude_requested') return i.worker ? 'Concluding' : 'Conclude Failed';
       if (this.isBootstrapIntent(i)) return i.worker ? 'Bootstrap Running' : 'Bootstrap Pending';
       return i.worker ? 'In Progress' : 'Unclaimed';
     },
@@ -3719,11 +3913,15 @@ function cairnApp() {
         const hintContents = this.newProject.hints.filter(h => h.content?.trim());
         const body = { title: this.newProject.title, origin: this.newProject.origin, goal: this.newProject.goal };
         if (this.newProject.environment_id) body.environment_id = this.newProject.environment_id;
+        body.auto_reason = Boolean(this.newProject.auto_reason);
+        body.allowed_auto_workers = body.auto_reason ? this.newProject.allowed_auto_workers : null;
+        if (this.newProject.default_timeout_seconds) body.default_timeout_seconds = this.newProject.default_timeout_seconds;
+        if (this.newProject.default_conclude_timeout_seconds) body.default_conclude_timeout_seconds = this.newProject.default_conclude_timeout_seconds;
         const hints = hintContents.map(h => ({ content: h.content.trim(), creator: actor }));
         if (hints.length > 0) body.hints = hints;
         const data = await this.api('POST', '/projects', body);
         this.showNewProject = false;
-        this.newProject = { title:'', origin:'', goal:'', hints: [{ content:'' }], executionMode: 'docker', environment_id: 'docker-default' };
+        this.newProject = { title:'', origin:'', goal:'', hints: [{ content:'' }], executionMode: 'docker', environment_id: 'docker-default', auto_reason: false, allowed_auto_workers: [], default_timeout_seconds: null, default_conclude_timeout_seconds: null };
         this.syncNewProjectEnvironment();
         await this.loadProjects();
         await this.openProject(data.project.id);
@@ -3731,25 +3929,59 @@ function cairnApp() {
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
+    normalizePositiveNumber(value) {
+      if (value === null || value === undefined || value === '') return null;
+      const numeric = Number(value);
+      return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+    },
+
+    async saveProjectSettings() {
+      if (!this.selectedProjectId || !this.project?.project) return;
+      this.projectSettingsSaving = true;
+      try {
+        const autoReason = Boolean(this.projectSettingsForm.auto_reason);
+        const body = {
+          auto_reason: autoReason,
+          allowed_auto_workers: autoReason ? this.projectSettingsForm.allowed_auto_workers : null,
+          default_timeout_seconds: this.normalizePositiveNumber(this.projectSettingsForm.default_timeout_seconds),
+          default_conclude_timeout_seconds: this.normalizePositiveNumber(this.projectSettingsForm.default_conclude_timeout_seconds),
+        };
+        const updated = await this.api('PATCH', `/projects/${this.selectedProjectId}`, body);
+        this.project.project = { ...this.project.project, ...updated };
+        this.projectSettingsDirty = false;
+        this.resetProjectSettingsForm();
+        await this.loadProjects();
+        this.showToast('Project settings saved');
+      } catch(e) {
+        this.showToast(e.message, 'error');
+      } finally {
+        this.projectSettingsSaving = false;
+      }
+    },
+
     openCreateIntent() {
       if (!this.canActOnSelectedFacts()) return;
-      this.intentForm = { description:'' };
+      this.intentForm = { description:'', requested_worker: '', timeout_override_seconds: null, conclude_timeout_override_seconds: null };
       this.showIntentModal = true;
     },
 
-    async createIntent(claim = false) {
+    async createIntent() {
       try {
         const actor = this.actorName();
-        await this.api('POST', `/projects/${this.selectedProjectId}/intents`, {
+        const body = {
           from: this.selectedFacts,
           description: this.intentForm.description,
           creator: actor,
-          worker: claim ? actor : null,
-        });
+          worker: null,
+        };
+        if (this.intentForm.requested_worker) body.requested_worker = this.intentForm.requested_worker;
+        if (this.intentForm.timeout_override_seconds) body.timeout_override_seconds = this.intentForm.timeout_override_seconds;
+        if (this.intentForm.conclude_timeout_override_seconds) body.conclude_timeout_override_seconds = this.intentForm.conclude_timeout_override_seconds;
+        await this.api('POST', `/projects/${this.selectedProjectId}/intents`, body);
         this.showIntentModal = false;
         await this.loadProject(this.selectedProjectId);
         this.updateGraph();
-        this.showToast(claim ? 'Intent declared and claimed' : 'Intent declared');
+        this.showToast('Intent declared');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
@@ -3787,6 +4019,33 @@ function cairnApp() {
         await this.loadProject(this.selectedProjectId);
         this.updateGraph();
         this.showToast('Intent withdrawn');
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async requestConcludeSelectedIntent() {
+      const intent = this.selectedOpenIntentRecord();
+      if (!intent?.worker) return;
+      try {
+        await this.api('POST', `/projects/${this.selectedProjectId}/intents/${intent.id}/request-conclude`, {
+          actor: this.actorName(),
+          reason: 'requested from WebUI',
+        });
+        await this.loadProject(this.selectedProjectId);
+        this.updateGraph();
+        this.showToast('Conclude requested');
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async resumeSelectedIntentControl() {
+      const intent = this.selectedOpenIntentRecord();
+      if (!intent || intent.worker || intent.control_state === 'normal') return;
+      try {
+        await this.api('PATCH', `/projects/${this.selectedProjectId}/intents/${intent.id}`, {
+          control_state: 'normal',
+        });
+        await this.loadProject(this.selectedProjectId);
+        this.updateGraph();
+        this.showToast('Intent resumed');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
