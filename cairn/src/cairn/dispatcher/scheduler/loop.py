@@ -38,6 +38,9 @@ class WorkerSelection:
     blocked_task_type: list[str]
     blocked_environment: list[str]
     blocked_endpoint: list[str]
+    blocked_requested_worker: list[str]
+    blocked_auto_worker_scope: list[str]
+    blocked_missing_worker: list[str]
 
 
 class DispatcherLoop:
@@ -134,6 +137,7 @@ class DispatcherLoop:
                 try:
                     if not self._settings_checked:
                         self._validate_server_settings()
+                        self._publish_worker_inventory()
                         self._settings_checked = True
                     self._refresh_environment_registry()
                     self._reap_futures()
@@ -301,6 +305,7 @@ class DispatcherLoop:
                 project.project.status,
             )
             return False
+        self._cancel_control_requested_tasks(project)
         if self._is_initial_project(project):
             if project.project.reason is not None:
                 return False
@@ -312,6 +317,7 @@ class DispatcherLoop:
             if intent.to is None
             and intent.worker is None
             and intent.id not in running_intent_ids
+            and intent.control_state == "normal"
             and not self._is_bootstrap_intent(intent)
         ]
         if running_intent_ids and not unclaimed_intents:
@@ -323,9 +329,11 @@ class DispatcherLoop:
                 sorted(running_intent_ids),
             )
         if unclaimed_intents:
-            newest = max(unclaimed_intents, key=lambda i: i.created_at)
             export_yaml = self.client.export_project(summary.id)
-            return self._dispatch_explore(project, export_yaml, newest, environment)
+            for intent in sorted(unclaimed_intents, key=lambda i: i.created_at, reverse=True):
+                if self._dispatch_explore(project, export_yaml, intent, environment):
+                    return True
+            return False
         if project.project.reason is not None:
             self._log_changed(
                 f"{skip_scope}:reason_claimed",
@@ -333,6 +341,14 @@ class DispatcherLoop:
                 "skip reason project=%s because reason is already claimed by %s",
                 summary.id,
                 project.project.reason.worker,
+            )
+            return False
+        if not project.project.auto_reason:
+            self._log_changed(
+                f"{skip_scope}:auto_reason_disabled",
+                logging.DEBUG,
+                "skip reason project=%s because auto_reason is disabled",
+                summary.id,
             )
             return False
         reason_trigger = self._reason_trigger(project)
@@ -375,10 +391,25 @@ class DispatcherLoop:
                 intent.worker,
             )
             return False
+        if intent.control_state != "normal":
+            self._log_changed(
+                f"project:{project.project.id}:skip:bootstrap_control",
+                logging.INFO,
+                "skip bootstrap project=%s intent=%s because control_state=%s",
+                project.project.id,
+                intent.id,
+                intent.control_state,
+            )
+            return False
         return self._dispatch_bootstrap(project, intent, environment)
 
     def _dispatch_reason(self, project: ProjectDetail, export_yaml: str, trigger: str, environment: WorkEnvironment) -> bool:
-        selection = self._select_worker(project.project.id, "reason", environment.id)
+        selection = self._select_worker(
+            project.project.id,
+            "reason",
+            environment.id,
+            allowed_auto_workers=project.project.allowed_auto_workers,
+        )
         worker = selection.worker
         if worker is None:
             self._log_changed(
@@ -506,7 +537,13 @@ class DispatcherLoop:
         return True
 
     def _dispatch_explore(self, project: ProjectDetail, export_yaml: str, intent: Intent, environment: WorkEnvironment) -> bool:
-        selection = self._select_worker(project.project.id, "explore", environment.id)
+        selection = self._select_worker(
+            project.project.id,
+            "explore",
+            environment.id,
+            requested_worker=intent.requested_worker,
+            allowed_auto_workers=None if intent.requested_worker else project.project.allowed_auto_workers,
+        )
         worker = selection.worker
         if worker is None:
             self._log_changed(
@@ -567,7 +604,15 @@ class DispatcherLoop:
         LOG.info("dispatched explore project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
         return True
 
-    def _select_worker(self, project_id: str, task_type: str, environment_id: str) -> WorkerSelection:
+    def _select_worker(
+        self,
+        project_id: str,
+        task_type: str,
+        environment_id: str,
+        *,
+        requested_worker: str | None = None,
+        allowed_auto_workers: list[str] | None = None,
+    ) -> WorkerSelection:
         now = time.time()
         candidates: list[WorkerConfig] = []
         blocked_busy: list[str] = []
@@ -576,8 +621,20 @@ class DispatcherLoop:
         blocked_task_type: list[str] = []
         blocked_environment: list[str] = []
         blocked_endpoint: list[str] = []
+        blocked_requested_worker: list[str] = []
+        blocked_auto_worker_scope: list[str] = []
+        blocked_missing_worker: list[str] = []
         running_counts = self._worker_counts()
+        worker_names = {worker.name for worker in self.config.workers}
+        if requested_worker is not None and requested_worker not in worker_names:
+            blocked_missing_worker.append(requested_worker)
         for worker in self.config.workers:
+            if requested_worker is not None and worker.name != requested_worker:
+                blocked_requested_worker.append(worker.name)
+                continue
+            if requested_worker is None and allowed_auto_workers is not None and worker.name not in allowed_auto_workers:
+                blocked_auto_worker_scope.append(worker.name)
+                continue
             if worker.allowed_environments is not None and environment_id not in worker.allowed_environments:
                 blocked_environment.append(worker.name)
                 continue
@@ -619,6 +676,9 @@ class DispatcherLoop:
                 blocked_task_type=blocked_task_type,
                 blocked_environment=blocked_environment,
                 blocked_endpoint=blocked_endpoint,
+                blocked_requested_worker=blocked_requested_worker,
+                blocked_auto_worker_scope=blocked_auto_worker_scope,
+                blocked_missing_worker=blocked_missing_worker,
             )
         ordered = choose_worker(candidates, running_counts)
         LOG.debug(
@@ -641,6 +701,9 @@ class DispatcherLoop:
             blocked_task_type=blocked_task_type,
             blocked_environment=blocked_environment,
             blocked_endpoint=blocked_endpoint,
+            blocked_requested_worker=blocked_requested_worker,
+            blocked_auto_worker_scope=blocked_auto_worker_scope,
+            blocked_missing_worker=blocked_missing_worker,
         )
 
     def _worker_endpoint_available(self, worker: WorkerConfig, environment_id: str) -> bool:
@@ -930,6 +993,22 @@ class DispatcherLoop:
                     status,
                 )
 
+    def _cancel_control_requested_tasks(self, project: ProjectDetail) -> None:
+        intents = {intent.id: intent for intent in project.intents}
+        for task in self.futures.values():
+            if task.project_id != project.project.id or task.intent_id is None:
+                continue
+            intent = intents.get(task.intent_id)
+            if intent is None or intent.control_state != "conclude_requested":
+                continue
+            if task.cancellation.cancel("conclude_requested"):
+                LOG.info(
+                    "cancelling running task for requested conclude project=%s intent=%s worker=%s",
+                    task.project_id,
+                    task.intent_id,
+                    task.worker_name,
+                )
+
     def _initialize_reason_checkpoints(self, summaries: list[ProjectSummary]) -> None:
         for summary in summaries:
             if summary.status != "active":
@@ -1002,6 +1081,26 @@ class DispatcherLoop:
                 value,
                 interval,
             )
+
+    def _publish_worker_inventory(self) -> None:
+        workers = [
+            {
+                "name": worker.name,
+                "type": worker.type,
+                "model_profile": worker.model_profile,
+                "endpoint": worker.endpoint,
+                "task_types": list(worker.task_types),
+                "max_running": worker.max_running,
+                "priority": worker.priority,
+                "allowed_environments": worker.allowed_environments,
+            }
+            for worker in self.config.workers
+        ]
+        response = self.client.upsert_workers(workers)
+        if response.ok:
+            LOG.info("published worker inventory workers=%s", [worker["name"] for worker in workers])
+        else:
+            LOG.info("worker inventory publish skipped status=%s body=%s", response.status_code, response.text)
 
     def _run_startup_healthchecks(self, *, show_commands: bool, fail_on_all: bool) -> None:
         results = run_startup_healthchecks(

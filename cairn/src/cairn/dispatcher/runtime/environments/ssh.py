@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import posixpath
 from pathlib import PurePosixPath
 import shlex
 import signal
@@ -170,15 +171,14 @@ class SshEnvironment:
         return self.prepare_project(f".startup-{uuid.uuid4().hex[:12]}")
 
     def cleanup_startup(self, handle: EnvironmentHandle) -> None:
-        if handle.workspace:
-            self._remove_workspace(handle.workspace)
+        self._remove_workspace(handle.workspace)
 
     def cleanup_key(self, project_id: str) -> str:
         return f"{self.id}:{project_id}"
 
     def write_text_file(self, handle: EnvironmentHandle, path: str, content: str) -> None:
-        workspace = handle.workspace or self._workspace_for(handle.project_id)
-        if not path.startswith(workspace.rstrip("/") + "/"):
+        workspace = handle.workspace
+        if not self.is_path_in_workspace(handle, path):
             raise RuntimeError(f"refusing to write outside ssh workspace: {path}")
         payload = json.dumps({"path": path, "content": content})
         script = (
@@ -189,9 +189,25 @@ class SshEnvironment:
         )
         self._remote_run(["python3", "-c", script], input_text=payload, timeout=10)
 
+    def read_text_file(self, handle: EnvironmentHandle, path: str) -> str:
+        if not self.is_path_in_workspace(handle, path):
+            raise RuntimeError(f"refusing to read outside ssh workspace: {path}")
+        result = self._remote_run(["cat", path], timeout=10, check=True)
+        return result.stdout
+
+    def exists(self, handle: EnvironmentHandle, path: str) -> bool:
+        if not self.is_path_in_workspace(handle, path):
+            return False
+        result = self._remote_run(["test", "-f", path], timeout=5, check=False)
+        return result.returncode == 0
+
+    def is_path_in_workspace(self, handle: EnvironmentHandle, path: str) -> bool:
+        workspace = posixpath.normpath(handle.workspace)
+        target = posixpath.normpath(path)
+        return target == workspace or target.startswith(workspace.rstrip("/") + "/")
+
     def graph_snapshot_path(self, handle: EnvironmentHandle, phase: str) -> str:
-        workspace = handle.workspace or self._workspace_for(handle.project_id)
-        return str(PurePosixPath(workspace) / ".cairn" / "prompts" / phase)
+        return str(PurePosixPath(handle.workspace) / ".cairn" / "prompts" / phase)
 
     def build_process(
         self,
@@ -202,7 +218,7 @@ class SshEnvironment:
         kill_after_seconds: int = 5,
         run_logger: Any | None = None,
     ) -> "SshManagedProcess":
-        workspace = handle.workspace or self._workspace_for(handle.project_id)
+        workspace = handle.workspace
         env = {**env, "CAIRN_WORKSPACE": workspace}
         run_id = getattr(run_logger, "run_id", None) or f"run_{uuid.uuid4().hex}"
         state_path = str(PurePosixPath(workspace) / ".cairn" / "runs" / run_id / "state.json")

@@ -225,6 +225,38 @@ class ContainerManager:
         if not ok:
             raise RuntimeError(f"failed to write container file {path}")
 
+    def exec_mkdir(self, container_name: str, path: str) -> None:
+        container = self._require_container(container_name)
+        result = container.exec_run([
+            "python3",
+            "-c",
+            "import os,sys;p=sys.argv[1];os.makedirs(p,exist_ok=True);os.chmod(p,0o777)",
+            path,
+        ], user="root")
+        if result.exit_code != 0:
+            output = _decode_exec_output(result.output)
+            raise RuntimeError(f"failed to create container directory {path}: {output}")
+
+    def exec_chmod_tree(self, container_name: str, path: str) -> None:
+        container = self._require_container(container_name)
+        result = container.exec_run(["chmod", "-R", "a+rwX", path], user="root")
+        if result.exit_code != 0:
+            output = _decode_exec_output(result.output)
+            raise RuntimeError(f"failed to chmod container directory {path}: {output}")
+
+    def file_exists(self, container_name: str, path: str) -> bool:
+        container = self._require_container(container_name)
+        result = container.exec_run(["test", "-f", path])
+        return result.exit_code == 0
+
+    def read_text_file(self, container_name: str, path: str) -> str:
+        container = self._require_container(container_name)
+        result = container.exec_run(["cat", path])
+        output = _decode_exec_output(result.output)
+        if result.exit_code != 0:
+            raise RuntimeError(f"failed to read container file {path}: {output}")
+        return output
+
     def remove_container(self, name: str, *, force: bool = True) -> None:
         container = self._get_container(name)
         if container is None:
@@ -299,3 +331,11 @@ class ContainerManager:
             info.mode = 0o644
             archive.addfile(info, io.BytesIO(payload))
         return archive_path, stream.getvalue()
+
+
+def _decode_exec_output(output) -> str:
+    if isinstance(output, tuple):
+        output = b"".join(part for part in output if isinstance(part, bytes))
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace")
+    return str(output)

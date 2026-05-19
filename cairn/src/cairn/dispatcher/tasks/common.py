@@ -117,6 +117,7 @@ def run_worker_process(
     intent_id: str | None = None,
     lease: HeartbeatLease | None = None,
     cancellation: TaskCancellation | None = None,
+    extra_metadata: dict | None = None,
 ) -> ProcessResult:
     LOG.info(
         "starting work environment process environment=%s backend=%s target=%s worker=%s phase=%s timeout=%ss",
@@ -145,7 +146,7 @@ def run_worker_process(
                 "endpoint_id": worker.endpoint,
                 "timeout_seconds": timeout_seconds,
                 "argv0": argv[0] if argv else None,
-            },
+            } | (extra_metadata or {}),
             secrets=_worker_secrets(worker),
         )
         LOG.info(
@@ -230,6 +231,7 @@ def write_conclude_result(
     source: str,
     phase_ms: int,
     total_ms: int | None = None,
+    metadata: dict | None = None,
 ) -> str:
     return write_conclude_result_with_fact_id(
         client,
@@ -240,6 +242,7 @@ def write_conclude_result(
         source=source,
         phase_ms=phase_ms,
         total_ms=total_ms,
+        metadata=metadata,
     ).status
 
 
@@ -261,8 +264,9 @@ def write_conclude_result_with_fact_id(
     source: str,
     phase_ms: int,
     total_ms: int | None = None,
+    metadata: dict | None = None,
 ) -> ConcludeWriteResult:
-    response = client.conclude(project_id, intent_id, worker_name, description)
+    response = client.conclude(project_id, intent_id, worker_name, description, metadata=metadata)
     if response.ok:
         fact_id: str | None = None
         if isinstance(response.data, dict):
@@ -309,6 +313,15 @@ def write_conclude_result_with_fact_id(
         )
     best_effort_release(client, project_id, intent_id, worker_name)
     return ConcludeWriteResult(status="failed", fact_id=None)
+
+
+def best_effort_release_after_conclude_failure(
+    client: CairnClient,
+    project_id: str,
+    intent_id: str,
+    worker_name: str,
+) -> None:
+    best_effort_release(client, project_id, intent_id, worker_name)
 
 
 def best_effort_release(client: CairnClient, project_id: str, intent_id: str, worker_name: str) -> None:

@@ -11,7 +11,7 @@ from cairn.dispatcher.runtime.process import ProcessResult
 class EnvironmentHandle:
     project_id: str
     target_name: str
-    workspace: str | None = None
+    workspace: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +47,12 @@ class WorkEnvironment(Protocol):
     def cleanup_startup(self, handle: EnvironmentHandle) -> None: ...
 
     def write_text_file(self, handle: EnvironmentHandle, path: str, content: str) -> None: ...
+
+    def read_text_file(self, handle: EnvironmentHandle, path: str) -> str: ...
+
+    def exists(self, handle: EnvironmentHandle, path: str) -> bool: ...
+
+    def is_path_in_workspace(self, handle: EnvironmentHandle, path: str) -> bool: ...
 
     def graph_snapshot_path(self, handle: EnvironmentHandle, phase: str) -> str: ...
 

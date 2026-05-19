@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 
 from cairn.dispatcher.config import DispatchConfig, WorkerConfig
 from cairn.dispatcher.contracts import parse_json_output, validate_explore_payload
@@ -12,6 +13,7 @@ from cairn.dispatcher.runtime.environments.base import EnvironmentHandle, WorkEn
 from cairn.dispatcher.runtime.heartbeat import HeartbeatLease
 from cairn.dispatcher.tasks.common import (
     best_effort_release,
+    best_effort_release_after_conclude_failure,
     cancel_reason,
     did_timeout,
     project_allows_conclude_fallback,
@@ -20,6 +22,12 @@ from cairn.dispatcher.tasks.common import (
     run_worker_process,
     write_conclude_result,
     write_graph_snapshot_reference,
+)
+from cairn.dispatcher.tasks.reports import (
+    build_report_path,
+    metadata_for_report,
+    validate_report_written,
+    write_failure_report,
 )
 from cairn.dispatcher.workers.registry import get_driver
 from cairn.server.models import Intent, ProjectDetail
@@ -35,7 +43,7 @@ def run_explore_task(
     export_yaml: str,
     intent: Intent,
     worker: WorkerConfig,
-    cancellation: TaskCancellation,
+    cancellation: TaskCancellation | None,
 ) -> str:
     driver = get_driver(worker.type)
     task_started = time.perf_counter()
@@ -44,6 +52,8 @@ def run_explore_task(
     lease.start()
     try:
         handle = environment.prepare_project(project.project.id)
+        run_id = f"run_{uuid.uuid4().hex[:12]}"
+        report_path = build_report_path(handle, intent.id, run_id)
 
         LOG.info(
             "starting work environment process project=%s intent=%s environment=%s backend=%s worker=%s phase=explore_healthcheck timeout=%ss",
@@ -72,7 +82,21 @@ def run_explore_task(
                 worker.name,
                 cancelled,
             )
-            best_effort_release(client, project.project.id, intent.id, worker.name)
+            if cancelled == "conclude_requested":
+                _write_failure_and_release(
+                    environment,
+                    handle,
+                    client,
+                    project.project.id,
+                    intent.id,
+                    worker.name,
+                    report_path,
+                    run_id,
+                    "conclude_unavailable",
+                    "conclude requested before worker session was established",
+                )
+            else:
+                best_effort_release(client, project.project.id, intent.id, worker.name)
             return "cancelled"
         if lease.failure is not None:
             LOG.warning(
@@ -107,6 +131,7 @@ def run_explore_task(
                 ),
                 "intent_id": intent.id,
                 "intent_description": intent.description,
+                "report_path": report_path,
             },
         )
 
@@ -120,9 +145,12 @@ def run_explore_task(
             worker,
             execute.argv,
             phase="explore_execute",
-            timeout=config.tasks.explore.timeout,
+            timeout=_effective_timeout(config, project, intent),
             project_id=project.project.id,
             intent_id=intent.id,
+            report_path=report_path,
+            run_id=run_id,
+            control_state=intent.control_state,
             lease=lease,
             cancellation=cancellation,
         )
@@ -130,6 +158,30 @@ def run_explore_task(
         session = driver.extract_session(session, first.stdout, first.stderr)
         cancelled = cancel_reason(first, cancellation)
         if cancelled is not None:
+            if cancelled == "conclude_requested":
+                LOG.info(
+                    "explore conclude requested project=%s intent=%s worker=%s execute_ms=%s",
+                    project.project.id,
+                    intent.id,
+                    worker.name,
+                    execute_ms,
+                )
+                return _try_conclude_fallback(
+                    config,
+                    client,
+                    environment,
+                    handle,
+                    worker,
+                    driver,
+                    project.project.id,
+                    intent,
+                    export_yaml,
+                    session,
+                    lease,
+                    cancellation,
+                    report_path,
+                    run_id,
+                )
             LOG.info(
                 "explore cancelled project=%s intent=%s worker=%s reason=%s execute_ms=%s",
                 project.project.id,
@@ -181,6 +233,8 @@ def run_explore_task(
                     session,
                     lease,
                     cancellation,
+                    report_path,
+                    run_id,
                 )
             if kind == "rejected":
                 LOG.warning(
@@ -194,6 +248,30 @@ def run_explore_task(
                 )
                 best_effort_release(client, project.project.id, intent.id, worker.name)
                 return "rejected"
+            if not validate_report_written(environment, handle, report_path):
+                LOG.warning(
+                    "explore report missing project=%s intent=%s worker=%s report_path=%s",
+                    project.project.id,
+                    intent.id,
+                    worker.name,
+                    report_path,
+                )
+                return _try_conclude_fallback(
+                    config,
+                    client,
+                    environment,
+                    handle,
+                    worker,
+                    driver,
+                    project.project.id,
+                    intent,
+                    export_yaml,
+                    session,
+                    lease,
+                    cancellation,
+                    report_path,
+                    run_id,
+                )
             return write_conclude_result(
                 client,
                 project.project.id,
@@ -203,6 +281,7 @@ def run_explore_task(
                 source="explore_execute",
                 phase_ms=execute_ms,
                 total_ms=int((time.perf_counter() - task_started) * 1000),
+                metadata=metadata_for_report(report_path, run_id, worker.name, intent.id),
             )
         if did_timeout(first):
             LOG.warning(
@@ -228,6 +307,8 @@ def run_explore_task(
                 session,
                 lease,
                 cancellation,
+                report_path,
+                run_id,
             )
         LOG.warning(
             "explore command failed project=%s intent=%s worker=%s code=%s execute_ms=%s total_ms=%s stdout_preview=%s stderr_preview=%s",
@@ -263,6 +344,8 @@ def _try_conclude_fallback(
     session: str | None,
     lease: HeartbeatLease,
     cancellation: TaskCancellation,
+    report_path: str,
+    run_id: str | None,
 ) -> str:
     if not driver.supports_conclude() or not session:
         LOG.info(
@@ -273,13 +356,13 @@ def _try_conclude_fallback(
             driver.supports_conclude(),
             bool(session),
         )
-        best_effort_release(client, project_id, intent.id, worker.name)
+        _write_failure_and_release(environment, handle, client, project_id, intent.id, worker.name, report_path, run_id, "conclude_unavailable")
         return "failed"
     if lease.failure is not None:
         LOG.warning("conclude fallback skipped because heartbeat already lost project=%s intent=%s worker=%s", project_id, intent.id, worker.name)
-        best_effort_release(client, project_id, intent.id, worker.name)
+        _write_failure_and_release(environment, handle, client, project_id, intent.id, worker.name, report_path, run_id, "heartbeat_lost")
         return "failed"
-    if cancellation.is_cancelled:
+    if cancellation.is_cancelled and cancellation.reason != "conclude_requested":
         LOG.info(
             "conclude fallback skipped because task was cancelled project=%s intent=%s worker=%s reason=%s",
             project_id,
@@ -296,7 +379,17 @@ def _try_conclude_fallback(
         worker_name=worker.name,
         intent_id=intent.id,
     ):
-        best_effort_release(client, project_id, intent.id, worker.name)
+        _write_failure_and_release(
+            environment,
+            handle,
+            client,
+            project_id,
+            intent.id,
+            worker.name,
+            report_path,
+            run_id,
+            "project_not_active",
+        )
         return "failed"
 
     handle = environment.prepare_project(project_id)
@@ -312,6 +405,7 @@ def _try_conclude_fallback(
             ),
             "intent_id": intent.id,
             "intent_description": intent.description,
+            "report_path": report_path,
         },
     )
     conclude_argv = driver.build_conclude(worker, prompt, session)
@@ -323,14 +417,18 @@ def _try_conclude_fallback(
         worker,
         conclude_argv,
         phase="explore_conclude",
-        timeout=config.tasks.explore.conclude_timeout,
+        timeout=_effective_conclude_timeout(config, project_id, intent, client),
         project_id=project_id,
         intent_id=intent.id,
+        report_path=report_path,
+        run_id=run_id,
+        control_state=intent.control_state,
         lease=lease,
-        cancellation=cancellation,
+        cancellation=None if cancellation.reason == "conclude_requested" else cancellation,
     )
     conclude_ms = int((time.perf_counter() - conclude_started) * 1000)
-    cancelled = cancel_reason(result, cancellation)
+    conclude_cancellation = None if cancellation.reason == "conclude_requested" else cancellation
+    cancelled = cancel_reason(result, conclude_cancellation)
     if cancelled is not None:
         LOG.info(
             "conclude cancelled project=%s intent=%s worker=%s reason=%s conclude_ms=%s",
@@ -343,7 +441,7 @@ def _try_conclude_fallback(
         best_effort_release(client, project_id, intent.id, worker.name)
         return "cancelled"
     if lease.failure is not None:
-        best_effort_release(client, project_id, intent.id, worker.name)
+        _write_failure_and_release(environment, handle, client, project_id, intent.id, worker.name, report_path, run_id, "conclude_process_failed")
         return "failed"
     if result.timed_out or result.returncode != 0:
         LOG.warning(
@@ -357,7 +455,18 @@ def _try_conclude_fallback(
             preview(result.stdout),
             preview(result.stderr),
         )
-        best_effort_release(client, project_id, intent.id, worker.name)
+        _write_failure_and_release(
+            environment,
+            handle,
+            client,
+            project_id,
+            intent.id,
+            worker.name,
+            report_path,
+            run_id,
+            "conclude_process_failed",
+            preview(result.stderr) or preview(result.stdout),
+        )
         return "failed"
     try:
         model_output = driver.extract_response_text(result.stdout, result.stderr)
@@ -374,7 +483,18 @@ def _try_conclude_fallback(
             preview(result.stdout),
             preview(result.stderr),
         )
-        best_effort_release(client, project_id, intent.id, worker.name)
+        _write_failure_and_release(
+            environment,
+            handle,
+            client,
+            project_id,
+            intent.id,
+            worker.name,
+            report_path,
+            run_id,
+            "conclude_parse_failed",
+            str(exc),
+        )
         return "failed"
     if kind == "rejected":
         LOG.warning(
@@ -385,8 +505,18 @@ def _try_conclude_fallback(
             conclude_ms,
             preview(result.stdout),
         )
-        best_effort_release(client, project_id, intent.id, worker.name)
+        best_effort_release_after_conclude_failure(client, project_id, intent.id, worker.name)
         return "rejected"
+    if not validate_report_written(environment, handle, report_path):
+        LOG.warning(
+            "conclude report missing project=%s intent=%s worker=%s report_path=%s",
+            project_id,
+            intent.id,
+            worker.name,
+            report_path,
+        )
+        _write_failure_and_release(environment, handle, client, project_id, intent.id, worker.name, report_path, run_id, "missing_report_after_conclude")
+        return "failed"
     return write_conclude_result(
         client,
         project_id,
@@ -395,6 +525,7 @@ def _try_conclude_fallback(
         description,
         source="explore_conclude",
         phase_ms=conclude_ms,
+        metadata=metadata_for_report(report_path, run_id, worker.name, intent.id),
     )
 
 
@@ -408,6 +539,9 @@ def _run_process(
     timeout: int,
     project_id: str,
     intent_id: str,
+    report_path: str | None = None,
+    run_id: str | None = None,
+    control_state: str | None = None,
     lease: HeartbeatLease,
     cancellation: TaskCancellation,
 ):
@@ -423,4 +557,50 @@ def _run_process(
         intent_id=intent_id,
         lease=lease,
         cancellation=cancellation,
+        extra_metadata={
+            "report_path": report_path,
+            "report_run_id": run_id,
+            "control_state_at_start": control_state,
+        },
     )
+
+
+def _effective_timeout(config: DispatchConfig, project: ProjectDetail, intent: Intent) -> int:
+    return intent.timeout_override_seconds or project.project.default_timeout_seconds or config.tasks.explore.timeout
+
+
+def _effective_conclude_timeout(config: DispatchConfig, project_id: str, intent: Intent, client: CairnClient) -> int:
+    try:
+        project = client.get_project(project_id)
+        project_default = project.project.default_conclude_timeout_seconds
+    except Exception:
+        project_default = None
+    return intent.conclude_timeout_override_seconds or project_default or config.tasks.explore.conclude_timeout
+
+
+def _write_failure_and_release(
+    environment: WorkEnvironment,
+    handle: EnvironmentHandle,
+    client: CairnClient,
+    project_id: str,
+    intent_id: str,
+    worker_name: str,
+    report_path: str,
+    run_id: str | None,
+    reason: str,
+    details: str = "",
+) -> None:
+    try:
+        write_failure_report(
+            environment,
+            handle,
+            report_path,
+            intent_id=intent_id,
+            worker=worker_name,
+            run_id=run_id,
+            reason=reason,
+            details=details,
+        )
+    except Exception:
+        LOG.exception("failed to write failure report project=%s intent=%s worker=%s", project_id, intent_id, worker_name)
+    best_effort_release_after_conclude_failure(client, project_id, intent_id, worker_name)

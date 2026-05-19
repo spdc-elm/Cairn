@@ -132,11 +132,21 @@ class CairnClient:
             json={"worker": worker},
         )
 
-    def conclude(self, project_id: str, intent_id: str, worker: str, description: str) -> ApiResult:
+    def conclude(
+        self,
+        project_id: str,
+        intent_id: str,
+        worker: str,
+        description: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> ApiResult:
+        payload = {"worker": worker, "description": description}
+        if metadata is not None:
+            payload["metadata"] = metadata
         return self._request_json(
             "POST",
             f"/projects/{project_id}/intents/{intent_id}/conclude",
-            json={"worker": worker, "description": description},
+            json=payload,
         )
 
     def complete(self, project_id: str, from_ids: list[str], description: str, worker: str) -> ApiResult:
@@ -146,12 +156,49 @@ class CairnClient:
             json={"from": from_ids, "description": description, "worker": worker},
         )
 
-    def create_intent(self, project_id: str, from_ids: list[str], description: str, creator: str) -> ApiResult:
+    def create_intent(
+        self,
+        project_id: str,
+        from_ids: list[str],
+        description: str,
+        creator: str,
+        *,
+        requested_worker: str | None = None,
+        timeout_override_seconds: int | None = None,
+        conclude_timeout_override_seconds: int | None = None,
+    ) -> ApiResult:
+        payload: dict[str, Any] = {"from": from_ids, "description": description, "creator": creator, "worker": None}
+        if requested_worker is not None:
+            payload["requested_worker"] = requested_worker
+        if timeout_override_seconds is not None:
+            payload["timeout_override_seconds"] = timeout_override_seconds
+        if conclude_timeout_override_seconds is not None:
+            payload["conclude_timeout_override_seconds"] = conclude_timeout_override_seconds
         return self._request_json(
             "POST",
             f"/projects/{project_id}/intents",
-            json={"from": from_ids, "description": description, "creator": creator, "worker": None},
+            json=payload,
         )
+
+    def patch_intent(self, project_id: str, intent_id: str, **fields: Any) -> ApiResult:
+        return self._request_json(
+            "PATCH",
+            f"/projects/{project_id}/intents/{intent_id}",
+            json=fields,
+        )
+
+    def request_conclude(self, project_id: str, intent_id: str, actor: str, reason: str | None = None) -> ApiResult:
+        payload: dict[str, Any] = {"actor": actor}
+        if reason is not None:
+            payload["reason"] = reason
+        return self._request_json(
+            "POST",
+            f"/projects/{project_id}/intents/{intent_id}/request-conclude",
+            json=payload,
+        )
+
+    def upsert_workers(self, workers: list[dict[str, Any]]) -> ApiResult:
+        return self._request_json("PUT", "/workers", json={"workers": workers})
 
     def _request_json(self, method: str, path: str, json: dict[str, Any]) -> ApiResult:
         try:

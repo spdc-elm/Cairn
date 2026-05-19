@@ -110,6 +110,15 @@ if phase=="bootstrap_conclude":
         print(json.dumps({"accepted":True,"data":{"complete":{"description":"mock invalid payload"}}}, ensure_ascii=False))
     raise SystemExit(0)
 
+report_path = prompt.get("report_path")
+if report_path:
+    import os
+    os.makedirs(os.path.dirname(report_path), exist_ok=True)
+    with open(report_path, "w", encoding="utf-8") as handle:
+        handle.write("# Execution Report\\n\\n")
+        handle.write(f"## Intent\\n{prompt.get('intent_id') or phase}\\n\\n")
+        handle.write("## Summary\\nMock worker wrote this report for dispatcher validation.\\n")
+
 if outcome=="fact":
     label = prompt.get("intent_id") or phase
     print(json.dumps({"accepted":True,"data":{"description":f"mock fact for {label}"}} , ensure_ascii=False))

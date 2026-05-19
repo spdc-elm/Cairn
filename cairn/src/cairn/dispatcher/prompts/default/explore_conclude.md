@@ -17,12 +17,14 @@ Normal return example:
 ```
 
 # Rules
-- Stop immediately and produce the JSON now. Do not continue the task.
-- Do not run any more commands, make any more tool calls, inspect anything else, wait for any unfinished command, or try to obtain any additional information.
+- Stop the exploration immediately. Do not continue solving the task.
+- Before producing the JSON, create parent directories if needed and create or update only the Markdown execution report at `{report_path}` using the facts already known in this session.
+- Do not run analysis commands, inspect additional files, wait for unfinished commands, browse, install tools, or try to obtain new information. Creating the report directory and writing the report file are the only allowed actions before the final JSON.
 - Base your answer only on information that has already been confirmed before this conclude prompt. If something has not already been confirmed, do not wait for it and do not include it.
 - This JSON summary is your final output for this phase. After outputting it, stop.
 - `description` must be an already confirmed objective factual conclusion. Do not output plans, guesses, or explanatory filler. Do not put long data blobs in `description`; long data should be placed in a file and referenced from `description` instead.
 - `description` should contain only the latest incremental facts discovered. Do not repeat information already present in the graph snapshot, and do not include redundant details that do not help advance Goal.
+- In the report, record what is already confirmed, relevant artifacts, failures, and uncertainty. Keep the JSON description short.
 
 # Context
 ## Graph
@@ -38,4 +40,9 @@ Normal return example:
 ## Current Intent Description
 ```
 {intent_description}
+```
+
+## Execution Report Path
+```
+{report_path}
 ```

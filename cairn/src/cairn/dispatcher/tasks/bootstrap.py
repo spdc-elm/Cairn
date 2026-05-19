@@ -16,6 +16,7 @@ from cairn.dispatcher.runtime.environments.base import WorkEnvironment
 from cairn.dispatcher.runtime.heartbeat import HeartbeatLease
 from cairn.dispatcher.tasks.common import (
     best_effort_release,
+    best_effort_release_after_conclude_failure,
     cancel_reason,
     did_timeout,
     project_allows_conclude_fallback,
@@ -75,7 +76,16 @@ def run_bootstrap_task(
                 worker.name,
                 cancelled,
             )
-            best_effort_release(client, project.project.id, intent.id, worker.name)
+            if cancelled == "conclude_requested":
+                LOG.info(
+                    "bootstrap conclude unavailable before worker session project=%s intent=%s worker=%s",
+                    project.project.id,
+                    intent.id,
+                    worker.name,
+                )
+                best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
+            else:
+                best_effort_release(client, project.project.id, intent.id, worker.name)
             return "cancelled"
         if lease.failure is not None:
             LOG.warning(
@@ -125,6 +135,27 @@ def run_bootstrap_task(
         session = driver.extract_session(session, first.stdout, first.stderr)
         cancelled = cancel_reason(first, cancellation)
         if cancelled is not None:
+            if cancelled == "conclude_requested":
+                LOG.info(
+                    "bootstrap conclude requested project=%s intent=%s worker=%s execute_ms=%s",
+                    project.project.id,
+                    intent.id,
+                    worker.name,
+                    execute_ms,
+                )
+                return _try_conclude_fallback(
+                    config,
+                    client,
+                    environment,
+                    handle,
+                    worker,
+                    driver,
+                    project,
+                    intent,
+                    session,
+                    lease,
+                    cancellation,
+                )
             LOG.info(
                 "bootstrap cancelled project=%s intent=%s worker=%s reason=%s execute_ms=%s",
                 project.project.id,
@@ -266,7 +297,7 @@ def _try_conclude_fallback(
             driver.supports_conclude(),
             bool(session),
         )
-        best_effort_release(client, project.project.id, intent.id, worker.name)
+        best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
     if lease.failure is not None:
         LOG.warning(
@@ -275,9 +306,9 @@ def _try_conclude_fallback(
             intent.id,
             worker.name,
         )
-        best_effort_release(client, project.project.id, intent.id, worker.name)
+        best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
-    if cancellation.is_cancelled:
+    if cancellation.is_cancelled and cancellation.reason != "conclude_requested":
         LOG.info(
             "bootstrap conclude fallback skipped because task was cancelled project=%s intent=%s worker=%s reason=%s",
             project.project.id,
@@ -294,7 +325,7 @@ def _try_conclude_fallback(
         worker_name=worker.name,
         intent_id=intent.id,
     ):
-        best_effort_release(client, project.project.id, intent.id, worker.name)
+        best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
 
     handle = environment.prepare_project(project.project.id)
@@ -317,10 +348,11 @@ def _try_conclude_fallback(
         task_type="bootstrap",
         intent_id=intent.id,
         lease=lease,
-        cancellation=cancellation,
+        cancellation=None if cancellation.reason == "conclude_requested" else cancellation,
     )
     conclude_ms = int((time.perf_counter() - conclude_started) * 1000)
-    cancelled = cancel_reason(result, cancellation)
+    conclude_cancellation = None if cancellation.reason == "conclude_requested" else cancellation
+    cancelled = cancel_reason(result, conclude_cancellation)
     if cancelled is not None:
         LOG.info(
             "bootstrap conclude cancelled project=%s intent=%s worker=%s reason=%s conclude_ms=%s",
@@ -333,7 +365,7 @@ def _try_conclude_fallback(
         best_effort_release(client, project.project.id, intent.id, worker.name)
         return "cancelled"
     if lease.failure is not None:
-        best_effort_release(client, project.project.id, intent.id, worker.name)
+        best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
     if result.timed_out or result.returncode != 0:
         LOG.warning(
@@ -347,7 +379,7 @@ def _try_conclude_fallback(
             preview(result.stdout),
             preview(result.stderr),
         )
-        best_effort_release(client, project.project.id, intent.id, worker.name)
+        best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
     try:
         model_output = driver.extract_response_text(result.stdout, result.stderr)
@@ -373,7 +405,7 @@ def _try_conclude_fallback(
             preview(result.stdout),
             preview(result.stderr),
         )
-        best_effort_release(client, project.project.id, intent.id, worker.name)
+        best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
     if kind == "rejected":
         LOG.warning(
@@ -384,7 +416,7 @@ def _try_conclude_fallback(
             conclude_ms,
             preview(result.stdout),
         )
-        best_effort_release(client, project.project.id, intent.id, worker.name)
+        best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "rejected"
     return write_conclude_result(
         client,
