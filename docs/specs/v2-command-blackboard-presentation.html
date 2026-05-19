@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cairn Command Blackboard v2 Review Deck</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17202e;
+      --muted: #607086;
+      --line: #d9e1ea;
+      --paper: #fbfcfe;
+      --panel: #ffffff;
+      --nav: #111827;
+      --teal: #0f766e;
+      --green: #15803d;
+      --amber: #b45309;
+      --red: #b91c1c;
+      --violet: #6d28d9;
+      --slate: #334155;
+      --soft-teal: #e6f6f3;
+      --soft-green: #edf7ed;
+      --soft-amber: #fff7e6;
+      --soft-red: #fff1f2;
+      --soft-violet: #f3efff;
+      --soft-blue: #eef6ff;
+      --code: #0f172a;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC", "PingFang SC", sans-serif;
+      line-height: 1.55;
+      letter-spacing: 0;
+    }
+
+    button {
+      font: inherit;
+      border: 0;
+      cursor: pointer;
+      color: inherit;
+    }
+
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      letter-spacing: 0;
+    }
+
+    .deck {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 284px minmax(0, 1fr);
+    }
+
+    .side {
+      background: var(--nav);
+      color: #e5edf6;
+      padding: 24px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+    }
+
+    .brand {
+      display: grid;
+      gap: 6px;
+    }
+
+    .eyebrow {
+      color: #91d8cf;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.15;
+    }
+
+    .brand p {
+      margin: 0;
+      color: #aebccc;
+      font-size: 13px;
+    }
+
+    .nav {
+      display: grid;
+      gap: 8px;
+    }
+
+    .nav button {
+      min-height: 44px;
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: transparent;
+      color: #b7c4d5;
+      text-align: left;
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav button span:first-child {
+      width: 26px;
+      height: 26px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .nav button.active {
+      background: #1f2937;
+      color: #ffffff;
+    }
+
+    .nav button.active span:first-child {
+      background: var(--teal);
+      border-color: var(--teal);
+      color: #ffffff;
+    }
+
+    .side-footer {
+      margin-top: auto;
+      display: grid;
+      gap: 10px;
+      color: #aebccc;
+      font-size: 12px;
+    }
+
+    .progress {
+      height: 8px;
+      background: #263243;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .progress > div {
+      height: 100%;
+      width: 0;
+      background: linear-gradient(90deg, #14b8a6, #f59e0b);
+      transition: width 180ms ease;
+    }
+
+    .main {
+      min-width: 0;
+      padding: 26px;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 18px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .pill-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .pill {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .icon-btn {
+      width: 42px;
+      height: 42px;
+      border-radius: 8px;
+      background: #ffffff;
+      border: 1px solid var(--line);
+      display: grid;
+      place-items: center;
+      font-size: 18px;
+      color: var(--slate);
+    }
+
+    .icon-btn:hover { border-color: #94a3b8; }
+
+    .slide-shell {
+      min-height: 0;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 18px 60px rgba(15, 23, 42, 0.08);
+    }
+
+    .slide {
+      display: none;
+      min-height: calc(100vh - 148px);
+      padding: 42px;
+    }
+
+    .slide.active {
+      display: grid;
+      align-content: start;
+      gap: 26px;
+    }
+
+    .slide h2 {
+      margin: 0;
+      font-size: clamp(30px, 4vw, 54px);
+      line-height: 1.05;
+    }
+
+    .slide h3 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      color: var(--slate);
+    }
+
+    .lead {
+      max-width: 980px;
+      font-size: 19px;
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 18px;
+      min-width: 0;
+    }
+
+    .panel.teal { background: var(--soft-teal); border-color: #bde8e1; }
+    .panel.green { background: var(--soft-green); border-color: #cbe8cf; }
+    .panel.amber { background: var(--soft-amber); border-color: #f2d69c; }
+    .panel.red { background: var(--soft-red); border-color: #f3c2ca; }
+    .panel.violet { background: var(--soft-violet); border-color: #d9cdfb; }
+    .panel.blue { background: var(--soft-blue); border-color: #c8dff8; }
+
+    .panel p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .panel strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--ink);
+      font-size: 16px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .flow .step {
+      min-height: 116px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #ffffff;
+      display: grid;
+      gap: 8px;
+      align-content: start;
+      position: relative;
+    }
+
+    .step:not(:last-child)::after {
+      content: ">";
+      position: absolute;
+      right: -9px;
+      top: 42px;
+      color: #94a3b8;
+      font-weight: 900;
+      background: var(--paper);
+      width: 16px;
+      text-align: center;
+    }
+
+    .step b { color: var(--teal); }
+    .step span { color: var(--muted); font-size: 13px; }
+
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font-size: 14px;
+    }
+
+    .table th,
+    .table td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .table th {
+      background: #f8fafc;
+      color: var(--slate);
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    .table tr:last-child td { border-bottom: 0; }
+
+    pre {
+      margin: 0;
+      background: var(--code);
+      color: #dbeafe;
+      border-radius: 8px;
+      padding: 16px;
+      overflow: auto;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .callout {
+      border-left: 4px solid var(--teal);
+      background: #f8fafc;
+      padding: 14px 16px;
+      border-radius: 0 8px 8px 0;
+      color: var(--slate);
+    }
+
+    .decision-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .decision {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 14px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .decision b {
+      color: var(--teal);
+    }
+
+    .footer {
+      color: var(--muted);
+      font-size: 12px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    @media (max-width: 980px) {
+      .deck { grid-template-columns: 1fr; }
+      .side { position: static; }
+      .nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid-2, .grid-3, .flow { grid-template-columns: 1fr; }
+      .step:not(:last-child)::after { display: none; }
+      .slide { min-height: auto; padding: 26px; }
+      .topbar { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="deck">
+    <aside class="side">
+      <div class="brand">
+        <div class="eyebrow">Cairn v2</div>
+        <h1>Command Blackboard</h1>
+        <p>人工决策、可选 reason、执行报告、动态调度。</p>
+      </div>
+      <nav class="nav" id="nav"></nav>
+      <div class="side-footer">
+        <div class="progress"><div id="progress"></div></div>
+        <div><span id="counter">1 / 8</span></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar">
+        <div class="pill-row">
+          <span class="pill">Spec draft</span>
+          <span class="pill">2026-05-18</span>
+          <span class="pill">docs/specs/v2-command-blackboard-requirements.md</span>
+        </div>
+        <div class="controls">
+          <button class="icon-btn" id="prev" title="上一页" aria-label="上一页">‹</button>
+          <button class="icon-btn" id="next" title="下一页" aria-label="下一页">›</button>
+        </div>
+      </div>
+
+      <section class="slide-shell">
+        <article class="slide active" data-title="核心变化">
+          <div>
+            <h2>从自动 agent 到指挥部黑板</h2>
+            <p class="lead">v2 的本质不是多一个筛选框，而是把决策权与执行权拆开：人类或可选 reason 决策，worker 只执行 intent，并留下可查证报告。</p>
+          </div>
+          <div class="grid-3">
+            <div class="panel teal"><strong>默认人工决策</strong><p>新项目默认不启动 auto reason。人类可以手动创建、修改、撤回 intent。</p></div>
+            <div class="panel amber"><strong>执行者不决策</strong><p>普通 worker 不生成新 intent，只写 report 与简短 fact。</p></div>
+            <div class="panel violet"><strong>黑板保简</strong><p>Fact 是摘要节点；细节进入 workspace report，并由 metadata 连接。</p></div>
+          </div>
+          <div class="callout">审查重点：是否接受 `auto_reason = false` 作为默认行为，以及 bootstrap 是否也应受显式开关控制。</div>
+        </article>
+
+        <article class="slide" data-title="权责边界">
+          <div>
+            <h2>决策和执行的硬边界</h2>
+            <p class="lead">Cairn v2 把“案件组黑板”作为协议真相源，把 worker 降级为可替换执行单元。</p>
+          </div>
+          <div class="flow">
+            <div class="step"><b>Commander</b><span>读黑板，创建或修改 intent。</span></div>
+            <div class="step"><b>Server</b><span>保存 project、intent、fact、metadata 与控制状态。</span></div>
+            <div class="step"><b>Dispatcher</b><span>按 worker name、timeout、环境与容量调度。</span></div>
+            <div class="step"><b>Worker</b><span>只执行 intent，写 report。</span></div>
+            <div class="step"><b>Blackboard</b><span>fact 简述结果，metadata 指向报告。</span></div>
+          </div>
+          <table class="table">
+            <tr><th>角色</th><th>能做</th><th>不能做</th></tr>
+            <tr><td>Reason agent</td><td>仅在 auto_reason 开启时生成 intent</td><td>默认自动运行</td></tr>
+            <tr><td>Explore worker</td><td>执行一个 intent，写 report，返回 fact</td><td>自行派生下一步 intent</td></tr>
+            <tr><td>Human</td><td>指定 worker、timeout、收尾、重跑或撤回</td><td>无</td></tr>
+          </table>
+        </article>
+
+        <article class="slide" data-title="Worker 选择">
+          <div>
+            <h2>用户选择 worker.name</h2>
+            <p class="lead">UI 展示 `pi-GPT5.5` 这类具体兵种；`max_running` 决定同一兵种可同时出几路。</p>
+          </div>
+          <div class="grid-2">
+            <pre><code>workers:
+  - name: pi-GPT5.4
+    type: pi
+    task_types: [bootstrap, reason, explore]
+    max_running: 2
+    priority: 0
+    model_profile: pi-GPT5.4
+    endpoint: pi-default
+
+  - name: pi-GPT5.5
+    type: pi
+    task_types: [bootstrap, reason, explore]
+    max_running: 2
+    priority: 0
+    model_profile: pi-GPT5.5
+    endpoint: pi-default</code></pre>
+            <div class="decision-list">
+              <div class="decision"><b>人工 intent</b><span>可指定 `requested_worker = "pi-GPT5.5"`，不受 project 自动池限制。</span></div>
+              <div class="decision"><b>自动 intent</b><span>reason 生成的 intent 不指定 worker，由 dispatcher 在 project 自动池内选择。</span></div>
+              <div class="decision"><b>兵力不足</b><span>保持 pending，不 fallback。人类可撤回、修改、等待或重跑。</span></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="slide" data-title="Project/Intent">
+          <div>
+            <h2>Project 管策略，Intent 管订单</h2>
+            <p class="lead">运行时可变的决策偏好进入 server DB；部署级 worker 定义仍留在 dispatcher YAML。</p>
+          </div>
+          <div class="grid-2">
+            <div class="panel blue">
+              <strong>Project fields</strong>
+              <p><code>auto_reason</code></p>
+              <p><code>allowed_auto_workers</code></p>
+              <p><code>default_timeout_seconds</code></p>
+              <p><code>default_conclude_timeout_seconds</code></p>
+            </div>
+            <div class="panel green">
+              <strong>Intent fields</strong>
+              <p><code>requested_worker</code></p>
+              <p><code>timeout_override_seconds</code></p>
+              <p><code>conclude_timeout_override_seconds</code></p>
+              <p><code>control_state</code></p>
+            </div>
+          </div>
+          <pre><code>{
+  "description": "验证 redis 是否可写 cron",
+  "creator": "Human",
+  "requested_worker": "pi-GPT5.5",
+  "timeout_override_seconds": 600
+}</code></pre>
+        </article>
+
+        <article class="slide" data-title="报告协议">
+          <div>
+            <h2>Fact 简，Report 详</h2>
+            <p class="lead">worker 必须落盘报告；dispatcher 在写成功 fact 前检查报告存在且位于 workspace 内。</p>
+          </div>
+          <div class="grid-2">
+            <div class="panel teal">
+              <strong>标准路径</strong>
+              <p><code>$CAIRN_WORKSPACE/.cairn/reports/execution-{intent_id}.md</code></p>
+              <p>多次运行可追加 run id 防覆盖。</p>
+            </div>
+            <div class="panel amber">
+              <strong>Fact metadata</strong>
+              <p><code>metadata_json.report_path</code></p>
+              <p><code>run_id</code>、<code>worker</code>、<code>intent_id</code></p>
+            </div>
+          </div>
+          <pre><code># Execution Report
+
+## Intent
+## Summary
+## Steps
+## Evidence
+## Artifacts
+## Failures And Dead Ends
+## Uncertainty
+## Suggested Follow-up Questions</code></pre>
+        </article>
+
+        <article class="slide" data-title="Workspace">
+          <div>
+            <h2>所有 backend 都要有 workspace</h2>
+            <p class="lead">SSH 已有 `CAIRN_WORKSPACE`；Docker v2 必须补齐同等语义，报告、prompt、run state 都放在项目 workspace 下。</p>
+          </div>
+          <table class="table">
+            <tr><th>Backend</th><th>Workspace</th><th>说明</th></tr>
+            <tr><td>SSH</td><td><code>{workspace_root}/{project_id}</code></td><td>沿用现有远端 workspace 语义。</td></tr>
+            <tr><td>Docker</td><td><code>/home/kali/workspace/.cairn/projects/{project_id}</code></td><td>容器工作目录可不变，但项目文件必须隔离。</td></tr>
+          </table>
+          <div class="grid-3">
+            <div class="panel"><strong>Prompt</strong><p><code>.cairn/prompts/{phase}/graph.yaml</code></p></div>
+            <div class="panel"><strong>Report</strong><p><code>.cairn/reports/execution-i003.md</code></p></div>
+            <div class="panel"><strong>Run state</strong><p><code>.cairn/runs/{run_id}/</code></p></div>
+          </div>
+        </article>
+
+        <article class="slide" data-title="Timeout">
+          <div>
+            <h2>Timeout 进入控制面</h2>
+            <p class="lead">人类可调 intent timeout；也可请求正在执行的 intent 进入收尾，而不是粗暴杀死任务。</p>
+          </div>
+          <div class="grid-2">
+            <div class="panel green">
+              <strong>优先级</strong>
+              <p><code>intent.timeout_override</code></p>
+              <p><code>project.default_timeout</code></p>
+              <p><code>dispatcher task default</code></p>
+            </div>
+            <div class="panel red">
+              <strong>fallback 也失败</strong>
+              <p>写失败 report。</p>
+              <p>intent 回到 pending。</p>
+              <p>由人决定重跑、修改或撤回。</p>
+            </div>
+          </div>
+          <div class="callout">`request_conclude_now` 的语义是进入收尾，不是判定失败；它应复用 timeout fallback / resume 机制。</div>
+        </article>
+
+        <article class="slide" data-title="验收">
+          <div>
+            <h2>v2 验收清单</h2>
+            <p class="lead">首版要证明协议边界成立：默认人工、可指定 worker、报告可追溯、timeout 可控。</p>
+          </div>
+          <div class="grid-2">
+            <div class="panel teal"><strong>必须有</strong><p>新项目默认 `auto_reason=false`；人工 intent 可指定 `requested_worker`；worker 繁忙则 pending；fact metadata 记录 report path。</p></div>
+            <div class="panel amber"><strong>可以后置</strong><p>WebUI 远端 report 预览、terminal attach、完整 admin 并发治理、长期会话问答。</p></div>
+          </div>
+          <table class="table">
+            <tr><th>风险</th><th>规避</th></tr>
+            <tr><td>report 未落盘却写成功 fact</td><td>dispatcher conclude 前硬检查。</td></tr>
+            <tr><td>人工指定 worker 被静默替换</td><td>无可用兵力时 pending，不 fallback。</td></tr>
+            <tr><td>Docker/SSH 路径语义分裂</td><td>统一 `CAIRN_WORKSPACE` 与 workspace 内路径。</td></tr>
+          </table>
+        </article>
+      </section>
+
+      <div class="footer">
+        <span>Use ← / → to navigate.</span>
+        <span>Review target: v2 protocol shape before implementation plan.</span>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll('.slide'));
+    const nav = document.getElementById('nav');
+    const progress = document.getElementById('progress');
+    const counter = document.getElementById('counter');
+    let index = 0;
+
+    slides.forEach((slide, i) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.innerHTML = `<span>${i + 1}</span><span>${slide.dataset.title}</span>`;
+      button.addEventListener('click', () => show(i));
+      nav.appendChild(button);
+    });
+
+    function show(nextIndex) {
+      index = Math.max(0, Math.min(slides.length - 1, nextIndex));
+      slides.forEach((slide, i) => slide.classList.toggle('active', i === index));
+      Array.from(nav.children).forEach((button, i) => button.classList.toggle('active', i === index));
+      progress.style.width = `${((index + 1) / slides.length) * 100}%`;
+      counter.textContent = `${index + 1} / ${slides.length}`;
+    }
+
+    document.getElementById('prev').addEventListener('click', () => show(index - 1));
+    document.getElementById('next').addEventListener('click', () => show(index + 1));
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowLeft') show(index - 1);
+      if (event.key === 'ArrowRight') show(index + 1);
+    });
+
+    show(0);
+  </script>
+</body>
+</html>
