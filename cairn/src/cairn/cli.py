@@ -3,9 +3,8 @@ from pathlib import Path
 import click
 import uvicorn
 
-from cairn.dispatcher.logging import configure_logging
-from cairn.dispatcher.scheduler.loop import DispatcherLoop
 from cairn.server import db
+from cairn.server.migrations import runner
 
 
 @click.group()
@@ -64,6 +63,66 @@ def _run_server(host: str, port: int, db_path: str, log_level: str, access_log: 
     )
 
 
+@main.group("db")
+def db_group():
+    """Inspect and migrate the Cairn SQLite database."""
+
+
+@db_group.command("status")
+@click.option(
+    "--db",
+    "--db-path",
+    "db_path",
+    type=click.Path(path_type=Path),
+    default=db.DEFAULT_DB,
+    show_default=True,
+    help="SQLite database path",
+)
+def db_status(db_path: Path):
+    """Show applied and pending database migrations."""
+    click.echo(f"DB: {db_path}")
+    if not db_path.exists():
+        available = runner.available_migrations()
+        click.echo("exists: no")
+        click.echo(f"latest: {available[-1].version if available else 'none'}")
+        click.echo("applied: none")
+        click.echo("pending: " + _format_versions(migration.version for migration in available))
+        return
+    with db.connect(db_path) as conn:
+        migration_status = runner.status(conn)
+    click.echo("exists: yes")
+    click.echo(f"latest: {migration_status.latest or 'none'}")
+    click.echo("applied: " + _format_versions(migration_status.applied))
+    click.echo("pending: " + _format_versions(migration_status.pending))
+
+
+@db_group.command("migrate")
+@click.option(
+    "--db",
+    "--db-path",
+    "db_path",
+    type=click.Path(path_type=Path),
+    default=db.DEFAULT_DB,
+    show_default=True,
+    help="SQLite database path",
+)
+def db_migrate(db_path: Path):
+    """Apply pending database migrations."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with db.connect(db_path) as conn:
+        before = runner.status(conn)
+        after = runner.migrate(conn)
+    applied_now = [version for version in after.applied if version in before.pending]
+    click.echo(f"DB: {db_path}")
+    click.echo("applied now: " + _format_versions(applied_now))
+    click.echo("pending: " + _format_versions(after.pending))
+
+
+def _format_versions(versions) -> str:
+    values = tuple(versions)
+    return ", ".join(values) if values else "none"
+
+
 @main.command()
 @click.option(
     "--config",
@@ -86,6 +145,9 @@ def _run_server(host: str, port: int, db_path: str, log_level: str, access_log: 
 @click.option("--log-level", default="INFO", show_default=True, help="Log level")
 def dispatch(config_path: Path, once: bool, startup_healthcheck_only: bool, environment_healthcheck_only: bool, log_level: str):
     """Run the Cairn dispatcher."""
+    from cairn.dispatcher.logging import configure_logging
+    from cairn.dispatcher.scheduler.loop import DispatcherLoop
+
     configure_logging(log_level, bare=startup_healthcheck_only or environment_healthcheck_only)
     loop = DispatcherLoop(config_path)
     try:
