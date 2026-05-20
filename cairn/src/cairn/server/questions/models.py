@@ -43,6 +43,7 @@ class QuestionJob(BaseModel):
     error_code: str | None = None
     error_detail: str | None = None
     run_log_id: str | None = None
+    execution_id: str | None = None
     question_session: RemoteSessionProvenance | None = None
     created_at: str
     updated_at: str
@@ -142,6 +143,7 @@ class QuestionClaimJob(BaseModel):
     execution_worker_type: str | None = None
     execution_endpoint_id: str | None = None
     execution_model_profile_id: str | None = None
+    execution_id: str | None = None
     source_session: SourceSession = Field(default_factory=SourceSession)
     prompt_context: dict[str, Any] | None = None
     message: str

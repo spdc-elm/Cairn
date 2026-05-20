@@ -7,7 +7,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from cairn.dispatcher.runtime.run_logs import run_log_root
 from cairn.server.db import get_conn
 from cairn.server.models import AnchorResolution, RemoteSessionProvenance, RunProvenance, RunProvenancePatch, RunProvenanceUpsert
 from cairn.server.services import (
@@ -20,6 +19,7 @@ from cairn.server.services import (
 )
 from cairn.server.transcripts import build_transcript_from_path
 from cairn.server.transcripts.models import TranscriptResponse
+from cairn.shared.run_logs import run_log_root
 
 router = APIRouter(tags=["runs"])
 

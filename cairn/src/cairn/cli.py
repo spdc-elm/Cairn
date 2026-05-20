@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime
 
 import click
 import uvicorn
@@ -116,6 +117,82 @@ def db_migrate(db_path: Path):
     click.echo(f"DB: {db_path}")
     click.echo("applied now: " + _format_versions(applied_now))
     click.echo("pending: " + _format_versions(after.pending))
+
+
+@db_group.command("reset")
+@click.option("--to", "target", required=True, help="Schema target, currently v3.2")
+@click.option(
+    "--db",
+    "--db-path",
+    "db_path",
+    type=click.Path(path_type=Path),
+    default=db.DEFAULT_DB,
+    show_default=True,
+    help="SQLite database path",
+)
+@click.option("--yes", is_flag=True, help="Confirm destructive reset")
+def db_reset(target: str, db_path: Path, yes: bool):
+    """Back up and recreate the database with the fresh target schema."""
+    if target != "v3.2":
+        raise click.ClickException("only --to v3.2 is supported")
+    if not yes:
+        raise click.ClickException("reset requires --yes")
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    backup_path = None
+    if db_path.exists():
+        backup_path = db_path.with_name(f"{db_path.name}.bak-{datetime.now().strftime('%Y%m%d%H%M%S')}")
+        with db.connect(db_path) as source:
+            source.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            with db.connect(backup_path) as backup:
+                source.backup(backup)
+        with db.connect(backup_path):
+            pass
+    tmp_path = db_path.with_suffix(db_path.suffix + ".reset-tmp")
+    try:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        with db.connect(tmp_path) as conn:
+            runner.migrate(conn)
+        tmp_path.replace(db_path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+    click.echo(f"reset: {db_path}")
+    if backup_path is not None:
+        click.echo(f"backup: {backup_path}")
+
+
+@db_group.command("restore")
+@click.option(
+    "--db",
+    "--db-path",
+    "db_path",
+    type=click.Path(path_type=Path),
+    default=db.DEFAULT_DB,
+    show_default=True,
+    help="SQLite database path",
+)
+@click.option("--backup", "backup_path", type=click.Path(path_type=Path), required=True, help="Backup database path")
+@click.option("--yes", is_flag=True, help="Confirm restore overwrite")
+def db_restore(db_path: Path, backup_path: Path, yes: bool):
+    """Restore a database from a SQLite backup file."""
+    if not yes:
+        raise click.ClickException("restore requires --yes")
+    if not backup_path.exists():
+        raise click.ClickException(f"backup not found: {backup_path}")
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    if db_path.exists():
+        with db.connect(db_path) as conn:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    tmp_path = db_path.with_suffix(db_path.suffix + ".restore-tmp")
+    try:
+        with db.connect(backup_path) as source, db.connect(tmp_path) as target:
+            source.backup(target)
+        tmp_path.replace(db_path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+    click.echo(f"restored: {db_path}")
 
 
 def _format_versions(versions) -> str:

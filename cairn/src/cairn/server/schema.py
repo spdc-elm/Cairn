@@ -15,39 +15,37 @@ CREATE TABLE IF NOT EXISTS projects (
     allowed_auto_workers_json TEXT,
     default_timeout_seconds INTEGER,
     default_conclude_timeout_seconds INTEGER,
-    environment_id TEXT,
-    reason_worker TEXT,
-    reason_trigger TEXT,
-    reason_started_at TEXT,
-    reason_last_heartbeat_at TEXT
+    environment_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS facts (
     id TEXT NOT NULL,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'fact'
+        CHECK (kind IN ('origin','goal','fact','observation','negative_result')),
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active','superseded','retracted')),
     title TEXT,
     description TEXT NOT NULL,
     metadata_json TEXT,
+    produced_by_execution_id TEXT,
+    produced_by_intent_id TEXT,
+    created_at TEXT,
+    updated_at TEXT,
     PRIMARY KEY (id, project_id)
 );
 
 CREATE TABLE IF NOT EXISTS intents (
     id TEXT NOT NULL,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    to_fact_id TEXT,
     description TEXT NOT NULL,
     creator TEXT NOT NULL,
-    worker TEXT,
     requested_worker TEXT,
     timeout_override_seconds INTEGER,
     conclude_timeout_override_seconds INTEGER,
-    control_state TEXT NOT NULL DEFAULT 'normal',
-    control_requested_at TEXT,
-    control_requested_by TEXT,
-    control_reason TEXT,
-    last_heartbeat_at TEXT,
     created_at TEXT NOT NULL,
     concluded_at TEXT,
+    concluded_fact_id TEXT,
     PRIMARY KEY (id, project_id)
 );
 
@@ -147,146 +145,136 @@ CREATE TABLE IF NOT EXISTS worker_runtime_health (
 CREATE INDEX IF NOT EXISTS idx_worker_runtime_health_worker
 ON worker_runtime_health (worker_name, worker_type, endpoint_id, model_profile_id);
 
-CREATE TABLE IF NOT EXISTS question_threads (
+CREATE TABLE IF NOT EXISTS execution_runs (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    anchor_type TEXT NOT NULL,
-    anchor_id TEXT NOT NULL,
-    source_run_log_id TEXT,
-    source_remote_session_kind TEXT,
-    source_remote_session_id TEXT,
-    source_remote_session_status TEXT NOT NULL,
+    intent_id TEXT,
+    branch_id TEXT,
+    parent_execution_id TEXT,
+    task_type TEXT NOT NULL CHECK (task_type IN ('explore','conclude','reason','question','healthcheck')),
+    phase TEXT NOT NULL CHECK (phase IN ('bootstrap','run','followup','healthcheck')),
+    session_action TEXT CHECK (session_action IN ('fresh_context','fork_initial','resume_continue','branch_continue')),
     worker_name TEXT,
-    execution_environment_id TEXT,
-    execution_worker_type TEXT,
-    execution_endpoint_id TEXT,
-    execution_model_profile_id TEXT,
-    mode TEXT NOT NULL,
-    session_effect TEXT NOT NULL,
-    status TEXT NOT NULL,
-    notice TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    closed_at TEXT,
-    metadata_json TEXT
-);
-
-CREATE TABLE IF NOT EXISTS question_jobs (
-    id TEXT PRIMARY KEY,
-    thread_id TEXT NOT NULL REFERENCES question_threads(id) ON DELETE CASCADE,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    seq INTEGER NOT NULL,
-    mode TEXT NOT NULL,
-    message TEXT NOT NULL,
-    prompt_context_json TEXT,
-    status TEXT NOT NULL,
-    execution_environment_id TEXT,
-    execution_worker_type TEXT,
-    execution_endpoint_id TEXT,
-    execution_model_profile_id TEXT,
-    claimed_by TEXT,
-    claimed_at TEXT,
-    claim_expires_at TEXT,
+    worker_type TEXT,
+    environment_id TEXT,
+    endpoint_id TEXT,
+    model_profile_id TEXT,
+    workspace TEXT,
+    status TEXT NOT NULL CHECK (status IN ('pending','leased','running','succeeded','failed','cancelled')),
+    leased_by TEXT,
+    leased_at TEXT,
+    lease_expires_at TEXT,
+    last_heartbeat_at TEXT,
+    control_state TEXT NOT NULL DEFAULT 'normal'
+        CHECK (control_state IN ('normal','conclude_requested','abort_requested')),
+    control_requested_at TEXT,
+    control_reason TEXT,
+    remote_session_in_kind TEXT,
+    remote_session_in_id TEXT,
+    remote_session_in_status TEXT,
+    remote_session_out_kind TEXT,
+    remote_session_out_id TEXT,
+    remote_session_out_status TEXT,
+    input_snapshot_json TEXT,
     started_at TEXT,
     finished_at TEXT,
-    result_text TEXT,
+    returncode INTEGER,
     error_code TEXT,
     error_detail TEXT,
-    run_log_id TEXT,
-    question_remote_session_kind TEXT,
-    question_remote_session_id TEXT,
-    question_remote_session_status TEXT,
+    metadata_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    UNIQUE(thread_id, seq)
+    FOREIGN KEY (intent_id, project_id) REFERENCES intents(id, project_id) ON DELETE CASCADE,
+    FOREIGN KEY (parent_execution_id) REFERENCES execution_runs(id)
 );
 
-CREATE TABLE IF NOT EXISTS question_events (
+CREATE TABLE IF NOT EXISTS execution_events (
     id TEXT PRIMARY KEY,
-    thread_id TEXT NOT NULL REFERENCES question_threads(id) ON DELETE CASCADE,
-    job_id TEXT REFERENCES question_jobs(id) ON DELETE CASCADE,
+    execution_id TEXT NOT NULL REFERENCES execution_runs(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     seq INTEGER NOT NULL,
+    project_seq INTEGER NOT NULL,
+    cursor TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    event_type TEXT NOT NULL
+        CHECK (event_type IN ('status','stdout','stderr','message','tool','artifact','fact_candidate','session','metric')),
+    role TEXT,
+    payload_json TEXT NOT NULL,
     event_key TEXT,
-    event_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(execution_id, seq),
+    UNIQUE(execution_id, event_key),
+    UNIQUE(project_id, project_seq),
+    UNIQUE(project_id, cursor)
+);
+
+CREATE TABLE IF NOT EXISTS branches (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    source_execution_id TEXT,
+    parent_branch_id TEXT,
+    anchor_kind TEXT,
+    anchor_id TEXT,
+    mode TEXT NOT NULL CHECK (mode IN ('source','resume','fork','fresh_context')),
+    status TEXT NOT NULL CHECK (status IN ('active','archived')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (source_execution_id) REFERENCES execution_runs(id),
+    FOREIGN KEY (parent_branch_id) REFERENCES branches(id)
+);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    produced_by_execution_id TEXT REFERENCES execution_runs(id),
+    type TEXT NOT NULL CHECK (type IN ('report','transcript','scan','file','screenshot','other')),
+    uri TEXT,
+    path TEXT,
+    content_hash TEXT,
+    summary TEXT,
+    metadata_json TEXT,
     created_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS question_resume_locks (
+CREATE TABLE IF NOT EXISTS evidence_links (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    fact_id TEXT NOT NULL,
+    artifact_id TEXT,
+    execution_id TEXT,
+    relation TEXT NOT NULL CHECK (relation IN ('supports','contradicts','derived_from')),
+    created_at TEXT NOT NULL,
+    CHECK (artifact_id IS NOT NULL OR execution_id IS NOT NULL),
+    FOREIGN KEY (fact_id, project_id) REFERENCES facts(id, project_id) ON DELETE CASCADE,
+    FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE,
+    FOREIGN KEY (execution_id) REFERENCES execution_runs(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS execution_session_locks (
     project_id TEXT NOT NULL,
     remote_session_kind TEXT NOT NULL,
     remote_session_id TEXT NOT NULL,
-    thread_id TEXT NOT NULL,
-    job_id TEXT,
-    expires_at TEXT NOT NULL,
+    execution_id TEXT NOT NULL REFERENCES execution_runs(id) ON DELETE CASCADE,
+    branch_id TEXT,
+    lease_expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    PRIMARY KEY (project_id, remote_session_kind, remote_session_id)
+    PRIMARY KEY(project_id, remote_session_kind, remote_session_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_question_jobs_status_claim
-ON question_jobs (status, claim_expires_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_execution_events_execution_project_seq
+ON execution_events (execution_id, project_seq);
 
-CREATE INDEX IF NOT EXISTS idx_question_jobs_project_thread_seq
-ON question_jobs (project_id, thread_id, seq);
+CREATE INDEX IF NOT EXISTS idx_execution_events_project_seq
+ON execution_events (project_id, project_seq);
 
-CREATE INDEX IF NOT EXISTS idx_question_events_thread_seq
-ON question_events (thread_id, seq);
+CREATE INDEX IF NOT EXISTS idx_execution_runs_project_intent_created
+ON execution_runs (project_id, intent_id, created_at DESC);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_question_events_job_key
-ON question_events (job_id, event_key) WHERE event_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_execution_runs_project_branch_created
+ON execution_runs (project_id, branch_id, created_at);
 
-CREATE TABLE IF NOT EXISTS run_provenance (
-    run_log_id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    intent_id TEXT,
-    task_type TEXT NOT NULL,
-    phase TEXT NOT NULL,
-    worker_name TEXT NOT NULL,
-    worker_type TEXT,
-    environment_id TEXT,
-    environment_backend TEXT,
-    environment_target TEXT,
-    workspace TEXT,
-    model_profile_id TEXT,
-    endpoint_id TEXT,
-    timeout_seconds INTEGER,
-    report_path TEXT,
-    report_run_id TEXT,
-    remote_session_id TEXT,
-    remote_session_kind TEXT,
-    remote_session_status TEXT NOT NULL DEFAULT 'unresolved'
-        CHECK (remote_session_status IN ('available', 'missing', 'unresolved')),
-    remote_session_capture_method TEXT,
-    parent_run_log_id TEXT,
-    parent_remote_session_id TEXT,
-    question_mode TEXT,
-    question_anchor_type TEXT,
-    question_anchor_id TEXT,
-    source_run_log_id TEXT,
-    source_remote_session_id TEXT,
-    session_effect TEXT,
-    started_at TEXT NOT NULL,
-    finished_at TEXT,
-    returncode INTEGER,
-    timed_out INTEGER,
-    cancelled INTEGER,
-    cancel_reason TEXT,
-    metadata_json TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_run_provenance_project_intent_started
-ON run_provenance (project_id, intent_id, started_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_run_provenance_project_task_started
-ON run_provenance (project_id, task_type, started_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_run_provenance_project_source_run
-ON run_provenance (project_id, source_run_log_id);
-
-CREATE INDEX IF NOT EXISTS idx_run_provenance_remote_session
-ON run_provenance (remote_session_kind, remote_session_id);
+CREATE INDEX IF NOT EXISTS idx_execution_runs_project_status_lease
+ON execution_runs (project_id, status, lease_expires_at);
 
 INSERT OR IGNORE INTO work_environments (
     id, label, backend, workspace_root, cleanup_json, terminal_json, created_at, updated_at

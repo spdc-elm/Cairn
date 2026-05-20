@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from cairn.server.models import AnchorResolution, RemoteSessionProvenance
+from cairn.server.models import AnchorResolution, CreateExecutionRequest, LeaseExecutionRequest, RemoteSessionProvenance
 from cairn.server.questions.context import build_question_context
 from cairn.server.questions.models import (
     QuestionClaimJob,
@@ -22,7 +22,14 @@ from cairn.server.questions.models import (
     SessionEffect,
     SourceSession,
 )
-from cairn.server.services import dumps_json, loads_json_object, utcnow
+from cairn.server.services import (
+    create_execution_run,
+    dumps_json,
+    lease_execution,
+    loads_json_object,
+    next_branch_id,
+    utcnow,
+)
 
 ACTIVE_TTL_HOURS = 24
 TOMBSTONE_TTL_HOURS = 1
@@ -57,6 +64,7 @@ def create_question_thread(
     expires_at = _future(hours=ACTIVE_TTL_HOURS)
     source_session = anchor_resolution.provenance.remote_session if anchor_resolution.provenance else RemoteSessionProvenance(status="missing")
     thread_id = f"q_{uuid.uuid4().hex}"
+    branch_id = next_branch_id(conn, project_id)
     if mode == "resume":
         _acquire_resume_lock(
             conn,
@@ -96,8 +104,17 @@ def create_question_thread(
             now,
             now,
             expires_at,
-            dumps_json({"anchor_resolution": anchor_resolution.model_dump(mode="json")}),
+            dumps_json({"anchor_resolution": anchor_resolution.model_dump(mode="json"), "branch_id": branch_id}),
         ),
+    )
+    conn.execute(
+        """
+        INSERT INTO branches (
+            id, project_id, source_execution_id, parent_branch_id,
+            anchor_kind, anchor_id, mode, status, created_at, updated_at
+        ) VALUES (?, ?, NULL, NULL, ?, ?, ?, 'active', ?, ?)
+        """,
+        (branch_id, project_id, anchor_type, anchor_id, _branch_mode(mode), now, now),
     )
     return get_question_thread_detail(conn, project_id, thread_id)
 
@@ -110,6 +127,21 @@ def append_question_message_job(conn: sqlite3.Connection, thread_id: str, messag
     seq = int(seq_row["seq"])
     now = utcnow()
     prompt_context = build_question_context(conn, _thread_from_row(conn, thread, include_children=False), message)
+    branch_id = _thread_branch_id(thread)
+    execution = create_execution_run(
+        conn,
+        thread["project_id"],
+        CreateExecutionRequest(
+            branch_id=branch_id,
+            task_type="question",
+            phase="followup",
+            session_action=_session_action_for_job(conn, thread, seq),
+            remote_session_in_kind=thread["source_remote_session_kind"],
+            remote_session_in_id=thread["source_remote_session_id"],
+            remote_session_in_status=thread["source_remote_session_status"],
+            input_snapshot={"thread_id": thread_id, "message": message},
+        ),
+    )
     job = QuestionJob(
         id=f"qjob_{uuid.uuid4().hex}",
         thread_id=thread_id,
@@ -119,6 +151,7 @@ def append_question_message_job(conn: sqlite3.Connection, thread_id: str, messag
         message=message,
         prompt_context=prompt_context,
         status="pending",
+        execution_id=execution.id,
         created_at=now,
         updated_at=now,
     )
@@ -128,7 +161,8 @@ def append_question_message_job(conn: sqlite3.Connection, thread_id: str, messag
             id, thread_id, project_id, seq, mode, message, prompt_context_json,
             status, execution_environment_id, execution_worker_type, execution_endpoint_id,
             execution_model_profile_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
+            , execution_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             job.id,
@@ -144,6 +178,7 @@ def append_question_message_job(conn: sqlite3.Connection, thread_id: str, messag
             thread["execution_model_profile_id"],
             now,
             now,
+            execution.id,
         ),
     )
     conn.execute("UPDATE question_threads SET updated_at = ? WHERE id = ?", (now, thread_id))
@@ -230,6 +265,20 @@ def claim_question_job(
     row, selected_worker, execution = selected
     now = utcnow()
     expires_at = _future(seconds=CLAIM_TTL_SECONDS)
+    leased_execution = None
+    if row["execution_id"]:
+        leased_execution = lease_execution(
+            conn,
+            LeaseExecutionRequest(
+                execution_id=row["execution_id"],
+                dispatcher_id=dispatcher_id,
+                worker_name=selected_worker or "dispatcher",
+                worker_type=execution["worker_type"],
+                environment_id=execution["environment_id"],
+                endpoint_id=execution["endpoint_id"],
+                model_profile_id=execution["model_profile_id"],
+            ),
+        )
     conn.execute(
         """
         UPDATE question_jobs
@@ -267,6 +316,7 @@ def claim_question_job(
             execution_worker_type=execution["worker_type"],
             execution_endpoint_id=execution["endpoint_id"],
             execution_model_profile_id=execution["model_profile_id"],
+            execution_id=leased_execution.id if leased_execution is not None else row["execution_id"],
             source_session=SourceSession(
                 kind=row["source_remote_session_kind"],
                 id=row["source_remote_session_id"],
@@ -575,6 +625,7 @@ def _job_from_row(row: sqlite3.Row) -> QuestionJob:
         error_code=row["error_code"],
         error_detail=row["error_detail"],
         run_log_id=row["run_log_id"],
+        execution_id=row["execution_id"] if "execution_id" in row.keys() else None,
         execution_environment_id=row["execution_environment_id"],
         execution_worker_type=row["execution_worker_type"],
         execution_endpoint_id=row["execution_endpoint_id"],
@@ -696,6 +747,31 @@ def _release_resume_lock(conn: sqlite3.Connection, *, project_id: str, thread_id
 
 def _future(*, hours: int = 0, seconds: int = 0) -> str:
     return (datetime.now(timezone.utc) + timedelta(hours=hours, seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _thread_branch_id(thread: sqlite3.Row) -> str:
+    metadata = loads_json_object(thread["metadata_json"]) or {}
+    branch_id = metadata.get("branch_id")
+    if isinstance(branch_id, str) and branch_id:
+        return branch_id
+    raise HTTPException(409, "question_thread_missing_branch")
+
+
+def _branch_mode(mode: str) -> str:
+    if mode == "fork":
+        return "fork"
+    if mode == "resume":
+        return "resume"
+    return "fresh_context"
+
+
+def _session_action_for_job(conn: sqlite3.Connection, thread: sqlite3.Row, seq: int) -> str:
+    mode = thread["mode"]
+    if mode == "fresh_context":
+        return "fresh_context"
+    if mode == "resume":
+        return "resume_continue"
+    return "fork_initial" if seq == 1 else "branch_continue"
 
 
 def terminal_digest(text: str | None) -> str:

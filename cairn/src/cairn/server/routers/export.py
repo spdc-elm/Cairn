@@ -94,19 +94,21 @@ def _export_yaml(conn, project_id: str) -> str:
 
     intent_list = []
     for i in intents:
+        active = _latest_intent_execution_row(conn, project_id, i["id"])
+        to_fact_id = i["concluded_fact_id"] if "concluded_fact_id" in i.keys() else i["to_fact_id"]
         entry: dict = {
             "from": sources_by_intent.get(i["id"], []),
-            "to": i["to_fact_id"],
+            "to": to_fact_id,
             "description": i["description"],
             "creator": i["creator"],
-            "worker": i["worker"],
+            "worker": active["worker_name"] if active is not None else (i["worker"] if "worker" in i.keys() else None),
             "requested_worker": i["requested_worker"] if "requested_worker" in i.keys() else None,
             "timeout_override_seconds": i["timeout_override_seconds"] if "timeout_override_seconds" in i.keys() else None,
             "conclude_timeout_override_seconds": i["conclude_timeout_override_seconds"] if "conclude_timeout_override_seconds" in i.keys() else None,
-            "control_state": i["control_state"] if "control_state" in i.keys() else "normal",
-            "control_requested_at": format_export_timestamp(i["control_requested_at"] if "control_requested_at" in i.keys() else None),
+            "control_state": active["control_state"] if active is not None else (i["control_state"] if "control_state" in i.keys() else "normal"),
+            "control_requested_at": format_export_timestamp(active["control_requested_at"] if active is not None else (i["control_requested_at"] if "control_requested_at" in i.keys() else None)),
             "control_requested_by": i["control_requested_by"] if "control_requested_by" in i.keys() else None,
-            "control_reason": i["control_reason"] if "control_reason" in i.keys() else None,
+            "control_reason": active["control_reason"] if active is not None else (i["control_reason"] if "control_reason" in i.keys() else None),
             "created_at": format_export_timestamp(i["created_at"]),
             "concluded_at": format_export_timestamp(i["concluded_at"]),
         }
@@ -146,27 +148,30 @@ def _export_timeline(conn, project_id: str) -> str:
     for i in intents:
         src = sources_by_intent.get(i["id"], [])
         from_str = ", ".join(src)
+        active = _latest_intent_execution_row(conn, project_id, i["id"])
+        to_fact_id = i["concluded_fact_id"] if "concluded_fact_id" in i.keys() else i["to_fact_id"]
+        worker = active["worker_name"] if active is not None else (i["worker"] if "worker" in i.keys() else None)
 
         ts = format_export_timestamp(i["created_at"]) or ""
         meta = f"  from: {from_str}"
-        if i["worker"] and not i["concluded_at"]:
-            meta += f"\n  worker: {i['worker']} (in progress)"
+        if worker and not i["concluded_at"]:
+            meta += f"\n  worker: {worker} (in progress)"
         block = f"[{ts}] INTENT DECLARED {i['id']} by {i['creator']}\n{meta}\n  {i['description']}"
         events.append((i["created_at"] or "", order, block))
         order += 1
 
-        if not i["concluded_at"] or not i["to_fact_id"]:
+        if not i["concluded_at"] or not to_fact_id:
             continue
 
         ts = format_export_timestamp(i["concluded_at"]) or ""
-        actor = i["worker"] or i["creator"]
+        actor = worker or i["creator"]
 
-        if i["to_fact_id"] == "goal":
+        if to_fact_id == "goal":
             block = f"[{ts}] PROJECT COMPLETED by {actor}\n  via: {i['id']} from {from_str}"
         else:
-            fact_title = fact_titles_by_id.get(i["to_fact_id"], i["to_fact_id"])
-            fact_desc = facts_by_id.get(i["to_fact_id"], "")
-            block = f"[{ts}] INTENT CONCLUDED {i['id']} by {actor}\n  from: {from_str}\n  produced: {i['to_fact_id']} {fact_title}\n  {fact_desc}"
+            fact_title = fact_titles_by_id.get(to_fact_id, to_fact_id)
+            fact_desc = facts_by_id.get(to_fact_id, "")
+            block = f"[{ts}] INTENT CONCLUDED {i['id']} by {actor}\n  from: {from_str}\n  produced: {to_fact_id} {fact_title}\n  {fact_desc}"
 
         events.append((i["concluded_at"] or "", order, block))
         order += 1
@@ -174,6 +179,23 @@ def _export_timeline(conn, project_id: str) -> str:
     events.sort(key=lambda e: (e[0], e[1]))
 
     return "\n\n".join(e[2] for e in events) + "\n"
+
+
+def _latest_intent_execution_row(conn, project_id: str, intent_id: str):
+    return conn.execute(
+        """
+        SELECT *
+        FROM execution_runs
+        WHERE project_id = ?
+          AND intent_id = ?
+        ORDER BY
+          CASE status WHEN 'running' THEN 0 WHEN 'leased' THEN 1 WHEN 'pending' THEN 2 ELSE 3 END,
+          COALESCE(updated_at, created_at) DESC,
+          created_at DESC
+        LIMIT 1
+        """,
+        (project_id, intent_id),
+    ).fetchone()
 
 
 @router.get("/projects/{project_id}/export")

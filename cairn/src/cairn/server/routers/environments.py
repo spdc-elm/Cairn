@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from cairn.server.db import get_conn
 from cairn.server.models import ProviderEndpointPublic, ProviderEndpointSecret, ProviderEndpointUpsert, WorkEnvironmentPublic, WorkEnvironmentUpsert
 from cairn.server.services import (
+    create_environment_healthcheck_requests,
     effective_worker_runtime_health,
     environment_row_to_public,
     get_environment_provider_endpoint_or_404,
@@ -208,6 +209,12 @@ def healthcheck_environment(environment_id: str):
             (result.get("status"), json.dumps(result, ensure_ascii=True), utcnow(), environment_id),
         )
         return result
+
+
+@router.post("/environments/{environment_id}/healthcheck-requests", status_code=201)
+def create_environment_healthcheck_request(environment_id: str):
+    with get_conn() as conn:
+        return create_environment_healthcheck_requests(conn, environment_id)
 
 
 def _choose_environment_id(conn: sqlite3.Connection, base: str) -> str:

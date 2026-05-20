@@ -237,6 +237,274 @@ class RunProvenancePatch(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
+ExecutionTaskType = Literal["explore", "conclude", "reason", "question", "healthcheck"]
+ExecutionPhase = Literal["bootstrap", "run", "followup", "healthcheck"]
+ExecutionSessionAction = Literal["fresh_context", "fork_initial", "resume_continue", "branch_continue"]
+ExecutionStatus = Literal["pending", "leased", "running", "succeeded", "failed", "cancelled"]
+ExecutionControlState = Literal["normal", "conclude_requested", "abort_requested"]
+ExecutionEventType = Literal["status", "stdout", "stderr", "message", "tool", "artifact", "fact_candidate", "session", "metric"]
+ExecutionEventRole = Literal["user", "assistant", "system", "tool"]
+
+
+class ExecutionRun(BaseModel):
+    id: str
+    project_id: str
+    intent_id: str | None = None
+    branch_id: str | None = None
+    parent_execution_id: str | None = None
+    task_type: ExecutionTaskType
+    phase: ExecutionPhase
+    session_action: ExecutionSessionAction | None = None
+    worker_name: str | None = None
+    worker_type: str | None = None
+    environment_id: str | None = None
+    endpoint_id: str | None = None
+    model_profile_id: str | None = None
+    workspace: str | None = None
+    status: ExecutionStatus
+    leased_by: str | None = None
+    leased_at: str | None = None
+    lease_expires_at: str | None = None
+    last_heartbeat_at: str | None = None
+    control_state: ExecutionControlState = "normal"
+    control_requested_at: str | None = None
+    control_reason: str | None = None
+    remote_session_in_kind: str | None = None
+    remote_session_in_id: str | None = None
+    remote_session_in_status: str | None = None
+    remote_session_out_kind: str | None = None
+    remote_session_out_id: str | None = None
+    remote_session_out_status: str | None = None
+    input_snapshot: dict[str, Any] | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    returncode: int | None = None
+    error_code: str | None = None
+    error_detail: str | None = None
+    metadata: dict[str, Any] | None = None
+    created_at: str
+    updated_at: str
+
+
+class CreateExecutionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    intent_id: str | None = None
+    branch_id: str | None = None
+    parent_execution_id: str | None = None
+    task_type: ExecutionTaskType
+    phase: ExecutionPhase
+    session_action: ExecutionSessionAction | None = None
+    remote_session_in_kind: str | None = None
+    remote_session_in_id: str | None = None
+    remote_session_in_status: str | None = None
+    input_snapshot: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+
+    @field_validator(
+        "intent_id",
+        "branch_id",
+        "parent_execution_id",
+        "remote_session_in_kind",
+        "remote_session_in_id",
+        "remote_session_in_status",
+    )
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        return text or None
+
+
+class LeaseExecutionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dispatcher_id: str
+    project_id: str | None = None
+    execution_id: str | None = None
+    worker_name: str
+    worker_type: str | None = None
+    environment_id: str | None = None
+    endpoint_id: str | None = None
+    model_profile_id: str | None = None
+    workspace: str | None = None
+    lease_seconds: int = Field(default=60, gt=0)
+    task_type: ExecutionTaskType | None = None
+    phase: ExecutionPhase | None = None
+    allow_parallel: bool = False
+
+    @field_validator("dispatcher_id", "worker_name")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+    @field_validator("project_id", "execution_id", "worker_type", "environment_id", "endpoint_id", "model_profile_id", "workspace")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        return text or None
+
+
+class ClaimHealthcheckExecutionsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dispatcher_id: str
+    worker_names: list[str] = Field(default_factory=list)
+    environment_ids: list[str] = Field(default_factory=list)
+    limit: int = Field(default=1, gt=0, le=32)
+    lease_seconds: int = Field(default=60, gt=0)
+
+    @field_validator("dispatcher_id")
+    @classmethod
+    def validate_dispatcher_id(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+    @field_validator("worker_names", "environment_ids")
+    @classmethod
+    def validate_text_list(cls, value: list[str]) -> list[str]:
+        result = []
+        for item in value:
+            text = item.strip()
+            if text:
+                result.append(text)
+        return result
+
+
+class ClaimQuestionExecutionsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dispatcher_id: str
+    worker_names: list[str] = Field(default_factory=list)
+    environment_ids: list[str] = Field(default_factory=list)
+    limit: int = Field(default=1, gt=0, le=32)
+    lease_seconds: int = Field(default=60, gt=0)
+
+    @field_validator("dispatcher_id")
+    @classmethod
+    def validate_dispatcher_id(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+    @field_validator("worker_names", "environment_ids")
+    @classmethod
+    def validate_text_list(cls, value: list[str]) -> list[str]:
+        result = []
+        for item in value:
+            text = item.strip()
+            if text:
+                result.append(text)
+        return result
+
+
+class PatchExecutionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dispatcher_id: str | None = None
+    status: ExecutionStatus | None = None
+    last_heartbeat_at: str | None = None
+    lease_seconds: int | None = Field(default=None, gt=0)
+    control_state: ExecutionControlState | None = None
+    control_reason: str | None = None
+    remote_session_out_kind: str | None = None
+    remote_session_out_id: str | None = None
+    remote_session_out_status: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    returncode: int | None = None
+    error_code: str | None = None
+    error_detail: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class ExecutionEvent(BaseModel):
+    id: str
+    execution_id: str
+    project_id: str
+    seq: int
+    project_seq: int
+    cursor: str
+    ts: str
+    event_type: ExecutionEventType
+    role: ExecutionEventRole | None = None
+    payload: dict[str, Any]
+    event_key: str | None = None
+    created_at: str
+
+
+class ExecutionEventAppend(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_type: ExecutionEventType
+    role: ExecutionEventRole | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    event_key: str | None = None
+    ts: str | None = None
+
+
+class AppendExecutionEventsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dispatcher_id: str | None = None
+    events: list[ExecutionEventAppend] = Field(min_length=1)
+
+
+class ExecutionEventsResponse(BaseModel):
+    events: list[ExecutionEvent]
+    next_cursor: str | None = None
+
+
+class Artifact(BaseModel):
+    id: str
+    project_id: str
+    produced_by_execution_id: str | None = None
+    type: Literal["report", "transcript", "scan", "file", "screenshot", "other"]
+    uri: str | None = None
+    path: str | None = None
+    content_hash: str | None = None
+    summary: str | None = None
+    metadata: dict[str, Any] | None = None
+    created_at: str
+
+
+class UploadExecutionArtifactRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["report", "transcript", "scan", "file", "screenshot", "other"]
+    uri: str | None = None
+    path: str | None = None
+    content_hash: str | None = None
+    summary: str | None = None
+    metadata: dict[str, Any] | None = None
+
+    @field_validator("uri", "path", "content_hash", "summary")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        return text or None
+
+
+class IntentRuntimeProjection(BaseModel):
+    intent_id: str
+    active_execution_id: str | None = None
+    latest_execution_id: str | None = None
+    runtime_status: str | None = None
+    worker_name: str | None = None
+    last_heartbeat_at: str | None = None
+
+
 class AnchorResolution(BaseModel):
     anchor_type: Literal["fact", "intent", "run"]
     anchor_id: str
@@ -441,6 +709,26 @@ class ConcludeRequest(BaseModel):
             return None
         text = value.strip()
         if not text:
+            raise ValueError("must not be empty")
+        return text
+
+
+class ExecutionConclusionReportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = None
+    description: str
+    artifact_ids: list[str] = Field(default_factory=list)
+    confidence: str | None = None
+    metadata: dict[str, Any] | None = None
+
+    @field_validator("title", "description", "confidence")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text and value is not None:
             raise ValueError("must not be empty")
         return text
 
