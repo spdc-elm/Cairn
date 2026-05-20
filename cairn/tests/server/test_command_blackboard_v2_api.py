@@ -131,13 +131,14 @@ class CommandBlackboardV2ApiTests(unittest.TestCase):
             self.project.project.id,
             CreateIntentRequest(**{"from": ["origin"], "description": "run", "creator": "human"}),
         )
+        heartbeat(self.project.project.id, intent.id, HeartbeatRequest(worker="pi"))
         control = request_conclude(
             self.project.project.id,
             intent.id,
             RequestConcludeRequest(actor="human", reason="enough"),
         )
         self.assertEqual(control.control_state, "conclude_requested")
-        self.assertEqual(control.control_requested_by, "human")
+        self.assertEqual(control.control_reason, "enough")
 
         result = conclude(
             self.project.project.id,

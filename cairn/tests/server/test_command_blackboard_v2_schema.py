@@ -35,7 +35,9 @@ class CommandBlackboardV2SchemaTests(unittest.TestCase):
         self.assertIn("title", fact_columns)
         self.assertIn("metadata_json", fact_columns)
         self.assertIn("requested_worker", intent_columns)
-        self.assertIn("control_state", intent_columns)
+        self.assertIn("concluded_fact_id", intent_columns)
+        self.assertNotIn("control_state", intent_columns)
+        self.assertNotIn("last_heartbeat_at", intent_columns)
         self.assertEqual(versions, tuple(migration.version for migration in runner.available_migrations()))
 
     def test_old_db_migration_preserves_rows_with_v2_defaults(self) -> None:

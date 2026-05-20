@@ -1,0 +1,201 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from types import SimpleNamespace
+
+from cairn.dispatcher.config import WorkerConfig
+from cairn.dispatcher.runtime.environments.base import EnvironmentHandle
+from cairn.dispatcher.runtime.event_sink import ExecutionEventSink
+from cairn.dispatcher.runtime.process import ProcessResult
+from cairn.dispatcher.tasks.common import WorkerProcessRun, record_remote_session
+from cairn.dispatcher.tasks.common import run_worker_process
+from cairn.dispatcher.tasks.questions import run_question_task
+
+
+class FakeProcess:
+    def __init__(self, run_logger=None) -> None:
+        self.run_logger = run_logger
+
+    def start(self) -> None:
+        if self.run_logger is not None:
+            self.run_logger.write_stream("stdout", "hello\n")
+            self.run_logger.write_stream("stderr", "warn\n")
+
+    def communicate(self, timeout: float | None) -> ProcessResult:
+        return ProcessResult(returncode=0, stdout="hello\n", stderr="warn\n")
+
+    def kill(self) -> None:
+        return None
+
+    def cancel(self, reason: str) -> None:
+        return None
+
+
+class FakeEnvironment:
+    id = "ssh-main"
+    label = "SSH Main"
+    backend = "ssh"
+
+    def prepare_project(self, project_id: str) -> EnvironmentHandle:
+        return EnvironmentHandle(project_id=project_id, target_name="remote", workspace="/tmp/work")
+
+    def build_process(self, handle, env, command, timeout_seconds=None, kill_after_seconds=5, run_logger=None):
+        return FakeProcess(run_logger=run_logger)
+
+
+class FakeClient:
+    def __init__(self) -> None:
+        self.batches: list[list[dict]] = []
+        self.patches: list[dict] = []
+
+    def append_execution_events(self, execution_id: str, *, dispatcher_id: str | None = None, events: list[dict]):
+        self.batches.append(events)
+        return type("Response", (), {"ok": True, "status_code": 200, "text": ""})()
+
+    def patch_execution(self, execution_id: str, payload: dict):
+        self.patches.append(payload)
+        return type("Response", (), {"ok": True, "status_code": 200, "text": ""})()
+
+
+class V32ExecutionEventStreamTests(unittest.TestCase):
+    def test_run_worker_process_dual_writes_jsonl_and_execution_events(self) -> None:
+        with tempfile.TemporaryDirectory() as run_dir:
+            self.addCleanupEnv("CAIRN_RUN_LOG_DIR")
+            import os
+
+            os.environ["CAIRN_RUN_LOG_DIR"] = run_dir
+            worker = WorkerConfig(
+                name="codex-main",
+                type="codex",
+                task_types=["explore"],
+                max_running=1,
+                priority=0,
+                env={"SECRET_TOKEN": "redact-me"},
+            )
+            handle = EnvironmentHandle(project_id="proj_001", target_name="remote", workspace="/tmp/work")
+            client = FakeClient()
+            sink = ExecutionEventSink(client, "proj_001_ex001", batch_size=10, secrets=["redact-me"])
+
+            run = run_worker_process(
+                FakeEnvironment(),
+                handle,
+                worker,
+                ["true"],
+                phase="explore_execute",
+                timeout_seconds=5,
+                project_id="proj_001",
+                task_type="explore",
+                intent_id="i001",
+                event_sink=sink,
+            )
+
+        self.assertEqual(run.returncode, 0)
+        self.assertTrue(run.run_log_id and run.run_log_id.startswith("run_"))
+        flattened = [event for batch in client.batches for event in batch]
+        self.assertEqual([event["event_type"] for event in flattened], ["status", "stdout", "stderr", "status"])
+        self.assertEqual(flattened[0]["payload"]["status"], "running")
+        self.assertEqual(flattened[1]["payload"]["text"], "hello\n")
+        self.assertEqual(flattened[-1]["payload"]["status"], "succeeded")
+        self.assertEqual(client.patches[-1]["status"], "succeeded")
+        self.assertFalse(run.event_flush_failed)
+
+    def test_question_execution_task_writes_execution_events(self) -> None:
+        with tempfile.TemporaryDirectory() as run_dir:
+            self.addCleanupEnv("CAIRN_RUN_LOG_DIR")
+            import os
+
+            os.environ["CAIRN_RUN_LOG_DIR"] = run_dir
+            worker = WorkerConfig(
+                name="mock-observer",
+                type="mock",
+                task_types=["explore"],
+                max_running=1,
+                priority=0,
+                env={},
+            )
+            client = FakeClient()
+            project = SimpleNamespace(project=SimpleNamespace(id="proj_001"))
+            job = {
+                "id": "proj_001_ex002",
+                "project_id": "proj_001",
+                "branch_id": "proj_001_br001",
+                "task_type": "question",
+                "phase": "followup",
+                "session_action": "branch_continue",
+                "remote_session_in_id": "fork-session-1",
+                "input_snapshot": {"message": "what did I say?"},
+            }
+
+            outcome = run_question_task(
+                SimpleNamespace(),
+                client,
+                FakeEnvironment(),
+                project,
+                worker,
+                job,
+                cancellation=SimpleNamespace(attach_process=lambda process: None),
+            )
+
+        flattened = [event for batch in client.batches for event in batch]
+        self.assertEqual(outcome, "success")
+        self.assertIn({"dispatcher_id": "dispatcher", "status": "running"}, client.patches)
+        self.assertTrue(any(patch.get("remote_session_out_id") == "fork-session-1" for patch in client.patches))
+        self.assertIn("assistant", [event.get("role") for event in flattened])
+        self.assertIn("stdout", [event["event_type"] for event in flattened])
+        assistant_index = next(i for i, event in enumerate(flattened) if event.get("role") == "assistant")
+        terminal_index = next(i for i, event in enumerate(flattened) if event["event_type"] == "status" and event["payload"].get("status") == "succeeded")
+        self.assertLess(assistant_index, terminal_index)
+        self.assertEqual(client.patches[-1]["status"], "succeeded")
+
+    def test_record_remote_session_updates_execution_run_session(self) -> None:
+        client = FakeClient()
+        driver = SimpleNamespace(
+            extract_session_provenance=lambda prepared, stdout, stderr: SimpleNamespace(
+                id="pi-session-1",
+                kind="pi_session",
+                status="available",
+                capture_method="stdout_event",
+            )
+        )
+        run = WorkerProcessRun(
+            result=ProcessResult(returncode=0, stdout='{"type":"session","id":"pi-session-1"}\n', stderr=""),
+            run_log_id=None,
+            run_log_path=None,
+        )
+
+        session_id = record_remote_session(
+            client,
+            "proj_001",
+            run,
+            driver,
+            prepared_session=None,
+            execution_id="proj_001_ex001",
+        )
+
+        self.assertEqual(session_id, "pi-session-1")
+        self.assertEqual(
+            client.patches[-1],
+            {
+                "remote_session_out_kind": "pi_session",
+                "remote_session_out_id": "pi-session-1",
+                "remote_session_out_status": "available",
+            },
+        )
+
+    def addCleanupEnv(self, key: str) -> None:
+        import os
+
+        old = os.environ.get(key)
+
+        def restore() -> None:
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
+
+        self.addCleanup(restore)
+
+
+if __name__ == "__main__":
+    unittest.main()

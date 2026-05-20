@@ -38,6 +38,28 @@ class DbCliTests(unittest.TestCase):
 
         self.assertEqual(versions, tuple(sorted(versions)))
 
+    def test_db_reset_creates_backup_and_restore_recovers_it(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "cairn.db"
+        cli = CliRunner()
+
+        migrated = cli.invoke(main, ["db", "migrate", "--db", str(path)])
+        self.assertEqual(migrated.exit_code, 0, migrated.output)
+        with path.open("ab") as _:
+            pass
+
+        reset = cli.invoke(main, ["db", "reset", "--to", "v3.2", "--db", str(path), "--yes"])
+        self.assertEqual(reset.exit_code, 0, reset.output)
+        self.assertIn("backup:", reset.output)
+        backup_line = next(line for line in reset.output.splitlines() if line.startswith("backup:"))
+        backup_path = Path(backup_line.split("backup:", 1)[1].strip())
+        self.assertTrue(backup_path.exists())
+
+        restored = cli.invoke(main, ["db", "restore", "--db", str(path), "--backup", str(backup_path), "--yes"])
+        self.assertEqual(restored.exit_code, 0, restored.output)
+        self.assertIn("restored:", restored.output)
+
 
 if __name__ == "__main__":
     unittest.main()

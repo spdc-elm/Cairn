@@ -4,29 +4,34 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from fastapi import HTTPException
+
 from cairn.server import db
-from cairn.server.models import CreateProjectRequest, RemoteSessionProvenance, RunProvenanceUpsert, WorkerRuntimeHealth, WorkerRuntimeHealthUpsertRequest
-from cairn.server.questions.models import QuestionClaimRequest, QuestionCreateRequest
+from cairn.server.models import (
+    CreateExecutionRequest,
+    CreateProjectRequest,
+    PatchExecutionRequest,
+    WorkerRuntimeHealth,
+    WorkerRuntimeHealthUpsertRequest,
+)
+from cairn.server.routers.branches import CreateBranchRequest, create_branch
 from cairn.server.routers.environments import healthcheck_environment
+from cairn.server.routers.executions import create_project_execution, dispatcher_patch_execution
 from cairn.server.routers.projects import create_project
-from cairn.server.routers.questions import create_question, dispatcher_claim_question_job, reset_question_state_for_tests
-from cairn.server.routers.runs import update_run_provenance_session, upsert_run_provenance
 from cairn.server.routers.workers import list_workers, upsert_worker_health
-from cairn.server.services import dumps_json, resolve_anchor
+from cairn.server.services import dumps_json
 
 
-class V3WorkerRuntimeHealthTests(unittest.TestCase):
+class V32WorkerRuntimeHealthAvailabilityTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         db._db_path = None
         db.configure(Path(self.tmp.name) / "cairn.db")
-        reset_question_state_for_tests()
         self.project = create_project(CreateProjectRequest(title="case", origin="start", goal="finish", environment_id="docker-default"))
         self.project_id = self.project.project.id
         self._insert_pi_worker()
 
     def tearDown(self) -> None:
-        reset_question_state_for_tests()
         self.tmp.cleanup()
 
     def test_worker_health_upsert_is_returned_by_inventory(self) -> None:
@@ -55,8 +60,8 @@ class V3WorkerRuntimeHealthTests(unittest.TestCase):
         self.assertEqual(worker.runtime_health[0].status, "unhealthy")
         self.assertEqual(worker.runtime_health[0].detail["stderr_preview"], "connection failed")
 
-    def test_unhealthy_source_disables_fork_and_resume_only(self) -> None:
-        self._available_run("run_log_001")
+    def test_unhealthy_source_execution_disables_fork_resume(self) -> None:
+        source = self._available_source_execution()
         upsert_worker_health(
             WorkerRuntimeHealthUpsertRequest(
                 health=[
@@ -75,23 +80,13 @@ class V3WorkerRuntimeHealthTests(unittest.TestCase):
             )
         )
 
-        with db.get_conn() as conn:
-            resolved = resolve_anchor(conn, self.project_id, "run", "run_log_001")
+        with self.assertRaises(HTTPException) as fork_exc:
+            create_branch(self.project_id, CreateBranchRequest(mode="fork", source_execution_id=source.id))
+        with self.assertRaises(HTTPException) as resume_exc:
+            create_branch(self.project_id, CreateBranchRequest(mode="resume", source_execution_id=source.id))
 
-        self.assertEqual(resolved.available_modes, ["fresh_context"])
-        self.assertEqual(resolved.unavailable_reasons["fork"], "worker_environment_unhealthy")
-        self.assertEqual(resolved.unavailable_reasons["resume"], "worker_environment_unhealthy")
-
-    def test_endpoint_change_disables_old_source_session(self) -> None:
-        self._available_run("run_log_001")
-        with db.get_conn() as conn:
-            conn.execute("UPDATE worker_inventory SET endpoint = 'pi-other' WHERE name = 'pi-main'")
-
-        with db.get_conn() as conn:
-            resolved = resolve_anchor(conn, self.project_id, "run", "run_log_001")
-
-        self.assertEqual(resolved.available_modes, ["fresh_context"])
-        self.assertEqual(resolved.unavailable_reasons["fork"], "source_worker_identity_changed")
+        self.assertEqual(fork_exc.exception.detail, "worker_environment_unhealthy")
+        self.assertEqual(resume_exc.exception.detail, "worker_environment_unhealthy")
 
     def test_removed_endpoint_marks_runtime_health_unknown(self) -> None:
         upsert_worker_health(
@@ -150,42 +145,10 @@ class V3WorkerRuntimeHealthTests(unittest.TestCase):
         self.assertIn("returncode=1", worker_check["stdout"])
         self.assertEqual(worker_check["stderr"], "connection failed")
 
-    def test_question_fork_uses_source_environment_and_claim_filters_environment(self) -> None:
-        with db.get_conn() as conn:
-            conn.execute(
-                """
-                INSERT INTO work_environments (id, label, backend, workspace_root, cleanup_json, terminal_json, created_at, updated_at)
-                VALUES ('other-env', 'Other', 'docker', NULL, NULL, NULL, '2026-05-19T00:00:00Z', '2026-05-19T00:00:00Z')
-                """
-            )
-            conn.execute("UPDATE projects SET environment_id = 'other-env' WHERE id = ?", (self.project_id,))
-        self._available_run("run_log_001")
-
-        thread = create_question(
-            self.project_id,
-            QuestionCreateRequest(anchor_type="run", anchor_id="run_log_001", mode="fork", message="why?"),
-        )
-        wrong_env = dispatcher_claim_question_job(
-            QuestionClaimRequest(dispatcher_id="disp", worker_names=["pi-main"], environment_ids=["other-env"])
-        )
-        right_env = dispatcher_claim_question_job(
-            QuestionClaimRequest(dispatcher_id="disp", worker_names=["pi-main"], environment_ids=["docker-default"])
-        )
-
-        self.assertEqual(thread.execution_environment_id, "docker-default")
-        self.assertIsNone(wrong_env.job)
-        self.assertIsNotNone(right_env.job)
-        assert right_env.job is not None
-        self.assertEqual(right_env.job.execution_environment_id, "docker-default")
-
     def _insert_pi_worker(self) -> None:
         capability = {
             "can_resume_session": True,
             "can_fork_session": True,
-            "can_use_tools": True,
-            "can_stream_events": True,
-            "resume_mutates_source": True,
-            "fork_creates_remote_log": True,
             "question_modes": ["fork", "resume", "fresh_context"],
             "unavailable_reasons": {},
         }
@@ -204,29 +167,34 @@ class V3WorkerRuntimeHealthTests(unittest.TestCase):
                     question_capability_json, capability_updated_at, capability_source, updated_at
                 ) VALUES ('pi-main', 'pi', 'pi-main', 'pi-default', ?, 1, 0, ?, ?, 'static', ?)
                 """,
-                (dumps_json(["explore"]), dumps_json(capability), "2026-05-19T00:00:00Z", "2026-05-19T00:00:00Z"),
+                (dumps_json(["explore", "question"]), dumps_json(capability), "2026-05-19T00:00:00Z", "2026-05-19T00:00:00Z"),
             )
 
-    def _available_run(self, run_log_id: str) -> None:
-        upsert_run_provenance(
-            self.project_id,
-            RunProvenanceUpsert(
-                run_log_id=run_log_id,
-                task_type="explore",
-                phase="explore_execute",
-                worker_name="pi-main",
-                worker_type="pi",
-                environment_id="docker-default",
-                model_profile_id="pi-main",
-                endpoint_id="pi-default",
-                started_at="2026-05-19T00:00:00Z",
+    def _available_source_execution(self):
+        execution = create_project_execution(self.project_id, CreateExecutionRequest(task_type="reason", phase="run"))
+        dispatcher_patch_execution(
+            execution.id,
+            PatchExecutionRequest(
+                status="succeeded",
+                remote_session_out_kind="pi_session",
+                remote_session_out_id="pi-session-1",
+                remote_session_out_status="available",
             ),
         )
-        update_run_provenance_session(
-            self.project_id,
-            run_log_id,
-            RemoteSessionProvenance(id="pi-session-1", kind="pi_session", status="available", capture_method="stdout_event"),
-        )
+        with db.get_conn() as conn:
+            conn.execute(
+                """
+                UPDATE execution_runs
+                SET worker_name = 'pi-main',
+                    worker_type = 'pi',
+                    environment_id = 'docker-default',
+                    endpoint_id = 'pi-default',
+                    model_profile_id = 'pi-main'
+                WHERE id = ?
+                """,
+                (execution.id,),
+            )
+        return execution
 
 
 if __name__ == "__main__":
