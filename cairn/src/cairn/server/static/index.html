@@ -607,6 +607,8 @@
       <div class="flex border-b border-slate-100 shrink-0">
         <button @click="sideTab = 'detail'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
           :class="sideTab === 'detail' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">Detail</button>
+        <button @click="sideTab = 'conversation'; loadSelectedConversation()" class="flex-1 px-2 py-2.5 text-xs font-medium transition"
+          :class="sideTab === 'conversation' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">Output</button>
         <button @click="sideTab = 'settings'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
           :class="sideTab === 'settings' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">Settings</button>
         <button @click="sideTab = 'hints'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
@@ -723,6 +725,10 @@
                   </div>
                 </template>
               </div>
+              <template x-if="selectedFactId() !== 'origin'">
+                <button type="button" @click="sideTab = 'conversation'; loadSelectedConversation(true)"
+                  class="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-600 hover:bg-slate-50 transition">Open Conversation</button>
+              </template>
             </div>
           </section>
         </template>
@@ -760,50 +766,154 @@
                 <button type="button" @click="resumeSelectedIntentControl()"
                   class="w-full px-3 py-2 rounded-xl border border-brand-200 bg-brand-50 text-sm font-medium text-brand-700 hover:bg-brand-100 transition">Resume Intent</button>
               </template>
-              <template x-if="selectedIntentRecord().worker">
-                <div class="pt-4 border-t border-slate-100 space-y-2">
-                  <div class="rounded-xl border border-slate-200 bg-slate-50/70 overflow-hidden">
-                    <div class="flex items-center justify-between gap-3 px-3 py-2.5 border-b border-slate-200">
-                      <button type="button" @click="toggleRunLogExpanded()"
-                        class="min-w-0 flex-1 flex items-center gap-2 text-left">
-                        <svg class="w-4 h-4 text-slate-400 shrink-0 transition-transform" :class="runLog.expanded ? 'rotate-90' : ''" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
-                        <div class="min-w-0">
-                          <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">Worker Output</p>
-                          <p class="text-xs text-slate-500 truncate" x-text="runLog.detail?.summary?.run_id || 'Live conversation / stdout'"></p>
-                        </div>
-                      </button>
-                      <div class="flex items-center gap-2 shrink-0">
-                        <template x-if="runLog.detail">
-                          <span class="text-[11px] font-medium" :class="runLogStatusClass()" x-text="runLogStatusLabel()"></span>
-                        </template>
-                        <button type="button" @click="loadSelectedIntentRunLog(true)"
-                          class="px-2 py-1 rounded-md border border-slate-200 bg-white text-[11px] text-slate-500 hover:bg-slate-50">Refresh</button>
-                      </div>
-                    </div>
-                    <div x-show="runLog.expanded" class="p-3 space-y-2">
-                      <template x-if="runLog.loading && !runLog.detail">
-                        <div class="rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm text-slate-400">Loading worker output...</div>
-                      </template>
-                      <template x-if="runLog.error">
-                        <div class="rounded-lg border border-rose-100 bg-rose-50 px-3 py-3 text-sm text-rose-600" x-text="runLog.error"></div>
-                      </template>
-                      <template x-if="!runLog.loading && !runLog.error && !runLog.detail">
-                        <div class="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-3 text-sm text-slate-400">No run log yet</div>
-                      </template>
-                      <template x-if="runLog.detail">
-                        <div class="rounded-lg border border-slate-200 bg-slate-950 overflow-hidden">
-                          <div x-show="runLogMetadataText()" class="border-b border-slate-800 px-4 py-2 text-[11px] text-slate-400 font-mono break-all" x-text="runLogMetadataText()"></div>
-                          <pre x-ref="runLogOutput" class="h-[28rem] overflow-auto p-4 text-[12px] leading-6 text-slate-100 whitespace-pre-wrap break-words" x-text="runLogText()"></pre>
-                        </div>
-                      </template>
-                    </div>
-                  </div>
-                </div>
-              </template>
+              <button type="button" @click="sideTab = 'conversation'; loadSelectedConversation(true)"
+                class="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-600 hover:bg-slate-50 transition">Open Conversation</button>
             </div>
           </section>
         </template>
       </div>
+
+      <!-- Conversation -->
+      <div x-show="sideTab === 'conversation'" class="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/40">
+        <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/80">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-widest">Conversation</p>
+                <p class="text-xs text-slate-500 truncate mt-0.5" x-text="conversationAnchorLabel()"></p>
+              </div>
+              <button type="button" @click="loadSelectedConversation(true)"
+                class="px-2 py-1 rounded-md border border-slate-200 bg-white text-[11px] text-slate-500 hover:bg-slate-50">Refresh</button>
+            </div>
+          </div>
+          <div class="p-4 space-y-3">
+            <div class="flex rounded-lg border border-slate-200 bg-slate-50 p-1 text-[11px]">
+              <button type="button" @click="conversation.view = 'conversation'" class="flex-1 px-2 py-1 rounded-md transition"
+                :class="conversation.view === 'conversation' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-600'">Messages</button>
+              <button type="button" @click="conversation.view = 'tools'" class="flex-1 px-2 py-1 rounded-md transition"
+                :class="conversation.view === 'tools' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-600'">Tools</button>
+              <button type="button" @click="conversation.view = 'raw'" class="flex-1 px-2 py-1 rounded-md transition"
+                :class="conversation.view === 'raw' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-600'">Raw</button>
+            </div>
+
+            <template x-if="conversation.loading && !conversation.transcript">
+              <div class="rounded-xl border border-slate-200 bg-white px-3 py-4 text-sm text-slate-400">Loading conversation...</div>
+            </template>
+            <template x-if="conversation.error">
+              <div class="rounded-xl border border-rose-100 bg-rose-50 px-3 py-4 text-sm text-rose-600" x-text="conversation.error"></div>
+            </template>
+            <template x-if="!conversation.loading && !conversation.error && conversation.resolution?.status === 'missing'">
+              <div class="rounded-xl border border-amber-100 bg-amber-50 px-3 py-4 text-sm text-amber-700">
+                <div class="font-medium">No matching source session</div>
+                <div class="mt-1 text-xs text-amber-600" x-text="conversation.resolution.reason || 'missing provenance'"></div>
+              </div>
+            </template>
+            <template x-if="!conversation.loading && !conversation.error && !conversation.transcript && !conversation.resolution">
+              <div class="rounded-xl border border-dashed border-slate-200 bg-white px-3 py-4 text-sm text-slate-400">No conversation selected</div>
+            </template>
+
+	            <template x-if="conversation.transcript">
+	              <div class="space-y-3">
+                <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
+                  <div class="flex items-center justify-between gap-3">
+                    <span class="font-mono truncate" x-text="conversation.transcript.run_log_id"></span>
+                    <span x-text="conversation.transcript.parser"></span>
+                  </div>
+                  <template x-if="conversation.transcript.events_omitted_before">
+                    <div class="mt-1 text-amber-600" x-text="`${conversation.transcript.events_omitted_before} older events omitted`"></div>
+                  </template>
+                </div>
+                <div x-ref="conversationOutput" class="space-y-2">
+                  <template x-for="event in conversationEvents()" :key="event.id">
+                    <div class="rounded-xl border px-3 py-2.5 text-sm" :class="conversationEventClass(event)">
+                      <div class="flex items-center justify-between gap-3 mb-1">
+                        <div class="min-w-0 flex items-center gap-2">
+                          <span class="text-[10px] font-semibold uppercase tracking-widest" x-text="conversationEventLabel(event)"></span>
+                          <span class="font-mono text-[10px] opacity-60 truncate" x-show="event.tool_name" x-text="event.tool_name"></span>
+                        </div>
+                        <span class="text-[10px] font-medium shrink-0" :class="conversationStatusClass(event)" x-show="event.status" x-text="event.status"></span>
+                      </div>
+                      <div class="whitespace-pre-wrap break-words leading-relaxed" x-text="conversationEventText(event)"></div>
+                      <template x-if="event.tool_args_preview && conversation.view !== 'conversation'">
+                        <div class="mt-2 rounded-lg bg-white/70 border border-slate-200 px-2 py-1.5 font-mono text-[11px] text-slate-500 whitespace-pre-wrap break-words" x-text="event.tool_args_preview"></div>
+                      </template>
+                    </div>
+                  </template>
+	                </div>
+	              </div>
+	            </template>
+
+	            <template x-if="canAskSelectedConversation()">
+	              <div class="rounded-xl border border-slate-200 bg-white p-3 space-y-3">
+	                <div class="flex items-start justify-between gap-3">
+	                  <div class="min-w-0">
+	                    <div class="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Ask</div>
+	                    <div class="mt-1 text-xs text-slate-500">Short-term Q&A is not saved by Cairn after close. Remote workers may keep their own logs.</div>
+	                  </div>
+	                  <template x-if="question.activeThread">
+	                    <button type="button" @click="closeQuestionThread()"
+	                      class="px-2 py-1 rounded-md border border-slate-200 bg-white text-[11px] text-slate-500 hover:bg-slate-50">Close</button>
+	                  </template>
+	                </div>
+	                <template x-if="question.error">
+	                  <div class="rounded-lg border border-rose-100 bg-rose-50 px-2 py-1.5 text-xs text-rose-600" x-text="question.error"></div>
+	                </template>
+	                <template x-if="question.activeThread">
+	                  <div class="space-y-2">
+	                    <template x-if="question.activeThread.active_job">
+	                      <div class="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+	                        <span class="font-semibold">Job</span>
+	                        <span x-text="question.activeThread.active_job.status"></span>
+	                      </div>
+	                    </template>
+	                    <template x-for="message in questionMessages()" :key="message.id">
+	                      <div class="rounded-lg border px-3 py-2 text-sm whitespace-pre-wrap break-words"
+	                        :class="message.role === 'user' ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-brand-100 bg-brand-50 text-slate-700'"
+	                        x-text="questionMessageText(message)"></div>
+	                    </template>
+	                  </div>
+	                </template>
+	                <form class="space-y-2" @submit.prevent="askSelectedConversation()">
+	                  <div class="grid grid-cols-1 gap-1.5">
+	                    <button type="button" @click="question.mode = 'fork'" :disabled="!questionForkAvailable()"
+	                      class="px-3 py-2 rounded-lg border text-left text-xs font-medium disabled:opacity-50"
+	                      :class="question.mode === 'fork' ? 'border-brand-300 bg-brand-50 text-brand-700' : 'border-slate-200 bg-white text-slate-600'">
+	                      Ask in Fork
+	                    </button>
+	                    <template x-if="!questionForkAvailable() && questionForkReason()">
+	                      <div class="text-[11px] text-slate-400" x-text="questionForkReason()"></div>
+	                    </template>
+	                    <button type="button" @click="question.mode = 'fresh_context'"
+	                      class="px-3 py-2 rounded-lg border text-left text-xs font-medium"
+	                      :class="question.mode === 'fresh_context' ? 'border-brand-300 bg-brand-50 text-brand-700' : 'border-slate-200 bg-white text-slate-600'">
+	                      Ask with Fresh Context
+	                    </button>
+	                    <button type="button" @click="question.mode = 'resume'" :disabled="!questionResumeAvailable()"
+	                      class="px-3 py-2 rounded-lg border text-left text-xs font-medium disabled:opacity-50"
+	                      :class="question.mode === 'resume' ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-600'">
+	                      Resume Source Session
+	                    </button>
+	                  </div>
+	                  <textarea x-model="question.composerText" rows="3"
+	                    class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-200"
+	                    placeholder="Ask a follow-up question"></textarea>
+	                  <template x-if="question.mode === 'resume' && questionResumeAvailable()">
+	                    <label class="flex items-start gap-2 text-xs text-amber-700 rounded-lg border border-amber-100 bg-amber-50 px-2 py-1.5">
+	                      <input type="checkbox" x-model="question.confirmResume" class="mt-0.5 rounded border-amber-300 text-amber-600 focus:ring-amber-200">
+	                      <span>This continues the original remote session and will be recorded.</span>
+	                    </label>
+	                  </template>
+	                  <div class="flex justify-end">
+	                    <button type="submit" :disabled="question.loading || !question.composerText.trim()"
+	                      class="px-3 py-2 rounded-lg bg-brand-600 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed"
+	                      x-text="question.loading ? 'Asking...' : 'Ask'"></button>
+	                  </div>
+	                </form>
+	              </div>
+	            </template>
+	          </div>
+	        </section>
+	      </div>
 
       <!-- Settings -->
       <div x-show="sideTab === 'settings'" class="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/40">
@@ -839,9 +949,10 @@
                 </template>
                 <template x-for="worker in exploreWorkers()" :key="worker.name">
                   <label class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 text-sm text-slate-600">
-                    <input type="checkbox" :checked="isProjectAutoWorkerSelected(worker.name)" @change="toggleProjectAutoWorker(worker.name)" :disabled="!projectSettingsForm.auto_reason" class="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-200">
-                    <span class="truncate" x-text="workerLabel(worker)"></span>
-                  </label>
+	                    <input type="checkbox" :checked="isProjectAutoWorkerSelected(worker.name)" @change="toggleProjectAutoWorker(worker.name)" :disabled="!projectSettingsForm.auto_reason" class="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-200">
+	                    <span class="truncate" x-text="workerLabel(worker)"></span>
+	                    <span class="ml-auto px-1.5 py-0.5 rounded text-[10px]" :class="workerHealthClass(workerHealthForProject(worker))" x-text="workerHealthLabel(workerHealthForProject(worker))"></span>
+	                  </label>
                 </template>
               </div>
             </div>
@@ -997,9 +1108,10 @@
           </template>
           <template x-for="worker in exploreWorkers()" :key="worker.name">
             <label class="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-slate-700 hover:bg-slate-50">
-              <input type="checkbox" :checked="isAutoWorkerSelected(worker.name)" @change="toggleAutoWorker(worker.name)" :disabled="!newProject.auto_reason" class="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-200">
-              <span class="break-all" x-text="workerLabel(worker)"></span>
-            </label>
+	              <input type="checkbox" :checked="isAutoWorkerSelected(worker.name)" @change="toggleAutoWorker(worker.name)" :disabled="!newProject.auto_reason" class="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-200">
+	              <span class="break-all" x-text="workerLabel(worker)"></span>
+	              <span class="ml-auto px-1.5 py-0.5 rounded text-[10px]" :class="workerHealthClass(workerHealthForNewProject(worker))" x-text="workerHealthLabel(workerHealthForNewProject(worker))"></span>
+	            </label>
           </template>
         </div>
       </div>
@@ -1236,16 +1348,6 @@
                 </div>
                 <p class="mt-1 text-xs font-mono text-slate-400 break-all" x-text="env.backend === 'ssh' ? env.ssh_command : env.id"></p>
                 <p class="mt-1 text-xs text-slate-400" x-text="env.workspace_root || 'Docker managed workspace'"></p>
-                <div x-show="env.provider_endpoints && env.provider_endpoints.length" class="mt-3 flex flex-wrap gap-1.5">
-                  <template x-for="endpoint in env.provider_endpoints || []" :key="endpoint.id">
-                    <button @click="editEndpoint(env, endpoint)" class="px-2 py-1 rounded-lg border border-slate-200 bg-slate-50 text-[11px] text-slate-600 hover:bg-white">
-                      <span x-text="endpoint.type"></span>
-                      <span>·</span>
-                      <span x-text="endpoint.id"></span>
-                      <span x-show="endpoint.has_api_key" class="text-teal-600" x-text="endpoint.api_key_preview || 'key'"></span>
-                    </button>
-                  </template>
-                </div>
               </div>
               <div class="flex shrink-0 items-center gap-1.5">
                 <button @click="editEnvironment(env)" class="px-2 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-500 hover:bg-slate-50">Edit</button>
@@ -1256,13 +1358,52 @@
                 <button x-show="env.id !== 'docker-default'" @click="deleteEnvironment(env)" class="px-2 py-1 rounded-lg border border-rose-200 text-[11px] text-rose-500 hover:bg-rose-50">Delete</button>
               </div>
             </div>
+            <div x-show="env.provider_endpoints && env.provider_endpoints.length" class="mt-3 grid gap-2">
+              <template x-for="endpoint in env.provider_endpoints || []" :key="endpoint.id">
+                <button @click="editEndpoint(env, endpoint)" class="w-full min-w-0 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-left text-[11px] text-slate-600 hover:bg-white">
+                  <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span class="font-medium" x-text="endpoint.type"></span>
+                    <span class="text-slate-300">·</span>
+                    <span class="font-mono" x-text="endpoint.id"></span>
+                    <span x-show="endpoint.has_api_key" class="font-mono text-teal-600" x-text="endpoint.api_key_preview || 'key'"></span>
+                    <template x-for="health in workerHealthForEndpoint(env, endpoint)" :key="`${health.worker_name}:${health.model_profile_id || ''}`">
+                      <span class="px-1.5 py-0.5 rounded text-[10px]" :class="workerHealthClass(health)" :title="runtimeHealthTooltip(health)" x-text="runtimeHealthChipLabel(health)"></span>
+                    </template>
+                  </div>
+                </button>
+              </template>
+            </div>
+            <template x-if="runtimeHealthForEnvironment(env).length">
+              <div class="mt-3 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden">
+                <div class="px-3 py-2 border-b border-slate-200 flex items-center justify-between gap-3 text-xs">
+                  <span class="font-medium text-slate-600">Runtime health</span>
+                  <span class="text-[11px] text-slate-400" x-text="runtimeHealthSummary(env)"></span>
+                </div>
+                <template x-for="health in runtimeHealthForEnvironment(env)" :key="runtimeHealthKey(health)">
+                  <div class="px-3 py-2 border-b last:border-b-0 border-slate-200 text-xs">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <div class="min-w-0 flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span class="font-medium text-slate-600" x-text="runtimeHealthTitle(health)"></span>
+                        <span class="font-mono text-[11px] text-slate-400" x-text="runtimeHealthIdentity(health)"></span>
+                      </div>
+                      <div class="shrink-0 flex flex-wrap items-center justify-end gap-1.5">
+                        <span class="px-1.5 py-0.5 rounded text-[10px]" :class="workerHealthClass(health)" x-text="workerHealthLabel(health)"></span>
+                        <span x-show="health.source" class="text-[11px] text-slate-400" x-text="health.source"></span>
+                        <span x-show="health.checked_at" class="font-mono text-[11px] text-slate-400" x-text="formatShortTime(health.checked_at)"></span>
+                      </div>
+                    </div>
+                    <p x-show="runtimeHealthDetail(health)" class="mt-1 font-mono text-[11px] text-slate-500 whitespace-pre-wrap break-words" x-text="runtimeHealthDetail(health)"></p>
+                  </div>
+                </template>
+              </div>
+            </template>
             <template x-if="env.last_healthcheck">
               <div class="mt-3 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden">
                 <template x-for="check in env.last_healthcheck.checks || []" :key="check.name">
                   <div class="px-3 py-2 border-b last:border-b-0 border-slate-200 text-xs">
                     <div class="flex items-center justify-between gap-3">
                       <span class="font-medium text-slate-600" x-text="check.name"></span>
-                      <span :class="check.status === 'ok' ? 'text-teal-700' : check.status === 'skipped' ? 'text-slate-400' : 'text-rose-600'" x-text="check.status"></span>
+                      <span :class="healthcheckStatusClass(check.status)" x-text="check.status"></span>
                     </div>
                     <p class="mt-1 font-mono text-[11px] text-slate-400 break-all" x-text="check.command"></p>
                     <p x-show="check.stdout || check.stderr" class="mt-1 font-mono text-[11px] text-slate-500 whitespace-pre-wrap break-words" x-text="[check.stdout, check.stderr].filter(Boolean).join('\n')"></p>
@@ -1463,6 +1604,24 @@ function cairnApp() {
     yamlPreviewText: '',
     yamlPreviewHtml: '',
     runLog: { projectId: '', intentId: '', loading: false, error: '', detail: null, expanded: true },
+	    conversation: {
+	      projectId: '',
+	      anchorKey: '',
+	      loading: false,
+	      error: '',
+	      resolution: null,
+	      transcript: null,
+	      view: 'conversation',
+	      limitEvents: 200,
+	    },
+	    question: {
+	      activeThread: null,
+	      composerText: '',
+	      mode: 'fresh_context',
+	      confirmResume: false,
+	      loading: false,
+	      error: '',
+	    },
     toast: { show: false, message: '', type: 'info' },
     replay: {
       active: false,
@@ -1722,6 +1881,126 @@ function cairnApp() {
       return `${worker.name}${profile}`;
     },
 
+    workerHealthForEnvironment(worker, environmentId) {
+      if (!worker || !environmentId) return null;
+      const health = worker.runtime_health || [];
+      return health.find(item =>
+        item.environment_id === environmentId
+        && item.worker_type === worker.type
+        && (!worker.endpoint || item.endpoint_id === worker.endpoint)
+        && (!worker.model_profile || item.model_profile_id === worker.model_profile)
+      ) || null;
+    },
+
+    workerHealthForEndpoint(env, endpoint) {
+      if (!env || !endpoint) return [];
+      return this.workers.flatMap(worker => {
+        const match = this.workerHealthForEnvironment(worker, env.id);
+        if (!match || match.endpoint_id !== endpoint.id || match.worker_type !== endpoint.type) return [];
+        return [match];
+      });
+    },
+
+    runtimeHealthForEnvironment(env) {
+      if (!env) return [];
+      return this.workers
+        .flatMap(worker => (worker.runtime_health || []).filter(health => health.environment_id === env.id))
+        .sort((a, b) => this.runtimeHealthKey(a).localeCompare(this.runtimeHealthKey(b)));
+    },
+
+    runtimeHealthKey(health) {
+      return [
+        health.environment_id || '',
+        health.worker_type || '',
+        health.endpoint_id || '',
+        health.worker_name || '',
+        health.model_profile_id || '',
+      ].join(':');
+    },
+
+    runtimeHealthTitle(health) {
+      const model = health.model_profile_id ? ` · ${health.model_profile_id}` : '';
+      return `${health.worker_name || 'worker'}${model}`;
+    },
+
+    runtimeHealthIdentity(health) {
+      const parts = [health.worker_type, health.endpoint_id].filter(Boolean);
+      return parts.length ? parts.join(' / ') : '';
+    },
+
+    runtimeHealthSummary(env) {
+      const rows = this.runtimeHealthForEnvironment(env);
+      const counts = rows.reduce((acc, health) => {
+        const status = this.workerHealthLabel(health);
+        acc[status] = (acc[status] || 0) + 1;
+        return acc;
+      }, {});
+      return ['ok', 'unhealthy', 'stale', 'unknown']
+        .filter(status => counts[status])
+        .map(status => `${status} ${counts[status]}`)
+        .join(' · ');
+    },
+
+    runtimeHealthChipLabel(health) {
+      const model = health.model_profile_id || health.worker_name || 'worker';
+      return `${model}:${this.workerHealthLabel(health)}`;
+    },
+
+    runtimeHealthDetail(health) {
+      const detail = health?.detail || {};
+      const parts = [];
+      if (detail.http_status) parts.push(`http=${detail.http_status}`);
+      if (detail.returncode !== undefined && detail.returncode !== null) parts.push(`returncode=${detail.returncode}`);
+      if (detail.duration_ms !== undefined && detail.duration_ms !== null) parts.push(`${detail.duration_ms}ms`);
+      if (detail.reason) parts.push(`reason=${detail.reason}`);
+      if (detail.response_preview) parts.push(String(detail.response_preview));
+      if (detail.stderr_preview) parts.push(String(detail.stderr_preview));
+      return parts.join(' ');
+    },
+
+    runtimeHealthTooltip(health) {
+      return this.runtimeHealthDetail(health) || `${this.runtimeHealthTitle(health)} ${this.workerHealthLabel(health)}`;
+    },
+
+    workerHealthForNewProject(worker) {
+      return this.workerHealthForEnvironment(worker, this.newProject.environment_id);
+    },
+
+    workerHealthForProject(worker) {
+      return this.workerHealthForEnvironment(worker, this.project?.project?.environment_id);
+    },
+
+    workerHealthLabel(health) {
+      if (!health) return 'unknown';
+      if (health.detail?.reason === 'stale') return 'stale';
+      if (health.stale_after) {
+        const staleAt = Date.parse(health.stale_after);
+        if (!Number.isNaN(staleAt) && staleAt <= Date.now()) return 'stale';
+      }
+      return health.status || 'unknown';
+    },
+
+    workerHealthClass(health) {
+      const status = this.workerHealthLabel(health);
+      if (status === 'ok') return 'bg-teal-50 text-teal-700';
+      if (status === 'unhealthy') return 'bg-rose-50 text-rose-600';
+      if (status === 'stale') return 'bg-amber-50 text-amber-700';
+      return 'bg-slate-100 text-slate-500';
+    },
+
+    healthcheckStatusClass(status) {
+      if (status === 'ok') return 'text-teal-700';
+      if (status === 'skipped' || status === 'delegated' || status === 'unknown' || status === 'stale') return 'text-slate-400';
+      return 'text-rose-600';
+    },
+
+    formatShortTime(value) {
+      if (!value) return '';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    },
+
     isAutoWorkerSelected(workerName) {
       return this.newProject.allowed_auto_workers.includes(workerName);
     },
@@ -1800,6 +2079,7 @@ function cairnApp() {
 
     openEnvironmentPanel() {
       this.loadEnvironments();
+      this.loadWorkers();
       this.showEnvironments = true;
     },
 
@@ -1870,6 +2150,7 @@ function cairnApp() {
           : `/environments/${envId}/endpoints`;
         await this.api(method, path, body);
         await this.loadEnvironments();
+        await this.loadWorkers();
         this.resetEndpointForm();
         this.showToast('Endpoint saved');
       } catch(e) { this.showToast(e.message, 'error'); }
@@ -1880,6 +2161,7 @@ function cairnApp() {
       try {
         await this.api('DELETE', `/environments/${encodeURIComponent(env.id)}/endpoints/${encodeURIComponent(endpoint.id)}`);
         await this.loadEnvironments();
+        await this.loadWorkers();
         this.showToast('Endpoint deleted');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
@@ -1889,6 +2171,7 @@ function cairnApp() {
       try {
         await this.api('DELETE', `/environments/${encodeURIComponent(this.endpointForm.environment_id)}/endpoints/${encodeURIComponent(this.endpointForm.id)}`);
         await this.loadEnvironments();
+        await this.loadWorkers();
         this.resetEndpointForm();
         this.showToast('Endpoint deleted');
       } catch(e) { this.showToast(e.message, 'error'); }
@@ -1913,6 +2196,7 @@ function cairnApp() {
           found.last_health_status = result.status;
           found.last_healthcheck = result;
         }
+        await this.loadWorkers();
         this.showToast(`Healthcheck ${result.status}`);
       } catch(e) { this.showToast(e.message, 'error'); }
       finally { this.envHealthcheckLoading = ''; }
@@ -2174,11 +2458,263 @@ function cairnApp() {
       try {
         this.project = await this.api('GET', `/projects/${id}`);
         if (!this.projectSettingsDirty) this.resetProjectSettingsForm();
-        await this.loadSelectedIntentRunLog();
+        await this.loadSelectedConversation();
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
-    async loadSelectedIntentRunLog(force = false) {
+	    resetConversationState(extra = {}) {
+	      this.conversation = {
+	        projectId: '',
+	        anchorKey: '',
+        loading: false,
+        error: '',
+        resolution: null,
+        transcript: null,
+        view: this.conversation?.view || 'conversation',
+	        limitEvents: this.conversation?.limitEvents || 200,
+	        ...extra,
+	      };
+	      this.resetQuestionState();
+	    },
+
+	    resetQuestionState(extra = {}) {
+	      this.question = {
+	        activeThread: null,
+	        composerText: '',
+	        mode: 'fresh_context',
+	        confirmResume: false,
+	        loading: false,
+	        error: '',
+	        ...extra,
+	      };
+	    },
+
+    selectedConversationAnchor() {
+      if (!this.selectedProjectId || !this.selectedNode) return null;
+      if (this.selectedNode.type === 'intent') {
+        const intentId = this.selectedIntentId();
+        return intentId ? { type: 'intent', id: intentId, key: `intent:${intentId}` } : null;
+      }
+      if (this.selectedNode.type === 'fact') {
+        const factId = this.selectedFactId();
+        return factId ? { type: 'fact', id: factId, key: `fact:${factId}` } : null;
+      }
+      return null;
+    },
+
+    async loadSelectedConversation(force = false) {
+      const anchor = this.selectedConversationAnchor();
+      if (!anchor) {
+        this.resetConversationState();
+        return;
+	      }
+	      const projectId = this.selectedProjectId;
+	      if (!force && this.conversation.projectId === projectId && this.conversation.anchorKey === anchor.key && (this.conversation.loading || this.conversation.transcript || this.conversation.resolution)) return;
+	      if (this.conversation.projectId !== projectId || this.conversation.anchorKey !== anchor.key) this.resetQuestionState();
+	      this.conversation = { ...this.conversation, projectId, anchorKey: anchor.key, loading: true, error: '', resolution: null };
+      try {
+        let transcript = null;
+        let resolution = null;
+        resolution = await this.api('GET', `/projects/${projectId}/anchors/resolve?anchor_type=${encodeURIComponent(anchor.type)}&anchor_id=${encodeURIComponent(anchor.id)}`);
+        if (resolution.status === 'exact' && resolution.source_run_log_id) {
+          transcript = await this.api('GET', `/projects/${projectId}/runs/${encodeURIComponent(resolution.source_run_log_id)}/transcript?limit_events=${this.conversation.limitEvents}`);
+        }
+        if (this.selectedProjectId !== projectId || this.selectedConversationAnchor()?.key !== anchor.key) return;
+        this.conversation = { ...this.conversation, projectId, anchorKey: anchor.key, loading: false, error: '', resolution, transcript };
+        this.scrollConversationToBottom();
+      } catch (e) {
+        if (this.selectedProjectId !== projectId || this.selectedConversationAnchor()?.key !== anchor.key) return;
+        const message = String(e.message || '');
+        const notFound = message.includes('Run log not found') || message.includes('HTTP 404');
+        this.conversation = {
+          ...this.conversation,
+          projectId,
+          anchorKey: anchor.key,
+          loading: false,
+          error: notFound ? '' : message,
+          resolution: notFound ? { status: 'missing', reason: 'run_log_not_found' } : null,
+          transcript: null,
+        };
+      }
+    },
+
+    conversationAnchorLabel() {
+      const anchor = this.selectedConversationAnchor();
+      if (!anchor) return 'No selection';
+      if (anchor.type === 'intent') return `intent ${anchor.id}`;
+      return `fact ${anchor.id}`;
+    },
+
+    conversationEvents() {
+      const events = this.conversation.transcript?.events || [];
+      if (this.conversation.view === 'conversation') {
+        return events.filter(event => ['run_started', 'run_finished', 'message', 'tool_call', 'tool_result', 'thinking'].includes(event.kind));
+      }
+      if (this.conversation.view === 'tools') {
+        return events.filter(event => ['tool_call', 'tool_result'].includes(event.kind));
+      }
+      if (this.conversation.view === 'raw') {
+        return events.filter(event => ['raw', 'error', 'run_started', 'run_finished'].includes(event.kind));
+      }
+      return events;
+    },
+
+    conversationEventLabel(event) {
+      if (!event) return '';
+      if (event.kind === 'message') return event.role || 'message';
+      if (event.kind === 'tool_call') return 'tool call';
+      if (event.kind === 'tool_result') return 'tool result';
+      if (event.kind === 'run_started') return 'run started';
+      if (event.kind === 'run_finished') return 'run finished';
+      return event.kind;
+    },
+
+    conversationEventText(event) {
+      if (!event) return '';
+      if (event.text) return event.text;
+      if (event.title) return event.title;
+      if (event.raw) {
+        try { return typeof event.raw === 'string' ? event.raw : JSON.stringify(event.raw, null, 2); }
+        catch { return String(event.raw); }
+      }
+      return '';
+    },
+
+    conversationEventClass(event) {
+      if (event.kind === 'message' && event.role === 'assistant') return 'border-brand-100 bg-brand-50 text-slate-700';
+      if (event.kind === 'message' && event.role === 'user') return 'border-slate-200 bg-white text-slate-700';
+      if (event.kind === 'tool_call') return 'border-amber-100 bg-amber-50 text-amber-900';
+      if (event.kind === 'tool_result') return event.status === 'error' ? 'border-rose-100 bg-rose-50 text-rose-700' : 'border-emerald-100 bg-emerald-50 text-emerald-900';
+      if (event.kind === 'error') return 'border-rose-100 bg-rose-50 text-rose-700';
+      return 'border-slate-200 bg-white text-slate-600';
+    },
+
+    conversationStatusClass(event) {
+      if (event.status === 'success') return 'text-emerald-600';
+      if (event.status === 'running') return 'text-amber-600';
+      if (event.status === 'error' || event.status === 'cancelled') return 'text-rose-600';
+      return 'text-slate-400';
+    },
+
+	    scrollConversationToBottom() {
+	      requestAnimationFrame(() => {
+	        requestAnimationFrame(() => {
+	          const el = this.$refs.conversationOutput;
+	          if (!el) return;
+	          el.scrollIntoView({ block: 'end' });
+	        });
+	      });
+	    },
+
+	    canAskSelectedConversation() {
+	      const anchor = this.selectedConversationAnchor();
+	      if (!anchor) return false;
+	      if (anchor.type === 'fact') return true;
+	      const intent = this.selectedIntentRecord();
+	      return !!intent?.to;
+	    },
+
+	    questionSourceSessionAvailable() {
+	      const provenance = this.conversation.resolution?.provenance || this.conversation.transcript?.provenance;
+	      return provenance?.remote_session?.status === 'available' && !!provenance?.remote_session?.id;
+	    },
+
+	    selectedQuestionCapability() {
+	      const provenance = this.conversation.resolution?.provenance || this.conversation.transcript?.provenance;
+	      const workerName = provenance?.worker_name;
+	      if (!workerName) return null;
+	      return this.workers.find(worker => worker.name === workerName)?.question_capability || null;
+	    },
+
+	    questionForkAvailable() {
+	      const availableModes = this.conversation.resolution?.available_modes || [];
+	      return availableModes.includes('fork');
+	    },
+
+	    questionResumeAvailable() {
+	      const availableModes = this.conversation.resolution?.available_modes || [];
+	      return availableModes.includes('resume');
+	    },
+
+	    questionForkReason() {
+	      const capability = this.selectedQuestionCapability();
+	      return this.conversation.resolution?.unavailable_reasons?.fork || capability?.unavailable_reasons?.fork || (!capability ? 'capability_stale' : '');
+	    },
+
+	    questionMessages() {
+	      return this.question.activeThread?.messages || [];
+	    },
+
+	    questionMessageText(message) {
+	      if (!message) return '';
+	      if (message.text) return message.text;
+	      const parts = [];
+	      for (const event of message.events || []) {
+	        const text = this.conversationEventText(event);
+	        if (text) parts.push(text);
+	      }
+	      return parts.join('\n\n');
+	    },
+
+	    async askSelectedConversation() {
+	      const anchor = this.selectedConversationAnchor();
+	      const text = this.question.composerText.trim();
+	      if (!anchor || !text || this.question.loading) return;
+	      const mode = this.question.mode === 'fork' && this.questionForkAvailable()
+	        ? 'fork'
+	        : (this.question.mode === 'resume' && this.questionResumeAvailable() ? 'resume' : 'fresh_context');
+	      if (mode === 'resume' && !this.question.confirmResume) {
+	        this.question.error = 'Confirm resume before continuing the source session.';
+	        return;
+	      }
+	      this.question = { ...this.question, loading: true, error: '' };
+	      try {
+	        const thread = await this.api('POST', `/projects/${this.selectedProjectId}/questions`, {
+	          anchor_type: anchor.type,
+	          anchor_id: anchor.id,
+	          mode,
+	          message: text,
+	          allow_resume_without_fork: mode === 'resume',
+	          confirm_resume: mode === 'resume',
+	        });
+	        this.question = { ...this.question, activeThread: thread, composerText: '', loading: false, error: '' };
+	        this.pollQuestionThread(thread.id);
+	        this.scrollConversationToBottom();
+	      } catch (e) {
+	        this.question = { ...this.question, loading: false, error: e.message };
+	      }
+	    },
+
+	    async pollQuestionThread(threadId) {
+	      if (!threadId || !this.selectedProjectId) return;
+	      for (let i = 0; i < 120; i++) {
+	        const active = this.question.activeThread;
+	        if (!active || active.id !== threadId || !active.active_job) return;
+	        await new Promise(resolve => setTimeout(resolve, 1500));
+	        try {
+	          const thread = await this.api('GET', `/projects/${this.selectedProjectId}/questions/${threadId}`);
+	          this.question = { ...this.question, activeThread: thread };
+	          if (!thread.active_job) return;
+	        } catch (e) {
+	          this.question = { ...this.question, error: e.message };
+	          return;
+	        }
+	      }
+	    },
+
+	    async closeQuestionThread() {
+	      const thread = this.question.activeThread;
+	      if (!thread || this.question.loading) return;
+	      this.question = { ...this.question, loading: true, error: '' };
+	      try {
+	        await this.api('POST', `/projects/${this.selectedProjectId}/questions/${thread.id}/close`, {});
+	        this.resetQuestionState();
+	      } catch (e) {
+	        this.question = { ...this.question, loading: false, error: e.message };
+	      }
+	    },
+
+	    async loadSelectedIntentRunLog(force = false) {
       if (!this.selectedProjectId || !this.selectedIntentId()) {
         this.runLog = { projectId: '', intentId: '', loading: false, error: '', detail: null, expanded: true };
         return;
@@ -3284,6 +3820,7 @@ function cairnApp() {
       this.selectedNode = null;
       this.selectedFacts = [];
       this.runLog = { projectId: '', intentId: '', loading: false, error: '', detail: null, expanded: true };
+      this.resetConversationState();
       if (!preserveTimeline) this.selectedTimelineEntryId = null;
       if (this.cy) this.cy.elements().removeClass('highlight focus faded selected-fact');
     },
@@ -3309,6 +3846,7 @@ function cairnApp() {
         this.selectedNode = { type:'fact', id: fid };
       }
       this.refreshGraphDecorations();
+      this.loadSelectedConversation(true);
     },
 
     removeFactSelection(fid) {
@@ -3324,6 +3862,7 @@ function cairnApp() {
         this.selectedNode = { type:'fact', id: this.selectedFacts[this.selectedFacts.length - 1] };
       }
       this.refreshGraphDecorations();
+      this.loadSelectedConversation(true);
     },
 
     onNodeTap(e) {
@@ -3364,7 +3903,7 @@ function cairnApp() {
       this.selectedTimelineEntryId = null;
       this.selectedNode = { type:'intent', id: intentId };
       this.applyLineageHighlightForIntent(intentId);
-      this.loadSelectedIntentRunLog(true);
+      this.loadSelectedConversation(true);
     },
 
     selectFact(fact) {
@@ -3378,6 +3917,7 @@ function cairnApp() {
         return;
       }
       this.applyLineageHighlightForFact(factId);
+      this.loadSelectedConversation(true);
     },
 
     refreshGraphDecorations() {

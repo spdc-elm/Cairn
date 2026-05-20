@@ -4,7 +4,6 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
-from unittest.mock import patch
 
 from fastapi import HTTPException
 
@@ -173,24 +172,11 @@ class EnvironmentEndpointTests(unittest.TestCase):
                 api_key="sk-claude",
             ),
         )
-        seen: list[list[str]] = []
+        result = healthcheck_environment("pentestvm")
 
-        class FakeSshEnvironment:
-            def __init__(self, _config):
-                pass
-
-            def run_healthcheck(self, worker_types=None):
-                seen.append(list(worker_types or []))
-                return {"environment_id": "pentestvm", "backend": "ssh", "status": "ok", "checks": []}
-
-            def close(self):
-                pass
-
-        with patch("cairn.server.routers.environments.SshEnvironment", FakeSshEnvironment):
-            result = healthcheck_environment("pentestvm")
-
-        self.assertEqual(seen, [["claudecode", "codex"]])
-        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["status"], "delegated")
+        self.assertEqual(result["checks"][0]["status"], "delegated")
+        self.assertIn("dispatcher execution plane", result["checks"][0]["stderr"])
 
     def test_existing_legacy_harness_column_is_tolerated(self) -> None:
         legacy_tmp = tempfile.TemporaryDirectory()

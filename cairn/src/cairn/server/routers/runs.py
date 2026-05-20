@@ -9,7 +9,17 @@ from pydantic import BaseModel
 
 from cairn.dispatcher.runtime.run_logs import run_log_root
 from cairn.server.db import get_conn
-from cairn.server.services import get_project_or_404
+from cairn.server.models import AnchorResolution, RemoteSessionProvenance, RunProvenance, RunProvenancePatch, RunProvenanceUpsert
+from cairn.server.services import (
+    create_run_provenance,
+    finish_run_provenance,
+    get_project_or_404,
+    get_run_provenance_or_none,
+    resolve_anchor,
+    update_run_remote_session,
+)
+from cairn.server.transcripts import build_transcript_from_path
+from cairn.server.transcripts.models import TranscriptResponse
 
 router = APIRouter(tags=["runs"])
 
@@ -61,6 +71,87 @@ def list_project_runs(project_id: str, intent_id: str | None = None, limit: int 
     return summaries[:limit]
 
 
+@router.post("/projects/{project_id}/runs/provenance", response_model=RunProvenance, status_code=201)
+def upsert_run_provenance(project_id: str, body: RunProvenanceUpsert):
+    with get_conn() as conn:
+        return create_run_provenance(conn, project_id=project_id, **body.model_dump())
+
+
+@router.get("/projects/{project_id}/runs/{run_id}/provenance", response_model=RunProvenance)
+def get_run_provenance(project_id: str, run_id: str):
+    _ensure_project(project_id)
+    with get_conn() as conn:
+        provenance = get_run_provenance_or_none(conn, project_id, run_id)
+    if provenance is None:
+        raise HTTPException(404, "Run provenance not found")
+    return provenance
+
+
+@router.patch("/projects/{project_id}/runs/{run_id}/provenance", response_model=RunProvenance)
+def patch_run_provenance(project_id: str, run_id: str, body: RunProvenancePatch):
+    _ensure_project(project_id)
+    with get_conn() as conn:
+        provenance = get_run_provenance_or_none(conn, project_id, run_id)
+        if provenance is None:
+            raise HTTPException(404, "Run provenance not found")
+        if body.finished_at is not None or body.returncode is not None or body.timed_out is not None or body.cancelled is not None or body.cancel_reason is not None:
+            provenance = finish_run_provenance(
+                conn,
+                project_id,
+                run_id,
+                returncode=body.returncode if body.returncode is not None else provenance.returncode or 0,
+                timed_out=body.timed_out if body.timed_out is not None else bool(provenance.timed_out),
+                cancelled=body.cancelled if body.cancelled is not None else bool(provenance.cancelled),
+                cancel_reason=body.cancel_reason,
+                finished_at=body.finished_at,
+            )
+        if body.remote_session is not None:
+            provenance = update_run_remote_session(
+                conn,
+                project_id,
+                run_id,
+                remote_session_id=body.remote_session.id,
+                remote_session_kind=body.remote_session.kind,
+                remote_session_status=body.remote_session.status,
+                remote_session_capture_method=body.remote_session.capture_method,
+            )
+        assert provenance is not None
+        return provenance
+
+
+@router.post("/projects/{project_id}/runs/{run_id}/provenance/session", response_model=RunProvenance)
+def update_run_provenance_session(project_id: str, run_id: str, body: RemoteSessionProvenance):
+    with get_conn() as conn:
+        get_project_or_404(conn, project_id)
+        provenance = update_run_remote_session(
+            conn,
+            project_id,
+            run_id,
+            remote_session_id=body.id,
+            remote_session_kind=body.kind,
+            remote_session_status=body.status,
+            remote_session_capture_method=body.capture_method,
+        )
+    if provenance is None:
+        raise HTTPException(404, "Run provenance not found")
+    return provenance
+
+
+@router.get("/projects/{project_id}/anchors/resolve", response_model=AnchorResolution)
+def resolve_project_anchor(project_id: str, anchor_type: str, anchor_id: str, run_log_id: str | None = None):
+    with get_conn() as conn:
+        return resolve_anchor(conn, project_id, anchor_type, anchor_id, selected_run_log_id=run_log_id)
+
+
+@router.get("/projects/{project_id}/runs/latest/transcript", response_model=TranscriptResponse)
+def get_latest_project_run_transcript(project_id: str, intent_id: str | None = None, limit_events: int = 200):
+    _ensure_project(project_id)
+    summaries = list_project_runs(project_id, intent_id=intent_id, limit=1)
+    if not summaries:
+        raise HTTPException(404, "Run log not found")
+    return _read_transcript(project_id, summaries[0].run_id, limit_events=limit_events)
+
+
 @router.get("/projects/{project_id}/runs/latest", response_model=RunLogDetail)
 def get_latest_project_run(project_id: str, intent_id: str | None = None):
     _ensure_project(project_id)
@@ -68,6 +159,12 @@ def get_latest_project_run(project_id: str, intent_id: str | None = None):
     if not summaries:
         raise HTTPException(404, "Run log not found")
     return _read_detail(_run_path(project_id, summaries[0].run_id))
+
+
+@router.get("/projects/{project_id}/runs/{run_id}/transcript", response_model=TranscriptResponse)
+def get_project_run_transcript(project_id: str, run_id: str, limit_events: int = 200):
+    _ensure_project(project_id)
+    return _read_transcript(project_id, run_id, limit_events=limit_events)
 
 
 @router.get("/projects/{project_id}/runs/{run_id}", response_model=RunLogDetail)
@@ -79,6 +176,22 @@ def get_project_run(project_id: str, run_id: str):
     if not path.is_file():
         raise HTTPException(404, "Run log not found")
     return _read_detail(path)
+
+
+def _read_transcript(project_id: str, run_id: str, *, limit_events: int) -> TranscriptResponse:
+    if "/" in run_id or "\\" in run_id or not run_id.startswith("run_"):
+        raise HTTPException(400, "Invalid run id")
+    path = _run_path(project_id, run_id)
+    if not path.is_file():
+        raise HTTPException(404, "Run log not found")
+    with get_conn() as conn:
+        provenance = get_run_provenance_or_none(conn, project_id, run_id)
+    return build_transcript_from_path(
+        path,
+        worker_type=provenance.worker_type if provenance else None,
+        provenance=provenance,
+        limit_events=limit_events,
+    )
 
 
 def _ensure_project(project_id: str) -> None:

@@ -5,14 +5,14 @@ import sqlite3
 
 from fastapi import APIRouter, HTTPException
 
-from cairn.dispatcher.config import CleanupPolicy, SshEnvironmentConfig, TerminalConfig
-from cairn.dispatcher.runtime.environments.ssh import SshEnvironment
 from cairn.server.db import get_conn
 from cairn.server.models import ProviderEndpointPublic, ProviderEndpointSecret, ProviderEndpointUpsert, WorkEnvironmentPublic, WorkEnvironmentUpsert
 from cairn.server.services import (
+    effective_worker_runtime_health,
     environment_row_to_public,
     get_environment_provider_endpoint_or_404,
     get_environment_or_404,
+    list_worker_runtime_health,
     slugify_environment_id,
     upsert_environment_provider_endpoint,
     utcnow,
@@ -186,12 +186,23 @@ def healthcheck_environment(environment_id: str):
                 ],
             }
         else:
-            ssh_environment = SshEnvironment(_ssh_config_from_public(environment))
-            try:
-                result = ssh_environment.run_healthcheck(_worker_types_from_endpoints(environment))
-            finally:
-                ssh_environment.close()
+            result = {
+                "environment_id": environment.id,
+                "backend": environment.backend,
+                "status": "delegated",
+                "checks": [
+                    {
+                        "name": "ssh",
+                        "status": "delegated",
+                        "duration_ms": 0,
+                        "command": "-",
+                        "stdout": "",
+                        "stderr": "SSH healthchecks run in the dispatcher execution plane.",
+                    }
+                ],
+            }
         _append_endpoint_healthchecks(result, environment)
+        _append_runtime_healthchecks(conn, result, environment.id)
         conn.execute(
             "UPDATE work_environments SET last_health_status = ?, last_healthcheck_json = ?, updated_at = ? WHERE id = ?",
             (result.get("status"), json.dumps(result, ensure_ascii=True), utcnow(), environment_id),
@@ -206,18 +217,6 @@ def _choose_environment_id(conn: sqlite3.Connection, base: str) -> str:
         candidate = f"{base}-{index}"
         index += 1
     return candidate
-
-
-def _ssh_config_from_public(environment: WorkEnvironmentPublic) -> SshEnvironmentConfig:
-    return SshEnvironmentConfig(
-        id=environment.id,
-        label=environment.label,
-        backend="ssh",
-        ssh_command=environment.ssh_command,
-        workspace_root=environment.workspace_root or "/home/kali/cairn-workspaces",
-        cleanup=CleanupPolicy.model_validate(environment.cleanup or {"completed_action": "stop"}),
-        terminal=TerminalConfig.model_validate(environment.terminal or {"mode": "none"}),
-    )
 
 
 def _append_endpoint_healthchecks(result: dict, environment: WorkEnvironmentPublic) -> None:
@@ -247,5 +246,64 @@ def _append_endpoint_healthchecks(result: dict, environment: WorkEnvironmentPubl
         result["status"] = "failed"
 
 
-def _worker_types_from_endpoints(environment: WorkEnvironmentPublic) -> list:
-    return sorted({endpoint.type for endpoint in environment.provider_endpoints})
+def _append_runtime_healthchecks(conn: sqlite3.Connection, result: dict, environment_id: str) -> None:
+    checks = result.setdefault("checks", [])
+    statuses: list[str] = []
+    for health in list_worker_runtime_health(conn):
+        if health.environment_id != environment_id:
+            continue
+        effective = effective_worker_runtime_health(conn, health)
+        status = _runtime_health_display_status(effective)
+        detail = effective.detail or {}
+        statuses.append(status)
+        checks.append(
+            {
+                "name": f"worker:{effective.worker_name}",
+                "status": status,
+                "duration_ms": detail.get("duration_ms") or 0,
+                "command": _health_command(detail),
+                "stdout": _health_stdout(detail),
+                "stderr": _health_stderr(detail),
+            }
+        )
+    if any(status == "unhealthy" for status in statuses):
+        result["status"] = "unhealthy"
+    elif statuses and all(status == "ok" for status in statuses) and result.get("status") in {"delegated", "skipped"}:
+        result["status"] = "ok"
+    elif statuses and result.get("status") in {"delegated", "skipped"}:
+        result["status"] = "unknown"
+
+
+def _runtime_health_display_status(health) -> str:
+    if (health.detail or {}).get("reason") == "stale":
+        return "stale"
+    return health.status
+
+
+def _health_stdout(detail: dict) -> str:
+    parts = []
+    if detail.get("http_status"):
+        parts.append(f"http={detail['http_status']}")
+    if detail.get("returncode") is not None:
+        parts.append(f"returncode={detail['returncode']}")
+    if detail.get("duration_ms") is not None:
+        parts.append(f"duration_ms={detail['duration_ms']}")
+    if detail.get("response_preview"):
+        parts.append(str(detail["response_preview"]))
+    return " ".join(parts)
+
+
+def _health_command(detail: dict) -> str:
+    command = str(detail.get("command") or "")
+    if not command:
+        return "-"
+    compact = " ".join(command.split())
+    return compact if len(compact) <= 180 else f"{compact[:177]}..."
+
+
+def _health_stderr(detail: dict) -> str:
+    if detail.get("stderr_preview"):
+        return str(detail["stderr_preview"])
+    if detail.get("reason"):
+        return str(detail["reason"])
+    return ""
