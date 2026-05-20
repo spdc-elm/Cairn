@@ -5,6 +5,7 @@ import time
 
 from cairn.dispatcher.config import DispatchConfig, WorkerConfig
 from cairn.dispatcher.contracts import parse_json_output, validate_reason_payload
+from cairn.dispatcher.models import TaskOutcome
 from cairn.dispatcher.prompting import (
     format_fact_ids,
     format_open_intents,
@@ -19,9 +20,12 @@ from cairn.dispatcher.tasks.common import (
     best_effort_release_reason,
     cancel_reason,
     did_timeout,
+    HttpRunProvenanceRecorder,
     preview,
+    record_remote_session,
     run_healthcheck,
     run_worker_process,
+    worker_health_from_healthcheck,
     write_graph_snapshot_reference,
 )
 from cairn.dispatcher.workers.registry import get_driver
@@ -89,7 +93,16 @@ def run_reason_task(
                 healthcheck.duration_ms,
                 preview(healthcheck.result.stderr),
             )
-            return "unhealthy"
+            return TaskOutcome(
+                "unhealthy",
+                worker_health=worker_health_from_healthcheck(
+                    environment,
+                    worker,
+                    healthcheck,
+                    status="unhealthy",
+                    source="runtime_healthcheck",
+                ),
+            )
         open_intents = [
             {
                 "id": intent.id,
@@ -140,10 +153,11 @@ def run_reason_task(
             intent_id=None,
             lease=lease,
             cancellation=cancellation,
+            provenance_recorder=HttpRunProvenanceRecorder(client),
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
         total_ms = int((time.perf_counter() - task_started) * 1000)
-        session = driver.extract_session(session, result.stdout, result.stderr)
+        session = record_remote_session(client, project.project.id, result, driver, session)
         cancelled = cancel_reason(result, cancellation)
         if cancelled is not None:
             LOG.info(

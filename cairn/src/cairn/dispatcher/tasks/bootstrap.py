@@ -9,6 +9,7 @@ from cairn.dispatcher.contracts import (
     validate_bootstrap_conclude_payload,
     validate_bootstrap_execute_payload,
 )
+from cairn.dispatcher.models import TaskOutcome
 from cairn.dispatcher.prompting import format_hints, load_prompt, render_prompt
 from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.runtime.cancellation import TaskCancellation
@@ -19,13 +20,17 @@ from cairn.dispatcher.tasks.common import (
     best_effort_release_after_conclude_failure,
     cancel_reason,
     did_timeout,
+    HttpRunProvenanceRecorder,
     project_allows_conclude_fallback,
     preview,
+    record_remote_session,
     run_healthcheck,
     run_worker_process,
+    worker_health_from_healthcheck,
     write_conclude_result,
     write_conclude_result_with_fact_id,
 )
+from cairn.dispatcher.tasks.reports import metadata_for_worker_fact
 from cairn.dispatcher.workers.registry import get_driver
 from cairn.server.models import Intent, ProjectDetail
 
@@ -107,7 +112,16 @@ def run_bootstrap_task(
                 preview(healthcheck.result.stderr),
             )
             best_effort_release(client, project.project.id, intent.id, worker.name)
-            return "unhealthy"
+            return TaskOutcome(
+                "unhealthy",
+                worker_health=worker_health_from_healthcheck(
+                    environment,
+                    worker,
+                    healthcheck,
+                    status="unhealthy",
+                    source="runtime_healthcheck",
+                ),
+            )
 
         prompt = render_prompt(
             load_prompt(config.runtime.prompt_group, "bootstrap.md"),
@@ -130,9 +144,10 @@ def run_bootstrap_task(
             intent_id=intent.id,
             lease=lease,
             cancellation=cancellation,
+            provenance_recorder=HttpRunProvenanceRecorder(client),
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
-        session = driver.extract_session(session, first.stdout, first.stderr)
+        session = record_remote_session(client, project.project.id, first, driver, session)
         cancelled = cancel_reason(first, cancellation)
         if cancelled is not None:
             if cancelled == "conclude_requested":
@@ -230,6 +245,7 @@ def run_bootstrap_task(
                 source="bootstrap",
                 phase_ms=execute_ms,
                 total_ms=int((time.perf_counter() - task_started) * 1000),
+                producing_run_log_id=first.run_log_id,
             )
         if did_timeout(first):
             LOG.warning(
@@ -350,8 +366,10 @@ def _try_conclude_fallback(
         intent_id=intent.id,
         lease=lease,
         cancellation=None if cancellation.reason == "conclude_requested" else cancellation,
+        provenance_recorder=HttpRunProvenanceRecorder(client),
     )
     conclude_ms = int((time.perf_counter() - conclude_started) * 1000)
+    session = record_remote_session(client, project.project.id, result, driver, session)
     conclude_cancellation = None if cancellation.reason == "conclude_requested" else cancellation
     cancelled = cancel_reason(result, conclude_cancellation)
     if cancelled is not None:
@@ -428,6 +446,7 @@ def _try_conclude_fallback(
         title=fact_data["title"],
         source="bootstrap_conclude",
         phase_ms=conclude_ms,
+        metadata=metadata_for_worker_fact(worker.name, intent.id, producing_run_log_id=result.run_log_id),
     )
 
 
@@ -461,6 +480,7 @@ def _write_bootstrap_complete_result(
     source: str,
     phase_ms: int,
     total_ms: int | None = None,
+    producing_run_log_id: str | None = None,
 ) -> str:
     conclude = write_conclude_result_with_fact_id(
         client,
@@ -472,6 +492,7 @@ def _write_bootstrap_complete_result(
         source=source,
         phase_ms=phase_ms,
         total_ms=total_ms,
+        metadata=metadata_for_worker_fact(worker_name, intent_id, producing_run_log_id=producing_run_log_id),
     )
     if conclude.status != "success":
         return "failed"

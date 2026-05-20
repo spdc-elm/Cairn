@@ -7,9 +7,23 @@ import tarfile
 import threading
 import uuid
 
-import docker
-from docker.errors import APIError, DockerException, NotFound
-from docker.models.containers import Container
+try:
+    import docker
+    from docker.errors import APIError, DockerException, NotFound
+    from docker.models.containers import Container
+except ModuleNotFoundError:
+    docker = None
+
+    class DockerException(Exception):
+        pass
+
+    class APIError(DockerException):
+        pass
+
+    class NotFound(DockerException):
+        pass
+
+    Container = object
 
 from cairn.dispatcher.config import ContainerConfig
 from cairn.dispatcher.runtime.process import ManagedProcess
@@ -23,6 +37,8 @@ class ContainerManager:
 
     def __init__(self, config: ContainerConfig):
         self._config = config
+        if docker is None:
+            raise RuntimeError("python docker package is required for Docker environments")
         self._client = docker.from_env()
         self._ensure_running_locks: dict[str, threading.Lock] = {}
         self._ensure_running_locks_guard = threading.Lock()

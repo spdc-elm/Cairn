@@ -10,7 +10,7 @@ from cairn.dispatcher.workers.adapters._curl import (
     expand_env,
     render_curl_command,
 )
-from cairn.dispatcher.workers.base import DriverResult, RegexSessionDriver
+from cairn.dispatcher.workers.base import DriverResult, QuestionCapability, RegexSessionDriver
 
 
 class CodexDriver(RegexSessionDriver):
@@ -102,6 +102,26 @@ class CodexDriver(RegexSessionDriver):
             "--",
             prompt,
         ]
+
+    def question_capability(self, worker: WorkerConfig) -> QuestionCapability:
+        return QuestionCapability(
+            can_resume_session=True,
+            can_fork_session=False,
+            can_use_tools=True,
+            can_stream_events=True,
+            resume_mutates_source=True,
+            fork_creates_remote_log=False,
+            question_modes=("resume", "fresh_context"),
+            unavailable_reasons={"fork": "codex_cli_no_headless_fork"},
+        )
+
+    def remote_session_kind(self) -> str:
+        return "codex_thread"
+
+    def session_capture_method(self, prepared_session: str | None, resolved_session: str | None) -> str:
+        if resolved_session:
+            return "stdout_event"
+        return "unavailable"
 
     def extract_session(self, session: str | None, stdout: str, stderr: str) -> str | None:
         if session:

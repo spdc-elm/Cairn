@@ -57,10 +57,43 @@ def write_failure_report(
     environment.write_text_file(handle, report_path, body)
 
 
-def metadata_for_report(report_path: str, run_id: str | None, worker: str, intent_id: str) -> dict:
+def metadata_for_report(
+    report_path: str,
+    report_run_id: str | None,
+    worker: str,
+    intent_id: str,
+    *,
+    producing_run_log_id: str | None = None,
+) -> dict:
     return {
         "report_path": report_path,
-        "run_id": run_id,
+        "report_run_id": report_run_id,
         "worker": worker,
         "intent_id": intent_id,
+        "provenance": {
+            "producing_intent_id": intent_id,
+            "producing_run_log_id": producing_run_log_id,
+            "report_run_id": report_run_id,
+            "report_path": report_path,
+            "worker_name": worker,
+        },
+    }
+
+
+def metadata_for_worker_fact(
+    worker: str,
+    intent_id: str,
+    *,
+    producing_run_log_id: str | None = None,
+) -> dict:
+    return {
+        "worker": worker,
+        "intent_id": intent_id,
+        "provenance": {
+            "producing_intent_id": intent_id,
+            "producing_run_log_id": producing_run_log_id,
+            "report_run_id": None,
+            "report_path": None,
+            "worker_name": worker,
+        },
     }

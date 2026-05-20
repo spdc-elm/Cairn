@@ -7,8 +7,17 @@ import threading
 import time
 from typing import Any
 
-from docker.errors import APIError, DockerException
-from docker.models.containers import Container
+try:
+    from docker.errors import APIError, DockerException
+    from docker.models.containers import Container
+except ModuleNotFoundError:
+    class DockerException(Exception):
+        pass
+
+    class APIError(DockerException):
+        pass
+
+    Container = Any
 
 LOG = logging.getLogger(__name__)
 EXEC_KILL_JOIN_TIMEOUT_SECONDS = 5.0

@@ -21,6 +21,7 @@ class StartupHealthcheckResult:
     environment_id: str
     backend: str
     worker_name: str
+    worker_type: str
     model_profile_id: str | None
     endpoint_id: str | None
     ok: bool
@@ -72,6 +73,7 @@ def run_startup_healthchecks(
                         environment_id=environment.id,
                         backend=environment.backend,
                         worker_name=worker.name,
+                        worker_type=worker.type,
                         model_profile_id=worker.model_profile,
                         endpoint_id=worker.endpoint,
                         ok=False,
@@ -102,6 +104,7 @@ def run_startup_healthchecks(
                     environment_id=environment.id,
                     backend=environment.backend,
                     worker_name=worker.name,
+                    worker_type=worker.type,
                     model_profile_id=worker.model_profile,
                     endpoint_id=worker.endpoint,
                     ok=False,
@@ -153,6 +156,7 @@ def _run_worker_healthcheck(
             environment_id=environment.id,
             backend=environment.backend,
             worker_name=worker.name,
+            worker_type=worker.type,
             model_profile_id=worker.model_profile,
             endpoint_id=worker.endpoint,
             ok=result.returncode == 0,

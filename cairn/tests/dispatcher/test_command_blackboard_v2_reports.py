@@ -59,8 +59,20 @@ class CommandBlackboardV2ReportTests(unittest.TestCase):
 
         self.assertIn("timeout", env.files[path])
         self.assertEqual(
-            metadata_for_report(path, "run_abc", "alpha", "i001"),
-            {"report_path": path, "run_id": "run_abc", "worker": "alpha", "intent_id": "i001"},
+            metadata_for_report(path, "run_abc", "alpha", "i001", producing_run_log_id="run_log_123"),
+            {
+                "report_path": path,
+                "report_run_id": "run_abc",
+                "worker": "alpha",
+                "intent_id": "i001",
+                "provenance": {
+                    "producing_intent_id": "i001",
+                    "producing_run_log_id": "run_log_123",
+                    "report_run_id": "run_abc",
+                    "report_path": path,
+                    "worker_name": "alpha",
+                },
+            },
         )
 
     def test_reason_prompt_teaches_report_metadata(self) -> None:

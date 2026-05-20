@@ -4,13 +4,14 @@ import json
 import logging
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
 
 from cairn.dispatcher.config import CleanupPolicy, DispatchConfig, SshEnvironmentConfig, TerminalConfig, WorkerConfig
-from cairn.dispatcher.models import ReasonCheckpoint, RunningTask
+from cairn.dispatcher.models import ReasonCheckpoint, RunningTask, TaskOutcome
 from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.runtime.cancellation import TaskCancellation
 from cairn.dispatcher.runtime.environments import WorkEnvironment, build_environment
@@ -18,7 +19,9 @@ from cairn.dispatcher.runtime.startup_healthcheck import format_failure_summary,
 from cairn.dispatcher.scheduler.worker_select import choose_worker
 from cairn.dispatcher.tasks.bootstrap import run_bootstrap_task
 from cairn.dispatcher.tasks.explore import run_explore_task
+from cairn.dispatcher.tasks.questions import run_question_task
 from cairn.dispatcher.tasks.reason import run_reason_task
+from cairn.dispatcher.workers.registry import get_driver
 from cairn.server.models import Intent, ProjectDetail, ProjectSummary
 from cairn.server.models import WorkEnvironmentPublic
 
@@ -57,7 +60,7 @@ class DispatcherLoop:
         self.cleanup_futures: dict[Future[bool], tuple[str, str | None, str | None]] = {}
         self.reason_checkpoints: dict[str, ReasonCheckpoint] = {}
         self.runtime_project_ids: set[str] = set()
-        self.worker_unhealthy_until: dict[str, float] = {}
+        self.worker_unhealthy_until: dict[tuple[str, str, str, str, str], float] = {}
         self.worker_rejected_until: dict[tuple[str, str, str], float] = {}
         self._log_state: dict[str, tuple[int, str, tuple[object, ...]]] = {}
         self._cleanup_pending: set[str] = set()
@@ -142,6 +145,7 @@ class DispatcherLoop:
                     self._refresh_environment_registry()
                     self._reap_futures()
                     self._reap_cleanup_futures()
+                    self._try_dispatch_question_job()
                     summaries = self.client.list_projects()
                     self._initialize_reason_checkpoints(summaries)
                     self._refresh_runtime_projects(summaries)
@@ -465,6 +469,10 @@ class DispatcherLoop:
             "reason",
             worker.name,
             cancellation,
+            environment_id=environment.id,
+            worker_type=worker.type,
+            endpoint_id=worker.endpoint,
+            model_profile_id=worker.model_profile,
             intent_id=None,
             fact_count=len(project.facts),
             hint_count=len(project.hints),
@@ -530,7 +538,17 @@ class DispatcherLoop:
             LOG.exception("failed to submit bootstrap task project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
             self._best_effort_release(project.project.id, intent.id, worker.name)
             return False
-        self.futures[future] = RunningTask(project.project.id, "bootstrap", worker.name, cancellation, intent_id=intent.id)
+        self.futures[future] = RunningTask(
+            project.project.id,
+            "bootstrap",
+            worker.name,
+            cancellation,
+            environment_id=environment.id,
+            worker_type=worker.type,
+            endpoint_id=worker.endpoint,
+            model_profile_id=worker.model_profile,
+            intent_id=intent.id,
+        )
         self.runtime_project_ids.add(project.project.id)
         self._clear_project_log_state(project.project.id)
         LOG.info("dispatched bootstrap project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
@@ -598,7 +616,17 @@ class DispatcherLoop:
             LOG.exception("failed to submit explore task project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
             self._best_effort_release(project.project.id, intent.id, worker.name)
             return False
-        self.futures[future] = RunningTask(project.project.id, "explore", worker.name, cancellation, intent_id=intent.id)
+        self.futures[future] = RunningTask(
+            project.project.id,
+            "explore",
+            worker.name,
+            cancellation,
+            environment_id=environment.id,
+            worker_type=worker.type,
+            endpoint_id=worker.endpoint,
+            model_profile_id=worker.model_profile,
+            intent_id=intent.id,
+        )
         self.runtime_project_ids.add(project.project.id)
         self._clear_project_log_state(project.project.id)
         LOG.info("dispatched explore project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
@@ -648,7 +676,7 @@ class DispatcherLoop:
             if running >= worker.max_running:
                 blocked_busy.append(f"{worker.name}({running}/{worker.max_running})")
                 continue
-            unhealthy_until = self.worker_unhealthy_until.get(worker.name, 0)
+            unhealthy_until = self.worker_unhealthy_until.get(self._worker_health_key(environment_id, worker), 0)
             if unhealthy_until > now:
                 blocked_unhealthy.append(f"{worker.name}({unhealthy_until - now:.1f}s)")
                 continue
@@ -742,6 +770,56 @@ class DispatcherLoop:
         for task in self.futures.values():
             counts[task.worker_name] = counts.get(task.worker_name, 0) + 1
         return counts
+
+    def _worker_health_key(self, environment_id: str, worker: WorkerConfig) -> tuple[str, str, str, str, str]:
+        return (
+            environment_id,
+            worker.name,
+            worker.type,
+            worker.endpoint or "",
+            worker.model_profile or "",
+        )
+
+    def _task_health_key(self, task: RunningTask) -> tuple[str, str, str, str, str]:
+        return (
+            task.environment_id or "",
+            task.worker_name,
+            task.worker_type or "",
+            task.endpoint_id or "",
+            task.model_profile_id or "",
+        )
+
+    def _publish_worker_health(self, health: list[dict]) -> None:
+        health = [item for item in health if item.get("environment_id") and item.get("worker_name") and item.get("worker_type")]
+        if not health:
+            return
+        if not hasattr(self.client, "upsert_worker_health"):
+            LOG.debug("worker health publish skipped because client lacks endpoint")
+            return
+        response = self.client.upsert_worker_health(health)
+        if not response.ok:
+            LOG.warning("worker health publish failed status=%s body=%s", response.status_code, response.text)
+
+    def _with_health_retry_window(self, health: dict) -> dict:
+        payload = dict(health)
+        payload.setdefault("disabled_until", _future_iso(UNHEALTHY_RETRY_AFTER_SECONDS))
+        payload.setdefault("stale_after", _future_iso(max(UNHEALTHY_RETRY_AFTER_SECONDS * 6, 30)))
+        return payload
+
+    def _ok_health_for_task(self, task: RunningTask) -> dict:
+        return {
+            "environment_id": task.environment_id,
+            "worker_name": task.worker_name,
+            "worker_type": task.worker_type,
+            "endpoint_id": task.endpoint_id,
+            "model_profile_id": task.model_profile_id,
+            "status": "ok",
+            "checked_at": _now_iso(),
+            "stale_after": _future_iso(300),
+            "source": "task_success",
+            "dispatcher_id": "dispatcher",
+            "detail": {"task_type": task.task_type, "project_id": task.project_id},
+        }
 
     def _project_running_task_count(self, project_id: str) -> int:
         return sum(1 for task in self.futures.values() if task.project_id == project_id)
@@ -846,7 +924,10 @@ class DispatcherLoop:
         for future in done:
             task = self.futures.pop(future)
             try:
-                outcome = future.result()
+                raw_outcome = future.result()
+                outcome = raw_outcome.status if isinstance(raw_outcome, TaskOutcome) else raw_outcome
+                if isinstance(raw_outcome, TaskOutcome) and raw_outcome.worker_health:
+                    self._publish_worker_health([self._with_health_retry_window(raw_outcome.worker_health)])
                 if outcome == "cancelled":
                     LOG.info(
                         "task cancelled project=%s task=%s worker=%s",
@@ -863,16 +944,19 @@ class DispatcherLoop:
                         outcome,
                     )
                 self._clear_project_log_state(task.project_id)
+                health_key = self._task_health_key(task)
                 if outcome == "unhealthy":
                     retry_after_seconds = UNHEALTHY_RETRY_AFTER_SECONDS
-                    self.worker_unhealthy_until[task.worker_name] = time.time() + retry_after_seconds
+                    self.worker_unhealthy_until[health_key] = time.time() + retry_after_seconds
                     LOG.info(
-                        "worker marked unhealthy worker=%s retry_after=%.0fs",
-                        task.worker_name,
+                        "worker marked unhealthy identity=%s retry_after=%.0fs",
+                        health_key,
                         retry_after_seconds,
                     )
                 else:
-                    self.worker_unhealthy_until.pop(task.worker_name, None)
+                    self.worker_unhealthy_until.pop(health_key, None)
+                    if outcome == "success":
+                        self._publish_worker_health([self._ok_health_for_task(task)])
                 rejection_key = (task.project_id, task.task_type, task.worker_name)
                 if outcome == "rejected":
                     retry_after_seconds = REJECTED_RETRY_AFTER_SECONDS
@@ -1088,11 +1172,15 @@ class DispatcherLoop:
                 "name": worker.name,
                 "type": worker.type,
                 "model_profile": worker.model_profile,
+                "model": (profile.model if (profile := self.config.model_profile_config(worker)) is not None else None),
+                "model_context_window": profile.context_window if profile is not None else None,
                 "endpoint": worker.endpoint,
                 "task_types": list(worker.task_types),
                 "max_running": worker.max_running,
                 "priority": worker.priority,
                 "allowed_environments": worker.allowed_environments,
+                "question_capability": asdict(get_driver(worker.type).question_capability(worker)),
+                "capability_source": "config",
             }
             for worker in self.config.workers
         ]
@@ -1102,6 +1190,62 @@ class DispatcherLoop:
         else:
             LOG.info("worker inventory publish skipped status=%s body=%s", response.status_code, response.text)
 
+    def _try_dispatch_question_job(self) -> bool:
+        if len(self.futures) >= self.config.runtime.max_workers:
+            return False
+        running_counts = self._worker_counts()
+        available_workers = [worker.name for worker in self.config.workers if running_counts.get(worker.name, 0) < worker.max_running]
+        if not available_workers:
+            return False
+        claim = self.client.claim_question_job("dispatcher", available_workers, list(self.environments), limit=1)
+        if not claim.ok or not isinstance(claim.data, dict) or not claim.data.get("job"):
+            return False
+        job = claim.data["job"]
+        worker_name = job.get("worker_name")
+        worker = next((candidate for candidate in self.config.workers if candidate.name == worker_name), None)
+        if worker is None:
+            self.client.fail_question_job(job["id"], "dispatcher", "worker_not_available", f"worker not configured: {worker_name}")
+            return False
+        project = self.client.get_project(job["project_id"])
+        execution_environment_id = job.get("execution_environment_id")
+        environment = self.environments.get(execution_environment_id) if execution_environment_id else self._environment_for_project(project)
+        if environment is None:
+            self.client.fail_question_job(job["id"], "dispatcher", "environment_not_available", "project environment is not configured")
+            return False
+        worker = self._worker_with_environment_endpoint(worker, environment.id)
+        if worker is None:
+            self.client.fail_question_job(job["id"], "dispatcher", "worker_not_available", "worker endpoint unavailable")
+            return False
+        try:
+            future = self.executor.submit(
+                run_question_task,
+                self.config,
+                self.client,
+                environment,
+                project,
+                worker,
+                job,
+                cancellation := TaskCancellation(),
+            )
+        except Exception:
+            LOG.exception("failed to submit question task job=%s worker=%s", job["id"], worker.name)
+            self.client.fail_question_job(job["id"], "dispatcher", "worker_process_failed", "failed to submit question task")
+            return False
+        self.futures[future] = RunningTask(
+            project.project.id,
+            "question",
+            worker.name,
+            cancellation,
+            environment_id=environment.id,
+            worker_type=worker.type,
+            endpoint_id=worker.endpoint,
+            model_profile_id=worker.model_profile,
+            intent_id=job["id"],
+        )
+        self.runtime_project_ids.add(project.project.id)
+        LOG.info("dispatched question project=%s job=%s worker=%s", project.project.id, job["id"], worker.name)
+        return True
+
     def _run_startup_healthchecks(self, *, show_commands: bool, fail_on_all: bool) -> None:
         results = run_startup_healthchecks(
             self.config,
@@ -1110,6 +1254,22 @@ class DispatcherLoop:
             endpoint_loader=self.client.get_environment_endpoint,
             show_commands=show_commands,
         )
+        health_payloads = [self._health_from_startup_result(result) for result in results]
+        self._publish_worker_health(health_payloads)
+        if not hasattr(self, "worker_unhealthy_until"):
+            self.worker_unhealthy_until = {}
+        for result in results:
+            key = (
+                result.environment_id,
+                result.worker_name,
+                result.worker_type,
+                result.endpoint_id or "",
+                result.model_profile_id or "",
+            )
+            if result.ok:
+                self.worker_unhealthy_until.pop(key, None)
+            else:
+                self.worker_unhealthy_until[key] = time.time() + UNHEALTHY_RETRY_AFTER_SECONDS
         if any(result.ok for result in results):
             return
         if not fail_on_all:
@@ -1122,6 +1282,32 @@ class DispatcherLoop:
         if metadata is None:
             return []
         return sorted({endpoint.type for endpoint in metadata.provider_endpoints})
+
+    def _health_from_startup_result(self, result) -> dict:
+        status = "ok" if result.ok else "unhealthy"
+        payload = {
+            "environment_id": result.environment_id,
+            "worker_name": result.worker_name,
+            "worker_type": result.worker_type,
+            "endpoint_id": result.endpoint_id,
+            "model_profile_id": result.model_profile_id,
+            "status": status,
+            "checked_at": _now_iso(),
+            "stale_after": _future_iso(300 if result.ok else max(UNHEALTHY_RETRY_AFTER_SECONDS * 6, 30)),
+            "source": "startup_healthcheck",
+            "dispatcher_id": "dispatcher",
+            "detail": {
+                "returncode": result.returncode,
+                "http_status": result.http_status,
+                "duration_ms": result.duration_ms,
+                "response_preview": result.response_preview,
+                "stderr_preview": result.stderr_preview,
+                "command": result.command,
+            },
+        }
+        if not result.ok:
+            payload["disabled_until"] = _future_iso(UNHEALTHY_RETRY_AFTER_SECONDS)
+        return payload
 
 
 def _server_environment_config(environment: WorkEnvironmentPublic) -> SshEnvironmentConfig | None:
@@ -1174,3 +1360,11 @@ def _environment_public_from_config(environment) -> WorkEnvironmentPublic:
 
 def _environment_config_hash(environment) -> str:
     return json.dumps(environment.model_dump(mode="json"), ensure_ascii=True, sort_keys=True)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _future_iso(seconds: int) -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")

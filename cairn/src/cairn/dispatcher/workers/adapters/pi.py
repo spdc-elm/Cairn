@@ -5,7 +5,7 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from cairn.dispatcher.config import WorkerConfig
-from cairn.dispatcher.workers.base import DriverResult, WorkerDriver
+from cairn.dispatcher.workers.base import DriverResult, QuestionCapability, WorkerDriver
 
 
 class PiDriver(WorkerDriver):
@@ -70,6 +70,57 @@ class PiDriver(WorkerDriver):
             prompt,
         ]
         return self._wrap_with_models(worker, argv)
+
+    def question_capability(self, worker: WorkerConfig) -> QuestionCapability:
+        return QuestionCapability(
+            can_resume_session=True,
+            can_fork_session=True,
+            can_use_tools=True,
+            can_stream_events=True,
+            resume_mutates_source=True,
+            fork_creates_remote_log=True,
+            question_modes=("fork", "resume", "fresh_context"),
+            unavailable_reasons={},
+        )
+
+    def build_question(
+        self,
+        worker: WorkerConfig,
+        *,
+        mode: str,
+        prompt: str,
+        source_session: str | None = None,
+    ) -> DriverResult:
+        if mode != "fork":
+            return super().build_question(worker, mode=mode, prompt=prompt, source_session=source_session)
+        if not source_session:
+            raise ValueError("fork question requires source_session")
+        env = worker.env
+        argv = [
+            "--provider",
+            "cairn",
+            "--model",
+            env["PI_MODEL"],
+            "--mode",
+            "json",
+            "--session-dir",
+            self._session_dir(worker),
+            "--fork",
+            source_session,
+            "-p",
+            prompt,
+        ]
+        return DriverResult(argv=self._wrap_with_models(worker, argv), session=None)
+
+    def remote_session_kind(self) -> str:
+        return "pi_session"
+
+    def session_capture_method(self, prepared_session: str | None, resolved_session: str | None) -> str:
+        if prepared_session and resolved_session == prepared_session:
+            return "prepared"
+        if resolved_session:
+            return "stdout_event"
+        return "unavailable"
 
     def extract_session(self, session: str | None, stdout: str, stderr: str) -> str | None:
         if session:
