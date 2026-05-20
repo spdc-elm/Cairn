@@ -428,11 +428,11 @@
           :class="environmentBadgeClass(project.project.environment)"
           x-text="environmentLabel(project.project.environment)"></span>
       </template>
-      <template x-if="project.project.planned_workspace">
-        <button @click="copyText(project.project.planned_workspace)"
+      <template x-if="projectWorkspaceHint()">
+        <button @click="copyText(projectWorkspaceHint())"
           class="min-w-0 max-w-[34rem] truncate px-2 py-0.5 rounded-md border border-slate-200 bg-slate-50 font-mono text-[10px] text-slate-500 hover:bg-white"
-          :title="project.project.planned_workspace"
-          x-text="project.project.planned_workspace"></button>
+          :title="projectWorkspaceHint()"
+          x-text="projectWorkspaceHint()"></button>
       </template>
     </div>
     <div class="flex-1"></div>
@@ -774,8 +774,8 @@
       </div>
 
       <!-- Conversation -->
-      <div x-show="sideTab === 'conversation'" class="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/40">
-        <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div x-show="sideTab === 'conversation'" x-ref="conversationScroll" class="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/40">
+        <section class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-visible">
           <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/80">
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
@@ -787,7 +787,7 @@
             </div>
           </div>
           <div class="p-4 space-y-3">
-            <div class="flex rounded-lg border border-slate-200 bg-slate-50 p-1 text-[11px]">
+            <div class="sticky top-0 z-10 flex rounded-lg border border-slate-200 bg-slate-50/95 p-1 text-[11px] shadow-sm backdrop-blur">
               <button type="button" @click="conversation.view = 'conversation'" class="flex-1 px-2 py-1 rounded-md transition"
                 :class="conversation.view === 'conversation' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-600'">Messages</button>
               <button type="button" @click="conversation.view = 'tools'" class="flex-1 px-2 py-1 rounded-md transition"
@@ -804,8 +804,8 @@
             </template>
             <template x-if="!conversation.loading && !conversation.error && conversation.resolution?.status === 'missing'">
               <div class="rounded-xl border border-amber-100 bg-amber-50 px-3 py-4 text-sm text-amber-700">
-                <div class="font-medium">No matching source session</div>
-                <div class="mt-1 text-xs text-amber-600" x-text="conversation.resolution.reason || 'missing provenance'"></div>
+                <div class="font-medium">No execution events for this node</div>
+                <div class="mt-1 text-xs text-amber-600" x-text="conversation.resolution.reason || 'no execution has produced this node yet'"></div>
               </div>
             </template>
             <template x-if="!conversation.loading && !conversation.error && !conversation.transcript && !conversation.resolution">
@@ -858,8 +858,8 @@
 	                <template x-if="question.error">
 	                  <div class="rounded-lg border border-rose-100 bg-rose-50 px-2 py-1.5 text-xs text-rose-600" x-text="question.error"></div>
 	                </template>
-	                <template x-if="question.activeThread">
-	                  <div class="space-y-2">
+	                <template x-if="question.activeThread && question.activeThread.branch?.mode !== 'resume'">
+	                  <div x-ref="questionThreadScroll" class="max-h-80 overflow-y-auto rounded-lg border border-slate-100 bg-slate-50/60 p-2 space-y-2">
 	                    <template x-if="question.activeThread.active_job">
 	                      <div class="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">
 	                        <span class="font-semibold">Job</span>
@@ -904,7 +904,7 @@
 	                    </label>
 	                  </template>
 	                  <div class="flex justify-end">
-	                    <button type="submit" :disabled="question.loading || !question.composerText.trim()"
+	                    <button type="submit" :disabled="question.loading || question.activeThread?.active_job || !question.composerText.trim()"
 	                      class="px-3 py-2 rounded-lg bg-brand-600 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed"
 	                      x-text="question.loading ? 'Asking...' : 'Ask'"></button>
 	                  </div>
@@ -1343,7 +1343,7 @@
                   <span class="font-semibold text-slate-700 truncate" x-text="env.label"></span>
                   <span class="px-2 py-0.5 rounded-full border text-[10px] font-medium" :class="environmentBadgeClass(env)" x-text="env.backend"></span>
                   <span x-show="env.last_health_status" class="px-2 py-0.5 rounded-full text-[10px] font-medium"
-                    :class="env.last_health_status === 'ok' ? 'bg-teal-50 text-teal-700' : 'bg-rose-50 text-rose-600'"
+                    :class="environmentHealthBadgeClass(env.last_health_status)"
                     x-text="env.last_health_status"></span>
                 </div>
                 <p class="mt-1 text-xs font-mono text-slate-400 break-all" x-text="env.backend === 'ssh' ? env.ssh_command : env.id"></p>
@@ -1583,6 +1583,7 @@ function cairnApp() {
     environments: [],
     workers: [],
     envHealthcheckLoading: '',
+    envHealthcheckPollers: {},
     environmentForm: { id: '', label: '', backend: 'ssh', ssh_command: '', workspace_root: '/home/kali/cairn-workspaces', cleanup: { completed_action: 'stop' }, terminal: { mode: 'none' } },
     endpointForm: { environment_id: '', id: '', type: 'pi', base_url: '', provider_api: 'openai-completions', api_key: '', clear_api_key: false, editing: false },
     newProject: { title: '', origin: '', goal: '', hints: [{ content: '' }], executionMode: 'docker', environment_id: 'docker-default', auto_reason: false, allowed_auto_workers: [], default_timeout_seconds: null, default_conclude_timeout_seconds: null },
@@ -1603,7 +1604,7 @@ function cairnApp() {
     yamlPreviewTitle: '',
     yamlPreviewText: '',
     yamlPreviewHtml: '',
-    runLog: { projectId: '', intentId: '', loading: false, error: '', detail: null, expanded: true },
+    runLog: { projectId: '', intentId: '', executionId: '', cursor: null, loading: false, error: '', detail: null, expanded: true, pollTimer: null },
 	    conversation: {
 	      projectId: '',
 	      anchorKey: '',
@@ -1613,11 +1614,13 @@ function cairnApp() {
 	      transcript: null,
 	      view: 'conversation',
 	      limitEvents: 200,
+	      pollTimer: null,
 	    },
 	    question: {
 	      activeThread: null,
 	      composerText: '',
 	      mode: 'fresh_context',
+	      defaultedForAnchor: '',
 	      confirmResume: false,
 	      loading: false,
 	      error: '',
@@ -1990,7 +1993,8 @@ function cairnApp() {
 
     healthcheckStatusClass(status) {
       if (status === 'ok') return 'text-teal-700';
-      if (status === 'skipped' || status === 'delegated' || status === 'unknown' || status === 'stale') return 'text-slate-400';
+      if (status === 'queued' || status === 'leased' || status === 'running') return 'text-sky-600';
+      if (status === 'skipped' || status === 'delegated' || status === 'unknown' || status === 'stale' || status === 'no_workers') return 'text-slate-400';
       return 'text-rose-600';
     },
 
@@ -2075,6 +2079,14 @@ function cairnApp() {
       return env.backend === 'ssh'
         ? 'border-sky-200 bg-sky-50 text-sky-700'
         : 'border-slate-200 bg-slate-100 text-slate-600';
+    },
+
+    environmentHealthBadgeClass(status) {
+      if (status === 'ok') return 'bg-teal-50 text-teal-700';
+      if (status === 'queued' || status === 'running' || status === 'leased') return 'bg-sky-50 text-sky-700';
+      if (status === 'unhealthy' || status === 'failed' || status === 'cancelled') return 'bg-rose-50 text-rose-600';
+      if (status === 'stale') return 'bg-amber-50 text-amber-700';
+      return 'bg-slate-100 text-slate-500';
     },
 
     openEnvironmentPanel() {
@@ -2190,16 +2202,83 @@ function cairnApp() {
       if (!env) return;
       try {
         this.envHealthcheckLoading = env.id;
-        const result = await this.api('POST', `/environments/${encodeURIComponent(env.id)}/healthcheck`);
+        const result = await this.api('POST', `/environments/${encodeURIComponent(env.id)}/healthcheck-requests`);
         const found = this.environments.find(item => item.id === env.id);
         if (found) {
           found.last_health_status = result.status;
           found.last_healthcheck = result;
         }
         await this.loadWorkers();
-        this.showToast(`Healthcheck ${result.status}`);
+        if ((result.executions || []).length) this.pollEnvironmentHealthcheck(env.id, result.executions);
+        this.showToast((result.executions || []).length ? 'Healthcheck queued' : 'No eligible workers');
       } catch(e) { this.showToast(e.message, 'error'); }
       finally { this.envHealthcheckLoading = ''; }
+    },
+
+    pollEnvironmentHealthcheck(environmentId, executions) {
+      if (!environmentId || !executions?.length) return;
+      if (this.envHealthcheckPollers[environmentId]) clearTimeout(this.envHealthcheckPollers[environmentId]);
+      const poll = async () => {
+        try {
+          const checks = await Promise.all(executions.map(execution => this.fetchHealthcheckExecutionCheck(execution)));
+          const found = this.environments.find(item => item.id === environmentId);
+          const terminal = checks.every(check => ['ok', 'failed', 'cancelled', 'unhealthy', 'stale'].includes(check.status));
+          const aggregate = checks.some(check => ['failed', 'unhealthy', 'cancelled'].includes(check.status))
+            ? 'unhealthy'
+            : (checks.some(check => check.status === 'stale') ? 'stale' : (terminal ? 'ok' : 'queued'));
+          if (found) {
+            found.last_health_status = aggregate;
+            found.last_healthcheck = {
+              environment_id: environmentId,
+              status: aggregate,
+              project_id: executions[0]?.project_id,
+              executions,
+              checks,
+            };
+          }
+          if (terminal) {
+            delete this.envHealthcheckPollers[environmentId];
+            await this.loadWorkers();
+            return;
+          }
+          this.envHealthcheckPollers[environmentId] = setTimeout(poll, 1500);
+        } catch(e) {
+          const found = this.environments.find(item => item.id === environmentId);
+          if (found?.last_healthcheck) found.last_healthcheck.status = 'queued';
+          this.envHealthcheckPollers[environmentId] = setTimeout(poll, 2500);
+        }
+      };
+      poll();
+    },
+
+    async fetchHealthcheckExecutionCheck(execution) {
+      const projectId = execution.project_id;
+      const executionId = execution.id;
+      const [current, eventPage] = await Promise.all([
+        this.api('GET', `/projects/${encodeURIComponent(projectId)}/executions/${encodeURIComponent(executionId)}`),
+        this.api('GET', `/projects/${encodeURIComponent(projectId)}/executions/${encodeURIComponent(executionId)}/events`),
+      ]);
+      const events = eventPage.events || [];
+      const stdout = events.filter(event => event.event_type === 'stdout').map(event => event.payload?.text || '').join('');
+      const stderr = events.filter(event => event.event_type === 'stderr').map(event => event.payload?.text || '').join('');
+      const metric = [...events].reverse().find(event => event.event_type === 'metric')?.payload || {};
+      const leaseExpired = current.lease_expires_at && Date.parse(current.lease_expires_at) <= Date.now();
+      const status = (['leased', 'running'].includes(current.status) && leaseExpired)
+        ? 'stale'
+        : current.status === 'succeeded'
+        ? 'ok'
+        : (current.status === 'pending' ? 'queued' : (current.status === 'leased' ? 'running' : current.status));
+      return {
+        name: `worker:${current.worker_name || execution.worker_name || 'unknown'}`,
+        worker_name: current.worker_name || execution.worker_name,
+        execution_id: executionId,
+        project_id: projectId,
+        status,
+        duration_ms: metric.duration_ms || 0,
+        command: metric.command || '-',
+        stdout: stdout.trim(),
+        stderr: stderr.trim() || current.error_detail || '',
+      };
     },
 
     rememberProjectListScroll() {
@@ -2456,13 +2535,17 @@ function cairnApp() {
 
     async loadProject(id) {
       try {
-        this.project = await this.api('GET', `/projects/${id}`);
+        this.project = await this.api('GET', `/projects/${id}/graph`);
         if (!this.projectSettingsDirty) this.resetProjectSettingsForm();
-        await this.loadSelectedConversation();
+        const forceConversationRefresh = this.sideTab === 'conversation'
+          && this.conversation?.transcript
+          && ['pending', 'leased', 'running'].includes(this.conversation.transcript.execution_status);
+        await this.loadSelectedConversation(forceConversationRefresh);
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
 	    resetConversationState(extra = {}) {
+	      this.clearConversationPoll();
 	      this.conversation = {
 	        projectId: '',
 	        anchorKey: '',
@@ -2472,6 +2555,7 @@ function cairnApp() {
         transcript: null,
         view: this.conversation?.view || 'conversation',
 	        limitEvents: this.conversation?.limitEvents || 200,
+	        pollTimer: null,
 	        ...extra,
 	      };
 	      this.resetQuestionState();
@@ -2482,6 +2566,7 @@ function cairnApp() {
 	        activeThread: null,
 	        composerText: '',
 	        mode: 'fresh_context',
+	        defaultedForAnchor: '',
 	        confirmResume: false,
 	        loading: false,
 	        error: '',
@@ -2511,17 +2596,31 @@ function cairnApp() {
 	      const projectId = this.selectedProjectId;
 	      if (!force && this.conversation.projectId === projectId && this.conversation.anchorKey === anchor.key && (this.conversation.loading || this.conversation.transcript || this.conversation.resolution)) return;
 	      if (this.conversation.projectId !== projectId || this.conversation.anchorKey !== anchor.key) this.resetQuestionState();
-	      this.conversation = { ...this.conversation, projectId, anchorKey: anchor.key, loading: true, error: '', resolution: null };
+      const shouldStick = this.shouldStickConversationScroll();
+      this.conversation = { ...this.conversation, projectId, anchorKey: anchor.key, loading: true, error: '', resolution: null };
       try {
         let transcript = null;
-        let resolution = null;
-        resolution = await this.api('GET', `/projects/${projectId}/anchors/resolve?anchor_type=${encodeURIComponent(anchor.type)}&anchor_id=${encodeURIComponent(anchor.id)}`);
-        if (resolution.status === 'exact' && resolution.source_run_log_id) {
-          transcript = await this.api('GET', `/projects/${projectId}/runs/${encodeURIComponent(resolution.source_run_log_id)}/transcript?limit_events=${this.conversation.limitEvents}`);
+        let resolution = { status: 'missing', reason: 'no_execution_for_anchor' };
+        const executionId = this.executionIdForConversationAnchor(anchor);
+        if (executionId) {
+          const page = await this.api('GET', `/projects/${projectId}/executions/${encodeURIComponent(executionId)}/events?limit=${this.conversation.limitEvents}`);
+          const execution = await this.api('GET', `/projects/${projectId}/executions/${encodeURIComponent(executionId)}`);
+          const branchEvents = await this.loadConversationBranchHistory(projectId, anchor);
+          transcript = this.executionTranscript(execution, [...(page.events || []), ...branchEvents]);
+          const availability = this.questionAvailabilityForExecution(execution);
+          resolution = {
+            status: 'exact',
+            source_execution_id: executionId,
+            available_modes: availability.available_modes,
+            unavailable_reasons: availability.unavailable_reasons,
+            provenance: this.executionProvenance(execution),
+          };
         }
         if (this.selectedProjectId !== projectId || this.selectedConversationAnchor()?.key !== anchor.key) return;
         this.conversation = { ...this.conversation, projectId, anchorKey: anchor.key, loading: false, error: '', resolution, transcript };
-        this.scrollConversationToBottom();
+        this.applyDefaultQuestionMode(anchor.key, resolution);
+        this.scheduleConversationPoll(transcript && ['pending', 'leased', 'running'].includes(transcript.execution_status));
+        this.scrollConversationToBottom(shouldStick);
       } catch (e) {
         if (this.selectedProjectId !== projectId || this.selectedConversationAnchor()?.key !== anchor.key) return;
         const message = String(e.message || '');
@@ -2535,7 +2634,297 @@ function cairnApp() {
           resolution: notFound ? { status: 'missing', reason: 'run_log_not_found' } : null,
           transcript: null,
         };
+        this.clearConversationPoll();
       }
+    },
+
+    async loadConversationBranchHistory(projectId, anchor) {
+      if (!projectId || !anchor) return [];
+      const params = new URLSearchParams({ anchor_kind: anchor.type, anchor_id: anchor.id, limit: '50' });
+      const branches = await this.api('GET', `/projects/${projectId}/branches?${params.toString()}`);
+      const histories = await Promise.all((branches || []).filter(branch => branch.mode === 'resume').map(async branch => {
+        const page = await this.api('GET', `/projects/${projectId}/branches/${encodeURIComponent(branch.id)}/timeline?limit=${this.conversation.limitEvents}`);
+        return page.events || [];
+      }));
+      return histories.flat();
+    },
+
+    executionIdForConversationAnchor(anchor) {
+      if (!anchor) return null;
+      if (anchor.type === 'intent') {
+        const intent = this.selectedIntentRecord();
+        return intent?.active_execution_id || intent?.latest_execution_id || null;
+      }
+      if (anchor.type === 'fact') {
+        const fact = this.selectedFactRecord();
+        return fact?.producing_execution_id || fact?.produced_by_execution_id || null;
+      }
+      return null;
+    },
+
+    executionTranscript(execution, events) {
+      const orderedEvents = [...(events || [])].sort((a, b) => {
+        const aSeq = Number(a.project_seq || a.seq || 0);
+        const bSeq = Number(b.project_seq || b.seq || 0);
+        return aSeq - bSeq;
+      });
+      return {
+        run_log_id: execution.id,
+        parser: 'execution_events',
+        provenance: this.executionProvenance(execution),
+        execution_status: execution.status,
+        events: orderedEvents.flatMap(event => this.executionEventToConversationEvents(event)),
+        events_omitted_before: 0,
+      };
+    },
+
+    questionAvailabilityForExecution(execution) {
+      const capability = this.workers.find(worker => worker.name === execution.worker_name)?.question_capability || null;
+      const sessionAvailable = execution.remote_session_out_status === 'available' && !!execution.remote_session_out_id;
+      const available_modes = [];
+      const unavailable_reasons = {};
+      if (sessionAvailable && capability?.can_fork_session) {
+        available_modes.push('fork');
+      } else {
+        unavailable_reasons.fork = capability?.unavailable_reasons?.fork || (!sessionAvailable ? 'source_session_unavailable' : 'fork_unavailable');
+      }
+      if (sessionAvailable && capability?.can_resume_session) {
+        available_modes.push('resume');
+      } else {
+        unavailable_reasons.resume = capability?.unavailable_reasons?.resume || (!sessionAvailable ? 'source_session_unavailable' : 'resume_unavailable');
+      }
+      return { available_modes, unavailable_reasons };
+    },
+
+    executionProvenance(execution) {
+      return {
+        run_log_id: execution.id,
+        worker_name: execution.worker_name,
+        worker_type: execution.worker_type,
+        environment_id: execution.environment_id,
+        endpoint_id: execution.endpoint_id,
+        model_profile_id: execution.model_profile_id,
+        workspace: execution.workspace,
+        remote_session: {
+          kind: execution.remote_session_out_kind,
+          id: execution.remote_session_out_id,
+          status: execution.remote_session_out_status || 'unresolved',
+        },
+      };
+    },
+
+    executionEventToConversationEvent(event) {
+      return this.executionEventToConversationEvents(event)[0] || { id: event?.id || 'event', kind: 'raw', text: '', status: 'success' };
+    },
+
+    executionEventToConversationEvents(event) {
+      const payload = event.payload || {};
+      if (event.event_type === 'message') {
+        const role = event.role || 'assistant';
+        return [{ id: event.id, execution_id: event.execution_id, kind: 'message', role, text: payload.text || '', status: 'success', stream_key: this.messageStreamKey(event, payload, role) }];
+      }
+      if (event.event_type === 'tool') {
+        return [{ id: event.id, execution_id: event.execution_id, kind: payload.result ? 'tool_result' : 'tool_call', title: payload.name || 'tool', raw: payload, status: payload.status || 'success' }];
+      }
+      if (event.event_type === 'status') {
+        return [{ id: event.id, execution_id: event.execution_id, kind: payload.status === 'running' ? 'run_started' : 'run_finished', text: payload.status || '', status: payload.status || 'success' }];
+      }
+      if (event.event_type === 'stdout' || event.event_type === 'stderr') {
+        const text = payload.text || '';
+        const parsed = event.event_type === 'stdout' ? this.workerJsonLinesToConversationEvents(event, text) : [];
+        if (parsed.length) return parsed;
+        return [{ id: event.id, execution_id: event.execution_id, kind: 'raw', text, status: event.event_type === 'stderr' ? 'error' : 'success' }];
+      }
+      return [{ id: event.id, execution_id: event.execution_id, kind: 'raw', raw: payload, status: 'success' }];
+    },
+
+    messageStreamKey(event, payload = {}, role = 'assistant', fallback = 0) {
+      const slot = payload.stream_key || payload.message_id || payload.messageId || payload.id || payload.index || payload.message_index || payload.messageIndex || payload.turn_index || payload.turnIndex || fallback;
+      return `${event.execution_id}:message:${role}:${slot}`;
+    },
+
+    workerJsonLinesToConversationEvents(event, text) {
+      const lines = String(text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+      const parsed = [];
+      const pendingAgentMessages = [];
+      let sawAssistantTurn = false;
+      lines.forEach((line, index) => {
+        let payload;
+        try { payload = JSON.parse(line); } catch { return; }
+        if (!payload || typeof payload !== 'object') return;
+        const type = payload.type || payload.event_type || '';
+        if (type === 'message_update' && payload.message?.role) {
+          if (payload.message.role === 'user') return;
+          const events = this.workerMessageToConversationEvents(payload.message, `${event.id}:json:${index}`, {
+            status: payload.assistantMessageEvent?.type?.endsWith('_end') ? 'success' : 'running',
+            streamKey: this.messageStreamKey(event, payload.message, payload.message.role, payload.assistantMessageEvent?.contentIndex || 0),
+            executionId: event.execution_id,
+          });
+          parsed.push(...events);
+          return;
+        }
+        if ((type === 'message_end' || type === 'message_start') && payload.message?.role) {
+          if (payload.message.role === 'user') return;
+          const events = this.workerMessageToConversationEvents(payload.message, `${event.id}:json:${index}`, {
+            status: type === 'message_start' ? 'running' : 'success',
+            streamKey: this.messageStreamKey(event, payload.message, payload.message.role),
+            executionId: event.execution_id,
+          });
+          parsed.push(...events);
+          return;
+        }
+        if (type === 'turn_end' && payload.message?.role) {
+          if (payload.message.role === 'user') return;
+          const events = this.workerMessageToConversationEvents(payload.message, `${event.id}:json:${index}`, {
+            status: 'success',
+            streamKey: this.messageStreamKey(event, payload.message, payload.message.role),
+            executionId: event.execution_id,
+          });
+          if (events.some(item => item.kind === 'message' && item.role === 'assistant')) {
+            if (payload.message.role === 'assistant') sawAssistantTurn = true;
+          }
+          parsed.push(...events);
+          return;
+        }
+        if (type === 'agent_end' && Array.isArray(payload.messages)) {
+          pendingAgentMessages.push({ index, messages: payload.messages });
+          return;
+        }
+        if (type === 'tool_execution_update' || type === 'tool_execution' || type === 'tool_call' || type === 'tool_result') {
+          parsed.push({
+            id: `${event.id}:json:${index}:tool`,
+            execution_id: event.execution_id,
+            kind: type === 'tool_call' ? 'tool_call' : 'tool_result',
+            title: payload.toolName || payload.name || 'tool',
+            tool_name: payload.toolName || payload.name || '',
+            text: this.workerToolText(payload),
+            raw: payload,
+            status: payload.isError || payload.status === 'error' ? 'error' : (payload.status || 'success'),
+          });
+          return;
+        }
+        if (type === 'error') {
+          parsed.push({ id: `${event.id}:json:${index}:error`, execution_id: event.execution_id, kind: 'error', text: payload.message || payload.error || line, status: 'error' });
+        }
+      });
+ 	  if (!sawAssistantTurn) {
+	    for (const item of pendingAgentMessages) {
+	      const assistant = [...item.messages].reverse().find(message => message?.role === 'assistant');
+	      const text = this.workerMessageText(assistant);
+	      if (text) {
+	        parsed.push({
+              id: `${event.id}:json:${item.index}:agent-message`,
+              execution_id: event.execution_id,
+              kind: 'message',
+              role: 'assistant',
+              text,
+              status: 'success',
+              stream_key: this.messageStreamKey(event, assistant, 'assistant'),
+            });
+	        break;
+	      }
+	    }
+      }
+      return parsed;
+    },
+
+    workerMessageToConversationEvents(message, idPrefix, options = {}) {
+      const status = options.status || 'success';
+      const streamPrefix = options.executionId || idPrefix.split(':json:')[0];
+      if (!message || typeof message !== 'object') return [];
+      if (message.role === 'toolResult') {
+        const toolKey = message.toolCallId || message.toolName || 'tool';
+        return [{
+          id: `${idPrefix}:tool-result:${toolKey}`,
+          execution_id: options.executionId || null,
+          kind: 'tool_result',
+          title: message.toolName || 'tool',
+          tool_name: message.toolName || '',
+          text: this.workerToolText(message),
+          raw: message,
+          status: message.isError ? 'error' : status,
+          stream_key: `${streamPrefix}:tool-result:${toolKey}`,
+        }];
+      }
+      const events = [];
+      const text = this.workerMessageText(message);
+      if (text) {
+        events.push({
+          id: `${idPrefix}:message`,
+          execution_id: options.executionId || null,
+          kind: 'message',
+          role: message.role || 'assistant',
+          text,
+          status,
+          stream_key: options.streamKey || null,
+        });
+      }
+      if (Array.isArray(message.content)) {
+        message.content.forEach((item, index) => {
+          const itemType = item?.type || item?.kind || '';
+          if (itemType === 'toolCall' || itemType === 'tool_call') {
+            const toolKey = item.id || `${item.name || 'tool'}:${index}`;
+            events.push({
+              id: `${idPrefix}:tool-call:${toolKey}`,
+              execution_id: options.executionId || null,
+              kind: 'tool_call',
+              title: item.name || 'tool',
+              tool_name: item.name || '',
+              text: item.partialArgs || '',
+              tool_args_preview: this.workerToolArgsPreview(item.arguments || item.partialArgs || {}),
+              raw: item,
+              status,
+              stream_key: `${streamPrefix}:tool-call:${toolKey}`,
+            });
+          }
+        });
+      }
+      return events;
+    },
+
+    workerToolArgsPreview(value) {
+      if (typeof value === 'string') return value;
+      try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+    },
+
+    workerMessageText(message) {
+      if (!message || typeof message !== 'object') return '';
+      if (typeof message.text === 'string') return message.text;
+      if (typeof message.content === 'string') return message.content;
+      if (!Array.isArray(message.content)) return '';
+      return message.content
+        .map(item => {
+          if (typeof item === 'string') return item;
+          if (item && typeof item.text === 'string') return item.text;
+          if (item && typeof item.content === 'string') return item.content;
+          return '';
+        })
+        .filter(Boolean)
+        .join('\n')
+        .trim();
+    },
+
+    workerToolText(payload) {
+      const result = payload.partialResult || payload.result || payload.output || null;
+      if (typeof result === 'string') return result;
+      if (result?.content) {
+        if (typeof result.content === 'string') return result.content;
+        if (Array.isArray(result.content)) {
+          return result.content.map(item => typeof item === 'string' ? item : (item?.text || item?.content || '')).filter(Boolean).join('\n');
+        }
+      }
+      if (payload.args) {
+        try { return JSON.stringify(payload.args, null, 2); } catch { return String(payload.args); }
+      }
+      return payload.toolName || payload.name || '';
+    },
+
+    projectWorkspaceHint() {
+      const planned = this.project?.project?.planned_workspace;
+      if (planned) return planned;
+      const conversationWorkspace = this.conversation?.resolution?.provenance?.workspace || this.conversation?.transcript?.provenance?.workspace;
+      if (conversationWorkspace) return conversationWorkspace;
+      return this.runLog?.detail?.provenance?.workspace || this.runLog?.detail?.workspace || '';
     },
 
     conversationAnchorLabel() {
@@ -2546,9 +2935,14 @@ function cairnApp() {
     },
 
     conversationEvents() {
-      const events = this.conversation.transcript?.events || [];
+      const baseEvents = this.conversation.transcript?.events || [];
+      const activeBranch = this.question.activeThread?.branch || null;
+      const threadEvents = activeBranch?.mode === 'resume'
+        ? (this.question.activeThread?.timeline || []).flatMap(event => this.executionEventToConversationEvents(event))
+        : [];
+      const events = this.compactConversationEvents([...baseEvents, ...threadEvents]);
       if (this.conversation.view === 'conversation') {
-        return events.filter(event => ['run_started', 'run_finished', 'message', 'tool_call', 'tool_result', 'thinking'].includes(event.kind));
+        return events.filter(event => ['run_started', 'run_finished', 'message', 'tool_call', 'tool_result', 'thinking', 'error'].includes(event.kind));
       }
       if (this.conversation.view === 'tools') {
         return events.filter(event => ['tool_call', 'tool_result'].includes(event.kind));
@@ -2557,6 +2951,41 @@ function cairnApp() {
         return events.filter(event => ['raw', 'error', 'run_started', 'run_finished'].includes(event.kind));
       }
       return events;
+    },
+
+    compactConversationEvents(events) {
+      const seen = new Set();
+      const deduped = (events || []).filter(event => {
+        if (!event?.id) return true;
+        if (seen.has(event.id)) return false;
+        seen.add(event.id);
+        return true;
+      });
+      const compacted = [];
+      const streamIndexes = new Map();
+      const messageTextIndexes = new Map();
+      for (const event of deduped) {
+        if (event?.stream_key) {
+          const existing = streamIndexes.get(event.stream_key);
+          if (existing !== undefined) {
+            compacted[existing] = event;
+            continue;
+          }
+          streamIndexes.set(event.stream_key, compacted.length);
+        }
+        if (event?.kind === 'message' && event.execution_id && event.text) {
+          const textKey = `${event.execution_id}:message-text:${event.role || ''}:${event.text.trim()}`;
+          const existing = messageTextIndexes.get(textKey);
+          if (existing !== undefined) {
+            compacted[existing] = event;
+            if (event.stream_key) streamIndexes.set(event.stream_key, existing);
+            continue;
+          }
+          messageTextIndexes.set(textKey, compacted.length);
+        }
+        compacted.push(event);
+      }
+      return compacted;
     },
 
     conversationEventLabel(event) {
@@ -2596,22 +3025,50 @@ function cairnApp() {
       return 'text-slate-400';
     },
 
-	    scrollConversationToBottom() {
-	      requestAnimationFrame(() => {
-	        requestAnimationFrame(() => {
-	          const el = this.$refs.conversationOutput;
-	          if (!el) return;
-	          el.scrollIntoView({ block: 'end' });
-	        });
-	      });
-	    },
+    shouldStickScroll(el) {
+      if (!el) return true;
+      return el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    },
+
+    shouldStickConversationScroll() {
+      return this.shouldStickScroll(this.$refs.conversationScroll);
+    },
+
+    scrollElementToBottom(el, shouldScroll = true) {
+      if (!shouldScroll) return;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!el) return;
+          el.scrollTop = el.scrollHeight;
+        });
+      });
+    },
+
+    scrollConversationToBottom(shouldScroll = true) {
+      this.scrollElementToBottom(this.$refs.conversationScroll, shouldScroll);
+    },
+
+    scrollQuestionThreadToBottom(shouldScroll = true) {
+      this.scrollElementToBottom(this.$refs.questionThreadScroll, shouldScroll);
+    },
+
+    scheduleConversationPoll(active) {
+      this.clearConversationPoll();
+      if (!active || this.sideTab !== 'conversation' || !this.conversation.anchorKey) return;
+      this.conversation.pollTimer = setTimeout(() => this.loadSelectedConversation(true), 1000);
+    },
+
+    clearConversationPoll() {
+      if (this.conversation?.pollTimer) clearTimeout(this.conversation.pollTimer);
+      if (this.conversation) this.conversation.pollTimer = null;
+    },
 
 	    canAskSelectedConversation() {
 	      const anchor = this.selectedConversationAnchor();
 	      if (!anchor) return false;
 	      if (anchor.type === 'fact') return true;
 	      const intent = this.selectedIntentRecord();
-	      return !!intent?.to;
+	      return !!(intent?.to || intent?.active_execution_id || intent?.latest_execution_id);
 	    },
 
 	    questionSourceSessionAvailable() {
@@ -2641,8 +3098,19 @@ function cairnApp() {
 	      return this.conversation.resolution?.unavailable_reasons?.fork || capability?.unavailable_reasons?.fork || (!capability ? 'capability_stale' : '');
 	    },
 
+	    applyDefaultQuestionMode(anchorKey, resolution = null) {
+	      if (!anchorKey || this.question.defaultedForAnchor === anchorKey) return;
+	      const availableModes = resolution?.available_modes || this.conversation.resolution?.available_modes || [];
+	      const mode = availableModes.includes('fork') ? 'fork' : 'fresh_context';
+	      this.question = { ...this.question, mode, confirmResume: false, defaultedForAnchor: anchorKey };
+	    },
+
 	    questionMessages() {
-	      return this.question.activeThread?.messages || [];
+	      const branch = this.question.activeThread?.branch || null;
+	      if (branch?.mode === 'resume') return [];
+	      return this.compactConversationEvents((this.question.activeThread?.timeline || [])
+	        .flatMap(event => this.executionEventToConversationEvents(event)))
+	        .filter(event => event.kind === 'message');
 	    },
 
 	    questionMessageText(message) {
@@ -2659,7 +3127,7 @@ function cairnApp() {
 	    async askSelectedConversation() {
 	      const anchor = this.selectedConversationAnchor();
 	      const text = this.question.composerText.trim();
-	      if (!anchor || !text || this.question.loading) return;
+	      if (!anchor || !text || this.question.loading || this.question.activeThread?.active_job) return;
 	      const mode = this.question.mode === 'fork' && this.questionForkAvailable()
 	        ? 'fork'
 	        : (this.question.mode === 'resume' && this.questionResumeAvailable() ? 'resume' : 'fresh_context');
@@ -2669,17 +3137,28 @@ function cairnApp() {
 	      }
 	      this.question = { ...this.question, loading: true, error: '' };
 	      try {
-	        const thread = await this.api('POST', `/projects/${this.selectedProjectId}/questions`, {
-	          anchor_type: anchor.type,
-	          anchor_id: anchor.id,
-	          mode,
-	          message: text,
-	          allow_resume_without_fork: mode === 'resume',
-	          confirm_resume: mode === 'resume',
-	        });
-	        this.question = { ...this.question, activeThread: thread, composerText: '', loading: false, error: '' };
-	        this.pollQuestionThread(thread.id);
-	        this.scrollConversationToBottom();
+          const activeThread = this.question.activeThread;
+          let branch = activeThread?.branch?.mode === mode ? activeThread.branch : null;
+          const timeline = branch ? (activeThread?.timeline || []) : [];
+          if (!branch) {
+            const sourceExecutionId = this.conversation.resolution?.source_execution_id || this.executionIdForConversationAnchor(anchor);
+            branch = await this.api('POST', `/projects/${this.selectedProjectId}/branches`, {
+              anchor_kind: anchor.type,
+              anchor_id: anchor.id,
+              mode,
+              source_execution_id: mode === 'fresh_context' ? null : sourceExecutionId,
+            });
+          }
+          const message = await this.api('POST', `/projects/${this.selectedProjectId}/branches/${branch.id}/messages`, { message: text });
+          let nextTimeline = timeline;
+          try {
+            const page = await this.api('GET', `/projects/${this.selectedProjectId}/branches/${branch.id}/timeline`);
+            nextTimeline = page.events || timeline;
+          } catch {}
+	        this.question = { ...this.question, activeThread: { id: branch.id, branch, active_job: message.execution, timeline: nextTimeline }, composerText: '', loading: false, error: '' };
+	        this.pollQuestionThread(branch.id);
+          if (branch.mode === 'resume') this.scrollConversationToBottom(true);
+          else this.scrollQuestionThreadToBottom(true);
 	      } catch (e) {
 	        this.question = { ...this.question, loading: false, error: e.message };
 	      }
@@ -2692,9 +3171,18 @@ function cairnApp() {
 	        if (!active || active.id !== threadId || !active.active_job) return;
 	        await new Promise(resolve => setTimeout(resolve, 1500));
 	        try {
-	          const thread = await this.api('GET', `/projects/${this.selectedProjectId}/questions/${threadId}`);
-	          this.question = { ...this.question, activeThread: thread };
-	          if (!thread.active_job) return;
+            const shouldStickQuestion = this.shouldStickScroll(this.$refs.questionThreadScroll);
+            const shouldStickConversation = this.shouldStickConversationScroll();
+            const timeline = await this.api('GET', `/projects/${this.selectedProjectId}/branches/${threadId}/timeline`);
+            const execution = await this.api('GET', `/projects/${this.selectedProjectId}/executions/${active.active_job.id}`);
+	          const nextThread = { ...active, active_job: ['pending', 'leased', 'running'].includes(execution.status) ? execution : null, timeline: timeline.events || [] };
+	          this.question = { ...this.question, activeThread: nextThread };
+            if (nextThread.branch?.mode !== 'resume') this.scrollQuestionThreadToBottom(shouldStickQuestion);
+            else this.scrollConversationToBottom(shouldStickConversation);
+	          if (!nextThread.active_job) {
+              await this.loadSelectedConversation(true);
+              return;
+            }
 	        } catch (e) {
 	          this.question = { ...this.question, error: e.message };
 	          return;
@@ -2707,31 +3195,36 @@ function cairnApp() {
 	      if (!thread || this.question.loading) return;
 	      this.question = { ...this.question, loading: true, error: '' };
 	      try {
-	        await this.api('POST', `/projects/${this.selectedProjectId}/questions/${thread.id}/close`, {});
 	        this.resetQuestionState();
+	        this.applyDefaultQuestionMode(this.conversation.anchorKey, this.conversation.resolution);
 	      } catch (e) {
 	        this.question = { ...this.question, loading: false, error: e.message };
 	      }
 	    },
 
-	    async loadSelectedIntentRunLog(force = false) {
+    async loadSelectedIntentRunLog(force = false) {
       if (!this.selectedProjectId || !this.selectedIntentId()) {
-        this.runLog = { projectId: '', intentId: '', loading: false, error: '', detail: null, expanded: true };
+        this.clearRunLogPoll();
+        this.runLog = { projectId: '', intentId: '', executionId: '', cursor: null, loading: false, error: '', detail: null, expanded: true, pollTimer: null };
         return;
       }
       const intent = this.selectedIntentRecord();
-      if (!intent || !intent.worker) {
-        this.runLog = { ...this.runLog, projectId: this.selectedProjectId, intentId: this.selectedIntentId(), loading: false, error: '', detail: null };
+      const executionId = intent?.active_execution_id || intent?.latest_execution_id;
+      if (!intent || !executionId) {
+        this.clearRunLogPoll();
+        this.runLog = { ...this.runLog, projectId: this.selectedProjectId, intentId: this.selectedIntentId(), executionId: '', cursor: null, loading: false, error: '', detail: null };
         return;
       }
       const projectId = this.selectedProjectId;
       const intentId = this.selectedIntentId();
-      if (!force && this.runLog.projectId === projectId && this.runLog.intentId === intentId && this.runLog.loading) return;
-      this.runLog = { ...this.runLog, projectId, intentId, loading: true, error: '' };
+      if (!force && this.runLog.projectId === projectId && this.runLog.intentId === intentId && this.runLog.executionId === executionId && this.runLog.loading) return;
+      if (this.runLog.executionId !== executionId) this.clearRunLogPoll();
+      this.runLog = { ...this.runLog, projectId, intentId, executionId, loading: true, error: '' };
       try {
-        const detail = await this.api('GET', `/projects/${projectId}/runs/latest?intent_id=${encodeURIComponent(intentId)}`);
+        const detail = await this.loadExecutionEventDetail(projectId, executionId, this.runLog.cursor);
         if (this.selectedProjectId === projectId && this.selectedIntentId() === intentId) {
-          this.runLog = { ...this.runLog, projectId, intentId, loading: false, error: '', detail };
+          this.runLog = { ...this.runLog, projectId, intentId, executionId, cursor: detail.next_cursor, loading: false, error: '', detail };
+          this.scheduleRunLogPoll(detail.summary?.status === 'running' || detail.summary?.status === 'leased' || detail.summary?.status === 'pending');
           this.scrollRunLogToBottom();
         }
       } catch (e) {
@@ -2741,11 +3234,64 @@ function cairnApp() {
           ...this.runLog,
           projectId,
           intentId,
+          executionId,
           loading: false,
           error: message.includes('Run log not found') || message.includes('HTTP 404') ? '' : message,
           detail: null,
         };
       }
+    },
+
+    async loadExecutionEventDetail(projectId, executionId, afterCursor = null) {
+      const suffix = afterCursor ? `?after_cursor=${encodeURIComponent(afterCursor)}` : '';
+      const page = await this.api('GET', `/projects/${projectId}/executions/${encodeURIComponent(executionId)}/events${suffix}`);
+      const execution = await this.api('GET', `/projects/${projectId}/executions/${encodeURIComponent(executionId)}`);
+      const previous = this.runLog.executionId === executionId ? (this.runLog.detail?.events || []) : [];
+      const events = [...previous, ...(page.events || [])];
+      const combined = events.map(event => this.executionEventText(event)).filter(Boolean).join('');
+      return {
+        summary: {
+          run_id: execution.id,
+          project_id: execution.project_id,
+          intent_id: execution.intent_id,
+          task_type: execution.task_type,
+          phase: execution.phase,
+          worker: execution.worker_name || '',
+          status: execution.status,
+          started_at: execution.started_at,
+          finished_at: execution.finished_at,
+          returncode: execution.returncode,
+          cancelled: execution.status === 'cancelled',
+          timed_out: execution.error_code === 'timeout',
+          metadata: execution.metadata,
+        },
+        events,
+        stdout: combined,
+        stderr: '',
+        combined,
+        truncated: false,
+        next_cursor: page.next_cursor,
+      };
+    },
+
+    executionEventText(event) {
+      if (!event) return '';
+      const payload = event.payload || {};
+      if (event.event_type === 'stdout' || event.event_type === 'stderr') return payload.text || '';
+      if (event.event_type === 'message') return payload.text ? `[${event.role || 'message'}] ${payload.text}\n` : '';
+      if (event.event_type === 'status') return payload.status ? `[status] ${payload.status}\n` : '';
+      return '';
+    },
+
+    scheduleRunLogPoll(active) {
+      this.clearRunLogPoll();
+      if (!active || !this.runLog.executionId) return;
+      this.runLog.pollTimer = setTimeout(() => this.loadSelectedIntentRunLog(true), 1000);
+    },
+
+    clearRunLogPoll() {
+      if (this.runLog?.pollTimer) clearTimeout(this.runLog.pollTimer);
+      if (this.runLog) this.runLog.pollTimer = null;
     },
 
     runLogText() {
@@ -2759,7 +3305,7 @@ function cairnApp() {
     runLogStatusLabel() {
       const summary = this.runLog.detail?.summary;
       if (!summary) return 'unknown';
-      if (summary.finished_at) {
+      if (summary.status && !['pending', 'leased', 'running'].includes(summary.status)) {
         if (summary.cancelled) return 'cancelled';
         if (summary.timed_out) return 'timed out';
         return summary.returncode === 0 ? 'finished' : `exit ${summary.returncode ?? '?'}`;
