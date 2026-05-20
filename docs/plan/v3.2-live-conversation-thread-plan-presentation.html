@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cairn v3.2 Execution Ledger Plan</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --ink: #172033;
+      --muted: #64748b;
+      --line: #d9e2ec;
+      --panel: #ffffff;
+      --blue: #2563eb;
+      --teal: #0f766e;
+      --rose: #be123c;
+      --amber: #b45309;
+      --green: #15803d;
+      --slate: #334155;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+    header {
+      padding: 38px min(7vw, 72px) 28px;
+      background: #eef4f8;
+      border-bottom: 1px solid var(--line);
+    }
+    h1 {
+      margin: 0;
+      max-width: 1080px;
+      font-size: 42px;
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+    .lead {
+      margin: 14px 0 0;
+      max-width: 980px;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.6;
+    }
+    main { padding: 28px min(7vw, 72px) 58px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 18px;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, .06);
+    }
+    h2 { margin: 0 0 14px; font-size: 22px; letter-spacing: 0; }
+    h3 { margin: 0 0 8px; font-size: 15px; letter-spacing: 0; }
+    p, li { color: var(--muted); line-height: 1.55; font-size: 13px; }
+    p { margin: 0; }
+    ul { margin: 8px 0 0; padding-left: 18px; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      background: #eef2f7;
+      border-radius: 5px;
+      padding: 1px 4px;
+      color: #263449;
+    }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 23px;
+      padding: 0 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      margin-bottom: 9px;
+      background: #eaf2ff;
+      color: var(--blue);
+      white-space: nowrap;
+    }
+    .tag.rose { background: #ffe8ee; color: var(--rose); }
+    .tag.amber { background: #fff3d9; color: var(--amber); }
+    .tag.green { background: #e7f8ed; color: var(--green); }
+    .tag.teal { background: #e4f5f2; color: var(--teal); }
+    .tag.slate { background: #eef2f7; color: var(--slate); }
+    .phase {
+      display: grid;
+      grid-template-columns: 78px 1fr;
+      gap: 14px;
+      padding: 13px 0;
+      border-top: 1px solid #e6edf5;
+    }
+    .phase:first-of-type { border-top: 0; }
+    .badge {
+      width: 54px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: #eaf2ff;
+      color: var(--blue);
+      font-weight: 900;
+    }
+    .rule {
+      border-left: 4px solid var(--rose);
+      background: #fff8fa;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+    }
+    .rule.good { border-left-color: var(--green); background: #f1fbf4; }
+    .rule.warn { border-left-color: var(--amber); background: #fffaf0; }
+    @media (max-width: 920px) {
+      .grid, .grid.two { grid-template-columns: 1fr; }
+      header { padding: 28px 18px 22px; }
+      main { padding: 22px 18px 42px; }
+      h1 { font-size: 30px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>V3.2 Plan: 先立账，再迁移，最后清场</h1>
+    <p class="lead">审查后的关键修正：不先 destructive reset。先 additive 建 <code>ExecutionRun/Event</code>，让旧流程双写并验证实时输出；迁移期间保持 UI/API 可用，再逐步切 dispatcher lease、Branch conversation、UI polling，最后删除旧 runtime。</p>
+  </header>
+
+  <main>
+    <section class="grid">
+      <article class="panel">
+        <span class="tag rose">拒绝</span>
+        <h3>先 reset 再改 dispatcher</h3>
+        <p>当前调度仍依赖 intent/project/question lease。先删旧表会让中间态不可运行。</p>
+      </article>
+      <article class="panel">
+        <span class="tag green">采用</span>
+        <h3>Additive Ledger + 双写</h3>
+        <p>先把 execution/event 建起来，用 event sink 双写 DB 与 JSONL mirror，再逐 task 切换。</p>
+      </article>
+      <article class="panel">
+        <span class="tag amber">最后</span>
+        <h3>Destructive Cleanup</h3>
+        <p>等 server、dispatcher、UI smoke 通过后，再 reset 到 fresh v3.2 schema。</p>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>边界契约</h2>
+      <div class="grid two">
+        <div class="rule good">
+          <h3>Server</h3>
+          <p>拥有 Fact/Intent DAG 与 execution ledger 持久化。所有 Fact/Intent/EvidenceLink mutation 都在 server 事务中完成。</p>
+        </div>
+        <div class="rule good">
+          <h3>Dispatcher</h3>
+          <p>只执行 runtime：lease/patch execution、append events、upload artifacts、submit conclude request。不直接改语义图。</p>
+        </div>
+      </div>
+      <div class="rule warn">
+        <h3>Shared parser</h3>
+        <p><code>cairn.shared.worker_events</code> 只放通用 DTO；backend normalizer 不进 server 主路径。</p>
+      </div>
+      <div class="rule warn">
+        <h3>Health</h3>
+        <p><code>worker_runtime_health</code> 仍是 availability read model；healthcheck execution 只做审计。</p>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-top:18px">
+      <h2>阶段路线</h2>
+      <div class="phase">
+        <div class="badge">0</div>
+        <div><h3>RED 护栏</h3><p>migration/reset、cursor concurrency、session locks、cross-plane imports、legacy runtime imports。</p></div>
+      </div>
+      <div class="phase">
+        <div class="badge">1</div>
+        <div><h3>Additive Ledger</h3><p>新增 <code>execution_runs</code>、<code>execution_events</code>、<code>branches</code>、<code>artifacts</code>、<code>execution_session_locks</code>，旧表暂保留。</p></div>
+      </div>
+      <div class="phase">
+        <div class="badge">2</div>
+        <div><h3>Event Sink 双写</h3><p>stdout/stderr/message/session 实时写 <code>ExecutionEvent</code>；JSONL 降级为 mirror artifact。</p></div>
+      </div>
+      <div class="phase">
+        <div class="badge">3</div>
+        <div><h3>Dispatcher Lease 迁移</h3><p>bootstrap/explore、reason、conclude、healthcheck、question 逐步切到 execution lease；Phase 内必须保留 facade 或 projection，不能让旧 UI 断裂。</p></div>
+      </div>
+      <div class="phase">
+        <div class="badge">4</div>
+        <div><h3>Branch Conversation</h3><p>Branch 替换 question thread；显式 <code>session_action</code>；resume 用 <code>execution_session_locks</code> 防并发污染。</p></div>
+      </div>
+      <div class="phase">
+        <div class="badge">5</div>
+        <div><h3>UI Live Polling</h3><p>Graph 提供 active/latest execution；Output 与 Conversation 使用 cursor 续读。</p></div>
+      </div>
+      <div class="phase">
+        <div class="badge">6</div>
+        <div><h3>Cleanup / Reset</h3><p>实现 backup/restore，普通 migrate 遇旧 schema fail-fast，最后删除 <code>run_provenance</code> 与 <code>question_*</code> 主路径。</p></div>
+      </div>
+    </section>
+
+    <section class="grid two" style="margin-top:18px">
+      <article class="panel">
+        <span class="tag teal">关键修正</span>
+        <ul>
+          <li>创建 pending execution 与 dispatcher lease existing pending 分离。</li>
+          <li>execution ownership matrix 防止新版 <code>run_provenance</code> 垃圾桶。</li>
+          <li>并发 intent 是 scheduler policy，不是本体约束。</li>
+          <li><code>session_action</code> 入 schema，不藏 metadata。</li>
+          <li>conclusion report 由 server 单事务写 Fact/Intent/EvidenceLink。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <span class="tag slate">验收重点</span>
+        <ul>
+          <li>running output 刷新后不断流。</li>
+          <li>Pi / Claude fork 两轮连续。</li>
+          <li>Fork availability/reason 原样来自 server projection 与 inventory。</li>
+          <li>unhealthy source identity 禁 Fork/Resume，Fresh Context 可用。</li>
+          <li>fresh v3.2 schema 无旧 runtime 表和 intent live lease 字段。</li>
+        </ul>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

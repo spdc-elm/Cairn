@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>V3.2 Execution Ledger</title>
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #64748b;
+      --line: #d9e2ec;
+      --panel: #ffffff;
+      --bg: #f6f8fb;
+      --teal: #0f766e;
+      --rose: #be123c;
+      --amber: #b45309;
+      --blue: #2563eb;
+      --violet: #6d28d9;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+    main {
+      max-width: 1160px;
+      margin: 0 auto;
+      padding: 34px 24px 46px;
+    }
+    header { margin-bottom: 24px; }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 32px;
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+    h3 {
+      margin: 0 0 9px;
+      font-size: 15px;
+    }
+    .lead {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      max-width: 820px;
+      line-height: 1.55;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin: 20px 0;
+    }
+    .two {
+      grid-template-columns: 1.15fr .85fr;
+    }
+    .card, .band {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .card {
+      padding: 16px;
+      min-height: 150px;
+    }
+    .card p, li {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .card p { margin: 0; }
+    ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 650;
+      margin-bottom: 8px;
+      background: #eef2ff;
+      color: var(--blue);
+      white-space: nowrap;
+    }
+    .ok { background: #ecfdf5; color: var(--teal); }
+    .warn { background: #fffbeb; color: var(--amber); }
+    .bad { background: #fff1f2; color: var(--rose); }
+    .core { background: #f5f3ff; color: var(--violet); }
+    .band {
+      margin-top: 18px;
+      padding: 18px;
+    }
+    .spine {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .node {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fbfdff;
+      min-height: 128px;
+    }
+    .node strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 7px;
+    }
+    .node span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      margin-top: 18px;
+    }
+    th, td {
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+      padding: 10px 12px;
+      font-size: 13px;
+      vertical-align: top;
+    }
+    th {
+      background: #f8fafc;
+      font-size: 12px;
+      color: #475467;
+    }
+    tr:last-child td { border-bottom: 0; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      background: #eef2f7;
+      border-radius: 5px;
+      padding: 1px 4px;
+    }
+    @media (max-width: 940px) {
+      .grid, .two, .spine { grid-template-columns: 1fr; }
+      main { padding: 24px 16px 36px; }
+      h1 { font-size: 28px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>V3.2: Fact/Intent DAG + Execution Ledger</h1>
+      <p class="lead">第一性原理重审后的结论：CAIRN 的用户心智模型仍是 origin 到 goal 的 Fact/Intent DAG；worker 的一次 execution 是运行时原子。最佳模型是让 fact/intent 承载问题图，让 execution/event/branch/artifact 承载调度、输出、session 与证据。</p>
+    </header>
+
+    <section class="grid">
+      <article class="card">
+        <span class="badge bad">不选</span>
+        <h3>保守修补</h3>
+        <p>继续维护 <code>question_threads/jobs/events</code> 与 <code>run_provenance</code>。短期快，长期仍是多事实源。</p>
+      </article>
+      <article class="card">
+        <span class="badge ok">推荐</span>
+        <h3>Execution Ledger</h3>
+        <p><code>ExecutionRun</code> + <code>ExecutionEvent</code> 做唯一实时底座，Fact/Intent 仍是用户图层。</p>
+      </article>
+      <article class="card">
+        <span class="badge warn">暂缓</span>
+        <h3>Pure Execution Graph</h3>
+        <p>理论最统一，但会把调度和知识黑板都变成 path query，首版过重。</p>
+      </article>
+    </section>
+
+    <section class="band">
+      <h2>推荐主干</h2>
+      <div class="spine">
+        <div class="node">
+          <span class="badge core">Goal</span>
+          <strong>Project</strong>
+          <span>目标、环境、策略的容器。</span>
+        </div>
+        <div class="node">
+          <span class="badge core">Work</span>
+          <strong>Intent</strong>
+          <span>图上的探索边，也是工作订单：from facts、to fact、requested worker、timeout。</span>
+        </div>
+        <div class="node">
+          <span class="badge core">Run</span>
+          <strong>ExecutionRun</strong>
+          <span>一次 worker 执行：身份、环境、session、lease/heartbeat/cancel、输入快照。</span>
+        </div>
+        <div class="node">
+          <span class="badge core">Stream</span>
+          <strong>ExecutionEvent</strong>
+          <span>append-only event stream；Output 与 Conversation 的唯一实时入口。</span>
+        </div>
+        <div class="node">
+          <span class="badge core">Session</span>
+          <strong>Branch</strong>
+          <span>fork/resume 的连续线；下一轮 session 从最近 run 推导。</span>
+        </div>
+        <div class="node">
+          <span class="badge core">Knowledge</span>
+          <strong>Fact / Artifact</strong>
+          <span>fact 是一次探索的结果节点；artifact 保存证据与大产物。</span>
+        </div>
+      </div>
+    </section>
+
+    <table>
+      <thead>
+        <tr>
+          <th>需求</th>
+          <th>落点</th>
+          <th>验收</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Running Output</td>
+          <td>UI 轮询 <code>ExecutionEvent</code> cursor，不再等 successful provenance。</td>
+          <td><span class="badge ok">刷新可追进度</span></td>
+        </tr>
+        <tr>
+          <td>Resume 本地可见</td>
+          <td>resume 是 branch 下新 execution；远端回复落成 message events。</td>
+          <td><span class="badge ok">远端与本地一致</span></td>
+        </tr>
+        <tr>
+          <td>Fork 多轮连续</td>
+          <td>同一 fork branch 连续追加 execution；session 由上一轮 <code>remote_session_out</code> 推导。</td>
+          <td><span class="badge ok">Pi / Claude 连续</span></td>
+        </tr>
+        <tr>
+          <td>Graph 简化</td>
+          <td>一次 concluded intent 产一个 result fact；证据由 execution/artifact/link 追溯。</td>
+          <td><span class="badge ok">可解释可追责</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <section class="grid two">
+      <article class="card">
+        <span class="badge warn">破坏兼容</span>
+        <h3>DB 策略</h3>
+        <p>V3.2 不为旧 question/runtime schema 保留长期兼容。建议备份当前 DB 后 destructive reset 到新 schema；旧实验数据只做一次性 best-effort import。</p>
+      </article>
+      <article class="card">
+        <span class="badge bad">硬约束</span>
+        <h3>禁止双事实源</h3>
+        <p>projection 可以缓存，但不能成为真相。UI 只读 event/semantic projection，不再把本地 active thread 当历史归属。</p>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
