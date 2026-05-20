@@ -10,6 +10,19 @@
 - 反迎合。先审查问题 framing、关键假设与失败路径，再决定赞同、修正或反驳。
 - 默认用中文简洁沟通；实现、命令、代码标识保持仓库原语言与风格。
 
+## 产品本体定义
+
+涉及 Cairn 架构、spec、plan 或实现时，先保持下列概念边界：
+
+- `Fact/Intent DAG` 是用户心智模型：Cairn 把从 `origin` 到 `goal` 的问题解决过程表达成一张探索 DAG。
+- `Fact` 不是 atomic assertion，也不是所有观察的最小集合。`Fact` 是一次探索步骤进入黑板后的结果节点，承载该次探索对用户有用的摘要；一次 successful concluded exploration intent 默认产出一个 primary result fact。
+- `Intent` 是图上的探索边，也是工作订单：它从已有 facts 出发，描述下一步要探索什么。`Intent` 不应持有 live worker lease、heartbeat、cancel/retry runtime state。
+- `ExecutionRun` 是运行层原子：某个 worker 在某个环境中实际执行了一次。worker identity、session、lease、heartbeat、stdout/stderr、returncode、timeout、cancel、retry 等运行事实应挂在 execution 上。
+- `ExecutionEvent` 是实时输出源：Output、conversation transcript、tool/message stream 应从 execution events 投影，不应由 `Fact` / `Intent` 反向拼日志。
+- `Branch` 表达 fork/resume 的 session 连续线；多轮 fork/resume 是同一 branch 下追加 executions。
+- `Artifact` 保存证据和大产物：report、transcript、scan output、screenshot、文件等。细粒度观察和原始证据优先进入 event/artifact，不把图层拆成许多小 fact。
+- 不要为了“候选事实/待审核断言”提前引入 `Claim` 等新核心概念。除非 spec 明确要求长期审核 workflow，否则用 `Fact` + `ExecutionRun` + `Artifact` 足够。
+
 ## 开发模式
 
 本仓库以三段式开发为主，但不强制所有改动都走完整流程。
