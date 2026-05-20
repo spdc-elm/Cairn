@@ -9,7 +9,7 @@ from pydantic import TypeAdapter
 import requests
 from requests.adapters import HTTPAdapter
 
-from cairn.server.models import Intent, ProjectDetail, ProjectSummary, ProviderEndpointSecret, Settings, WorkEnvironmentPublic
+from cairn.shared.api_models import Intent, ProjectDetail, ProjectSummary, ProviderEndpointSecret, Settings, WorkEnvironmentPublic
 
 LOG = logging.getLogger(__name__)
 
@@ -205,6 +205,164 @@ class CairnClient:
 
     def upsert_worker_health(self, health: list[dict[str, Any]]) -> ApiResult:
         return self._request_json("PUT", "/dispatcher/workers/health", json={"health": health})
+
+    def create_execution(self, project_id: str, payload: dict[str, Any]) -> ApiResult:
+        return self._request_json(
+            "POST",
+            f"/projects/{project_id}/executions",
+            json=payload,
+        )
+
+    def lease_pending_execution(
+        self,
+        execution_id: str,
+        *,
+        dispatcher_id: str,
+        worker_name: str,
+        worker_type: str | None = None,
+        environment_id: str | None = None,
+        endpoint_id: str | None = None,
+        model_profile_id: str | None = None,
+        workspace: str | None = None,
+        lease_seconds: int = 60,
+    ) -> ApiResult:
+        return self._request_json(
+            "POST",
+            "/dispatcher/executions/lease",
+            json={
+                "execution_id": execution_id,
+                "dispatcher_id": dispatcher_id,
+                "worker_name": worker_name,
+                "worker_type": worker_type,
+                "environment_id": environment_id,
+                "endpoint_id": endpoint_id,
+                "model_profile_id": model_profile_id,
+                "workspace": workspace,
+                "lease_seconds": lease_seconds,
+            },
+        )
+
+    def claim_healthcheck_executions(
+        self,
+        dispatcher_id: str,
+        worker_names: list[str],
+        environment_ids: list[str],
+        *,
+        limit: int = 1,
+        lease_seconds: int = 60,
+    ) -> ApiResult:
+        return self._request_json(
+            "POST",
+            "/dispatcher/healthcheck-executions/claim",
+            json={
+                "dispatcher_id": dispatcher_id,
+                "worker_names": worker_names,
+                "environment_ids": environment_ids,
+                "limit": limit,
+                "lease_seconds": lease_seconds,
+            },
+        )
+
+    def claim_question_executions(
+        self,
+        dispatcher_id: str,
+        worker_names: list[str],
+        environment_ids: list[str],
+        *,
+        limit: int = 1,
+        lease_seconds: int = 60,
+    ) -> ApiResult:
+        return self._request_json(
+            "POST",
+            "/dispatcher/question-executions/claim",
+            json={
+                "dispatcher_id": dispatcher_id,
+                "worker_names": worker_names,
+                "environment_ids": environment_ids,
+                "limit": limit,
+                "lease_seconds": lease_seconds,
+            },
+        )
+
+    def lease_intent_execution(
+        self,
+        project_id: str,
+        intent_id: str,
+        *,
+        dispatcher_id: str,
+        worker_name: str,
+        worker_type: str | None = None,
+        environment_id: str | None = None,
+        endpoint_id: str | None = None,
+        model_profile_id: str | None = None,
+        workspace: str | None = None,
+        task_type: str = "explore",
+        phase: str = "run",
+        lease_seconds: int = 60,
+        allow_parallel: bool = False,
+    ) -> ApiResult:
+        return self._request_json(
+            "POST",
+            f"/dispatcher/intents/{intent_id}/lease-execution",
+            json={
+                "project_id": project_id,
+                "dispatcher_id": dispatcher_id,
+                "worker_name": worker_name,
+                "worker_type": worker_type,
+                "environment_id": environment_id,
+                "endpoint_id": endpoint_id,
+                "model_profile_id": model_profile_id,
+                "workspace": workspace,
+                "task_type": task_type,
+                "phase": phase,
+                "lease_seconds": lease_seconds,
+                "allow_parallel": allow_parallel,
+            },
+        )
+
+    def heartbeat_execution(self, execution_id: str, *, dispatcher_id: str, lease_seconds: int = 60) -> ApiResult:
+        return self.patch_execution(
+            execution_id,
+            {
+                "dispatcher_id": dispatcher_id,
+                "last_heartbeat_at": None,
+                "lease_seconds": lease_seconds,
+            },
+        )
+
+    def patch_execution(self, execution_id: str, payload: dict[str, Any]) -> ApiResult:
+        return self._request_json(
+            "PATCH",
+            f"/dispatcher/executions/{execution_id}",
+            json=payload,
+        )
+
+    def append_execution_events(
+        self,
+        execution_id: str,
+        *,
+        dispatcher_id: str | None = None,
+        events: list[dict[str, Any]],
+    ) -> ApiResult:
+        return self._request_json(
+            "POST",
+            f"/dispatcher/executions/{execution_id}/events",
+            json={"dispatcher_id": dispatcher_id, "events": events},
+        )
+
+    def upload_execution_artifact(self, execution_id: str, payload: dict[str, Any]) -> ApiResult:
+        return self._request_json(
+            "POST",
+            f"/dispatcher/executions/{execution_id}/artifacts",
+            json=payload,
+        )
+
+    def submit_execution_conclusion_report(self, execution_id: str, payload: dict[str, Any]) -> ApiResult:
+        return self._request_json(
+            "POST",
+            f"/dispatcher/executions/{execution_id}/conclusion-report",
+            json=payload,
+        )
 
     def upsert_run_provenance(self, project_id: str, payload: dict[str, Any]) -> ApiResult:
         return self._request_json(

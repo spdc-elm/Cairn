@@ -11,7 +11,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cairn.server.models import ProviderEndpointPublic
+from cairn.shared.api_models import ProviderEndpointPublic
 
 
 TaskType = Literal["reason", "explore", "bootstrap"]

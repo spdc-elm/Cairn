@@ -15,6 +15,7 @@ from cairn.dispatcher.prompting import (
 from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.runtime.cancellation import TaskCancellation
 from cairn.dispatcher.runtime.environments.base import WorkEnvironment
+from cairn.dispatcher.runtime.event_sink import ExecutionEventSink
 from cairn.dispatcher.runtime.heartbeat import HeartbeatLease
 from cairn.dispatcher.tasks.common import (
     best_effort_release_reason,
@@ -27,9 +28,10 @@ from cairn.dispatcher.tasks.common import (
     run_worker_process,
     worker_health_from_healthcheck,
     write_graph_snapshot_reference,
+    _worker_secrets,
 )
 from cairn.dispatcher.workers.registry import get_driver
-from cairn.server.models import ProjectDetail
+from cairn.shared.api_models import ProjectDetail
 
 LOG = logging.getLogger(__name__)
 
@@ -42,11 +44,16 @@ def run_reason_task(
     export_yaml: str,
     worker: WorkerConfig,
     cancellation: TaskCancellation,
+    execution_id: str | None = None,
 ) -> str:
     driver = get_driver(worker.type)
     task_started = time.perf_counter()
     healthcheck_timeout = config.runtime.healthcheck_timeout
-    lease = HeartbeatLease.for_reason(client, project.project.id, worker.name, config.runtime.interval)
+    lease = (
+        HeartbeatLease.for_execution(client, execution_id, worker.name, config.runtime.interval)
+        if execution_id is not None
+        else HeartbeatLease.for_reason(client, project.project.id, worker.name, config.runtime.interval)
+    )
     lease.start()
     try:
         handle = environment.prepare_project(project.project.id)
@@ -154,10 +161,11 @@ def run_reason_task(
             lease=lease,
             cancellation=cancellation,
             provenance_recorder=HttpRunProvenanceRecorder(client),
+            event_sink=ExecutionEventSink(client, execution_id, secrets=_worker_secrets(worker)) if execution_id is not None else None,
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
         total_ms = int((time.perf_counter() - task_started) * 1000)
-        session = record_remote_session(client, project.project.id, result, driver, session)
+        session = record_remote_session(client, project.project.id, result, driver, session, execution_id=execution_id)
         cancelled = cancel_reason(result, cancellation)
         if cancelled is not None:
             LOG.info(

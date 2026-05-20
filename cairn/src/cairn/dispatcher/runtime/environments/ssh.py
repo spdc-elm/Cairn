@@ -564,7 +564,7 @@ class SshManagedProcess:
         self.kill()
 
     def _read_stream(self, stream, target: list[str], name: str) -> None:
-        for chunk in iter(lambda: stream.read(4096), ""):
+        for chunk in iter(stream.readline, ""):
             if not chunk:
                 break
             target.append(chunk)

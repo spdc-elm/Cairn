@@ -16,6 +16,7 @@ class RunningTask:
     endpoint_id: str | None = None
     model_profile_id: str | None = None
     intent_id: str | None = None
+    execution_id: str | None = None
     fact_count: int | None = None
     hint_count: int | None = None
     open_intent_count: int | None = None

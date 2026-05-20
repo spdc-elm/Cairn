@@ -13,6 +13,7 @@ from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.runtime.cancellation import TaskCancellation
 from cairn.dispatcher.runtime.environments.base import EnvironmentHandle, WorkEnvironment
 from cairn.dispatcher.runtime.heartbeat import HeartbeatLease
+from cairn.dispatcher.runtime.event_sink import CompositeRunLogger, ExecutionEventSink
 from cairn.dispatcher.runtime.process import ProcessResult
 from cairn.dispatcher.runtime.run_logs import RunLogWriter
 
@@ -33,6 +34,7 @@ class WorkerProcessRun:
     result: ProcessResult
     run_log_id: str | None = None
     run_log_path: str | None = None
+    event_flush_failed: bool = False
 
     def __getattr__(self, name: str):
         return getattr(self.result, name)
@@ -118,6 +120,7 @@ def worker_health_from_healthcheck(
     status: str,
     source: str,
     dispatcher_id: str = "dispatcher",
+    command: str | None = None,
 ) -> dict:
     secrets = _worker_secrets(worker)
     return {
@@ -135,6 +138,7 @@ def worker_health_from_healthcheck(
             "duration_ms": healthcheck.duration_ms,
             "response_preview": redact_text(preview(healthcheck.result.stdout), secrets),
             "stderr_preview": redact_text(preview(healthcheck.result.stderr), secrets),
+            "command": redact_text(command or "", secrets),
         },
     }
 
@@ -208,6 +212,8 @@ def run_worker_process(
     cancellation: TaskCancellation | None = None,
     extra_metadata: dict | None = None,
     provenance_recorder: RunProvenanceRecorder | None = None,
+    event_sink: ExecutionEventSink | None = None,
+    close_event_sink_on_finish: bool = True,
 ) -> WorkerProcessRun:
     LOG.info(
         "starting work environment process environment=%s backend=%s target=%s worker=%s phase=%s timeout=%ss",
@@ -218,7 +224,7 @@ def run_worker_process(
         phase,
         timeout_seconds,
     )
-    run_logger = None
+    jsonl_logger = None
     if project_id is not None and task_type is not None:
         run_metadata = {
             "container": handle.target_name if environment.backend == "docker" else None,
@@ -231,7 +237,7 @@ def run_worker_process(
             "timeout_seconds": timeout_seconds,
             "argv0": argv[0] if argv else None,
         } | (extra_metadata or {})
-        run_logger = RunLogWriter(
+        jsonl_logger = RunLogWriter(
             project_id=project_id,
             task_type=task_type,
             phase=phase,
@@ -244,7 +250,7 @@ def run_worker_process(
             _safe_start_run_provenance(
                 provenance_recorder,
                 project_id=project_id,
-                run_log_id=run_logger.run_id,
+                run_log_id=jsonl_logger.run_id,
                 intent_id=intent_id,
                 task_type=task_type,
                 phase=phase,
@@ -258,9 +264,12 @@ def run_worker_process(
             intent_id,
             worker.name,
             phase,
-            run_logger.run_id,
-            run_logger.path,
+            jsonl_logger.run_id,
+            jsonl_logger.path,
         )
+    if event_sink is not None:
+        event_sink.write_status("running")
+    run_logger = CompositeRunLogger(jsonl_logger, event_sink)
     process = environment.build_process(
         handle,
         dict(worker.env),
@@ -275,19 +284,29 @@ def run_worker_process(
         cancellation.attach_process(process)
     try:
         result = process.communicate(timeout=communicate_timeout(timeout_seconds))
-        if run_logger is not None:
+        event_flush_failed = False
+        if jsonl_logger is not None or event_sink is not None:
             run_logger.finish(
                 returncode=result.returncode,
                 timed_out=result.timed_out,
                 cancelled=result.cancelled,
                 cancel_reason=result.cancel_reason,
             )
-            if provenance_recorder is not None and project_id is not None:
-                _safe_finish_run_provenance(provenance_recorder, project_id, run_logger.run_id, result)
+            if event_sink is not None and close_event_sink_on_finish:
+                terminal_status = "cancelled" if result.cancelled else ("succeeded" if result.returncode == 0 else "failed")
+                event_flush_failed = not event_sink.close(
+                    terminal_status=terminal_status,
+                    returncode=result.returncode,
+                    error_code="timeout" if result.timed_out else None,
+                    error_detail=result.cancel_reason,
+                )
+            if provenance_recorder is not None and project_id is not None and jsonl_logger is not None:
+                _safe_finish_run_provenance(provenance_recorder, project_id, jsonl_logger.run_id, result)
         return WorkerProcessRun(
             result=result,
-            run_log_id=run_logger.run_id if run_logger is not None else None,
-            run_log_path=str(run_logger.path) if run_logger is not None else None,
+            run_log_id=jsonl_logger.run_id if jsonl_logger is not None else None,
+            run_log_path=str(jsonl_logger.path) if jsonl_logger is not None else None,
+            event_flush_failed=event_flush_failed,
         )
     finally:
         if lease is not None:
@@ -392,8 +411,26 @@ def record_remote_session(
     run: WorkerProcessRun,
     driver,
     prepared_session: str | None,
+    execution_id: str | None = None,
 ) -> str | None:
     session = driver.extract_session_provenance(prepared_session, run.stdout, run.stderr)
+    if execution_id is not None:
+        response = client.patch_execution(
+            execution_id,
+            {
+                "remote_session_out_kind": session.kind,
+                "remote_session_out_id": session.id,
+                "remote_session_out_status": session.status,
+            },
+        )
+        if not response.ok:
+            LOG.warning(
+                "execution session update failed project=%s execution=%s status=%s body=%s",
+                project_id,
+                execution_id,
+                response.status_code,
+                response.text,
+            )
     if run.run_log_id is None:
         return session.id
     response = client.update_run_session(

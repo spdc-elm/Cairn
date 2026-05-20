@@ -19,11 +19,12 @@ from cairn.dispatcher.runtime.startup_healthcheck import format_failure_summary,
 from cairn.dispatcher.scheduler.worker_select import choose_worker
 from cairn.dispatcher.tasks.bootstrap import run_bootstrap_task
 from cairn.dispatcher.tasks.explore import run_explore_task
+from cairn.dispatcher.tasks.healthcheck import run_healthcheck_task
 from cairn.dispatcher.tasks.questions import run_question_task
 from cairn.dispatcher.tasks.reason import run_reason_task
 from cairn.dispatcher.workers.registry import get_driver
-from cairn.server.models import Intent, ProjectDetail, ProjectSummary
-from cairn.server.models import WorkEnvironmentPublic
+from cairn.shared.api_models import Intent, ProjectDetail, ProjectSummary
+from cairn.shared.api_models import WorkEnvironmentPublic
 
 LOG = logging.getLogger(__name__)
 UNHEALTHY_RETRY_AFTER_SECONDS = 5
@@ -145,6 +146,7 @@ class DispatcherLoop:
                     self._refresh_environment_registry()
                     self._reap_futures()
                     self._reap_cleanup_futures()
+                    self._try_dispatch_healthcheck_execution()
                     self._try_dispatch_question_job()
                     summaries = self.client.list_projects()
                     self._initialize_reason_checkpoints(summaries)
@@ -430,7 +432,46 @@ class DispatcherLoop:
         if worker is None:
             return False
         self._clear_log_state(f"project:{project.project.id}:worker:reason")
-        claim = self.client.claim_reason(project.project.id, worker.name, trigger)
+        created = self.client.create_execution(
+            project.project.id,
+            {
+                "task_type": "reason",
+                "phase": "run",
+                "input_snapshot": {"trigger": trigger},
+            },
+        )
+        if created.status_code in (403, 409):
+            level = logging.INFO if created.status_code == 403 else logging.WARNING
+            LOG.log(
+                level,
+                "reason execution create failed project=%s worker=%s status=%s",
+                project.project.id,
+                worker.name,
+                created.status_code,
+            )
+            return False
+        if not created.ok:
+            LOG.warning(
+                "reason execution create failed project=%s worker=%s status=%s",
+                project.project.id,
+                worker.name,
+                created.status_code,
+            )
+            return False
+        execution_id = _execution_id_from_response(created.data)
+        if execution_id is None:
+            LOG.warning("reason execution create returned no id project=%s worker=%s", project.project.id, worker.name)
+            return False
+        claim = self.client.lease_pending_execution(
+            execution_id,
+            dispatcher_id="dispatcher",
+            worker_name=worker.name,
+            worker_type=worker.type,
+            environment_id=environment.id,
+            endpoint_id=worker.endpoint,
+            model_profile_id=worker.model_profile,
+            workspace=project.project.planned_workspace,
+        )
         if claim.status_code in (403, 409):
             level = logging.INFO if claim.status_code == 403 else logging.WARNING
             LOG.log(
@@ -459,6 +500,7 @@ class DispatcherLoop:
                 export_yaml,
                 worker,
                 cancellation := TaskCancellation(),
+                execution_id,
             )
         except Exception:
             LOG.exception("failed to submit reason task project=%s worker=%s", project.project.id, worker.name)
@@ -474,6 +516,7 @@ class DispatcherLoop:
             endpoint_id=worker.endpoint,
             model_profile_id=worker.model_profile,
             intent_id=None,
+            execution_id=execution_id,
             fact_count=len(project.facts),
             hint_count=len(project.hints),
             open_intent_count=self._project_open_intent_count(project),
@@ -502,7 +545,19 @@ class DispatcherLoop:
         if worker is None:
             return False
         self._clear_log_state(f"project:{project.project.id}:worker:bootstrap")
-        claim = self.client.heartbeat(project.project.id, intent.id, worker.name)
+        claim = self.client.lease_intent_execution(
+            project.project.id,
+            intent.id,
+            dispatcher_id="dispatcher",
+            worker_name=worker.name,
+            worker_type=worker.type,
+            environment_id=environment.id,
+            endpoint_id=worker.endpoint,
+            model_profile_id=worker.model_profile,
+            workspace=project.project.planned_workspace,
+            task_type="explore",
+            phase="bootstrap",
+        )
         if claim.status_code in (403, 409):
             level = logging.INFO if claim.status_code == 403 else logging.WARNING
             LOG.log(
@@ -523,6 +578,10 @@ class DispatcherLoop:
                 claim.status_code,
             )
             return False
+        execution_id = _execution_id_from_response(claim.data)
+        if execution_id is None:
+            LOG.warning("bootstrap claim returned no execution id project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
+            return False
         try:
             future = self.executor.submit(
                 run_bootstrap_task,
@@ -533,6 +592,7 @@ class DispatcherLoop:
                 intent,
                 worker,
                 cancellation := TaskCancellation(),
+                execution_id,
             )
         except Exception:
             LOG.exception("failed to submit bootstrap task project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
@@ -548,6 +608,7 @@ class DispatcherLoop:
             endpoint_id=worker.endpoint,
             model_profile_id=worker.model_profile,
             intent_id=intent.id,
+            execution_id=execution_id,
         )
         self.runtime_project_ids.add(project.project.id)
         self._clear_project_log_state(project.project.id)
@@ -579,7 +640,19 @@ class DispatcherLoop:
         if worker is None:
             return False
         self._clear_log_state(f"project:{project.project.id}:worker:explore")
-        claim = self.client.heartbeat(project.project.id, intent.id, worker.name)
+        claim = self.client.lease_intent_execution(
+            project.project.id,
+            intent.id,
+            dispatcher_id="dispatcher",
+            worker_name=worker.name,
+            worker_type=worker.type,
+            environment_id=environment.id,
+            endpoint_id=worker.endpoint,
+            model_profile_id=worker.model_profile,
+            workspace=project.project.planned_workspace,
+            task_type="explore",
+            phase="run",
+        )
         if claim.status_code in (403, 409):
             level = logging.INFO if claim.status_code == 403 else logging.WARNING
             LOG.log(
@@ -600,6 +673,10 @@ class DispatcherLoop:
                 claim.status_code,
             )
             return False
+        execution_id = _execution_id_from_response(claim.data)
+        if execution_id is None:
+            LOG.warning("explore claim returned no execution id project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
+            return False
         try:
             future = self.executor.submit(
                 run_explore_task,
@@ -611,6 +688,7 @@ class DispatcherLoop:
                 intent,
                 worker,
                 cancellation := TaskCancellation(),
+                execution_id,
             )
         except Exception:
             LOG.exception("failed to submit explore task project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
@@ -626,6 +704,7 @@ class DispatcherLoop:
             endpoint_id=worker.endpoint,
             model_profile_id=worker.model_profile,
             intent_id=intent.id,
+            execution_id=execution_id,
         )
         self.runtime_project_ids.add(project.project.id)
         self._clear_project_log_state(project.project.id)
@@ -955,7 +1034,7 @@ class DispatcherLoop:
                     )
                 else:
                     self.worker_unhealthy_until.pop(health_key, None)
-                    if outcome == "success":
+                    if outcome == "success" and task.task_type != "healthcheck":
                         self._publish_worker_health([self._ok_health_for_task(task)])
                 rejection_key = (task.project_id, task.task_type, task.worker_name)
                 if outcome == "rejected":
@@ -1067,6 +1146,8 @@ class DispatcherLoop:
     def _cancel_inactive_tasks(self, summaries: list[ProjectSummary]) -> None:
         status_by_project = {summary.id: summary.status for summary in summaries}
         for task in self.futures.values():
+            if task.task_type == "healthcheck":
+                continue
             status = status_by_project.get(task.project_id, "deleted")
             if status != "active" and task.cancellation.cancel(status):
                 LOG.info(
@@ -1190,6 +1271,93 @@ class DispatcherLoop:
         else:
             LOG.info("worker inventory publish skipped status=%s body=%s", response.status_code, response.text)
 
+    def _try_dispatch_healthcheck_execution(self) -> bool:
+        if len(self.futures) >= self.config.runtime.max_workers:
+            return False
+        running_counts = self._worker_counts()
+        available_workers = [
+            worker.name
+            for worker in self.config.workers
+            if running_counts.get(worker.name, 0) < worker.max_running
+        ]
+        if not available_workers:
+            return False
+        limit = max(1, min(self.config.runtime.max_workers - len(self.futures), len(available_workers)))
+        claim = self.client.claim_healthcheck_executions(
+            "dispatcher",
+            available_workers,
+            list(self.environments),
+            limit=limit,
+            lease_seconds=max(60, self.config.runtime.healthcheck_timeout + 20),
+        )
+        if not claim.ok or not isinstance(claim.data, list) or not claim.data:
+            return False
+        dispatched = False
+        for execution in claim.data:
+            worker_name = execution.get("worker_name") if isinstance(execution, dict) else None
+            environment_id = execution.get("environment_id") if isinstance(execution, dict) else None
+            execution_id = execution.get("id") if isinstance(execution, dict) else None
+            project_id = execution.get("project_id") if isinstance(execution, dict) else None
+            worker = next((candidate for candidate in self.config.workers if candidate.name == worker_name), None)
+            environment = self.environments.get(environment_id or "")
+            if worker is None or environment is None or not execution_id or not project_id:
+                if execution_id:
+                    self.client.patch_execution(
+                        execution_id,
+                        {
+                            "status": "failed",
+                            "error_code": "healthcheck_target_unavailable",
+                            "error_detail": "worker or environment is not configured",
+                        },
+                    )
+                continue
+            resolved_worker = self._worker_with_environment_endpoint(worker, environment.id)
+            if resolved_worker is None:
+                self.client.patch_execution(
+                    execution_id,
+                    {
+                        "status": "failed",
+                        "error_code": "worker_endpoint_unavailable",
+                        "error_detail": "worker endpoint unavailable",
+                    },
+                )
+                continue
+            try:
+                future = self.executor.submit(
+                    run_healthcheck_task,
+                    self.config,
+                    self.client,
+                    environment,
+                    resolved_worker,
+                    cancellation := TaskCancellation(),
+                    execution_id,
+                )
+            except Exception:
+                LOG.exception("failed to submit healthcheck execution=%s worker=%s", execution_id, worker.name)
+                self.client.patch_execution(
+                    execution_id,
+                    {
+                        "status": "failed",
+                        "error_code": "healthcheck_submit_failed",
+                        "error_detail": "failed to submit healthcheck task",
+                    },
+                )
+                continue
+            self.futures[future] = RunningTask(
+                project_id,
+                "healthcheck",
+                resolved_worker.name,
+                cancellation,
+                environment_id=environment.id,
+                worker_type=resolved_worker.type,
+                endpoint_id=resolved_worker.endpoint,
+                model_profile_id=resolved_worker.model_profile,
+                execution_id=execution_id,
+            )
+            LOG.info("dispatched healthcheck execution=%s environment=%s worker=%s", execution_id, environment.id, resolved_worker.name)
+            dispatched = True
+        return dispatched
+
     def _try_dispatch_question_job(self) -> bool:
         if len(self.futures) >= self.config.runtime.max_workers:
             return False
@@ -1197,24 +1365,45 @@ class DispatcherLoop:
         available_workers = [worker.name for worker in self.config.workers if running_counts.get(worker.name, 0) < worker.max_running]
         if not available_workers:
             return False
-        claim = self.client.claim_question_job("dispatcher", available_workers, list(self.environments), limit=1)
-        if not claim.ok or not isinstance(claim.data, dict) or not claim.data.get("job"):
+        claim = self.client.claim_question_executions("dispatcher", available_workers, list(self.environments), limit=1)
+        if not claim.ok or not isinstance(claim.data, list) or not claim.data:
             return False
-        job = claim.data["job"]
+        job = claim.data[0]
         worker_name = job.get("worker_name")
         worker = next((candidate for candidate in self.config.workers if candidate.name == worker_name), None)
         if worker is None:
-            self.client.fail_question_job(job["id"], "dispatcher", "worker_not_available", f"worker not configured: {worker_name}")
+            self.client.patch_execution(
+                job["id"],
+                {
+                    "status": "failed",
+                    "error_code": "worker_not_available",
+                    "error_detail": f"worker not configured: {worker_name}",
+                },
+            )
             return False
         project = self.client.get_project(job["project_id"])
-        execution_environment_id = job.get("execution_environment_id")
+        execution_environment_id = job.get("environment_id")
         environment = self.environments.get(execution_environment_id) if execution_environment_id else self._environment_for_project(project)
         if environment is None:
-            self.client.fail_question_job(job["id"], "dispatcher", "environment_not_available", "project environment is not configured")
+            self.client.patch_execution(
+                job["id"],
+                {
+                    "status": "failed",
+                    "error_code": "environment_not_available",
+                    "error_detail": "project environment is not configured",
+                },
+            )
             return False
         worker = self._worker_with_environment_endpoint(worker, environment.id)
         if worker is None:
-            self.client.fail_question_job(job["id"], "dispatcher", "worker_not_available", "worker endpoint unavailable")
+            self.client.patch_execution(
+                job["id"],
+                {
+                    "status": "failed",
+                    "error_code": "worker_not_available",
+                    "error_detail": "worker endpoint unavailable",
+                },
+            )
             return False
         try:
             future = self.executor.submit(
@@ -1228,8 +1417,15 @@ class DispatcherLoop:
                 cancellation := TaskCancellation(),
             )
         except Exception:
-            LOG.exception("failed to submit question task job=%s worker=%s", job["id"], worker.name)
-            self.client.fail_question_job(job["id"], "dispatcher", "worker_process_failed", "failed to submit question task")
+            LOG.exception("failed to submit question execution=%s worker=%s", job["id"], worker.name)
+            self.client.patch_execution(
+                job["id"],
+                {
+                    "status": "failed",
+                    "error_code": "worker_process_failed",
+                    "error_detail": "failed to submit question task",
+                },
+            )
             return False
         self.futures[future] = RunningTask(
             project.project.id,
@@ -1240,10 +1436,10 @@ class DispatcherLoop:
             worker_type=worker.type,
             endpoint_id=worker.endpoint,
             model_profile_id=worker.model_profile,
-            intent_id=job["id"],
+            execution_id=job["id"],
         )
         self.runtime_project_ids.add(project.project.id)
-        LOG.info("dispatched question project=%s job=%s worker=%s", project.project.id, job["id"], worker.name)
+        LOG.info("dispatched question project=%s execution=%s worker=%s", project.project.id, job["id"], worker.name)
         return True
 
     def _run_startup_healthchecks(self, *, show_commands: bool, fail_on_all: bool) -> None:
@@ -1368,3 +1564,10 @@ def _now_iso() -> str:
 
 def _future_iso(seconds: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _execution_id_from_response(data) -> str | None:
+    if not isinstance(data, dict):
+        return None
+    value = data.get("id")
+    return value if isinstance(value, str) and value else None

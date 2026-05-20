@@ -10,7 +10,7 @@ from cairn.dispatcher.redaction import redact_text
 from cairn.dispatcher.runtime.environments.base import WorkEnvironment
 from cairn.dispatcher.tasks.common import run_healthcheck
 from cairn.dispatcher.workers.registry import get_driver
-from cairn.server.models import ProviderEndpointSecret, WorkEnvironmentPublic
+from cairn.shared.api_models import ProviderEndpointSecret, WorkEnvironmentPublic
 
 LOG = logging.getLogger("runtime.startup")
 STARTUP_HEALTHCHECK_PREVIEW_LIMIT = 50

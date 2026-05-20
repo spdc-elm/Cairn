@@ -1,28 +1,17 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from cairn.dispatcher.redaction import redact_text
-
-
-DEFAULT_RUN_LOG_DIR = Path.home() / ".local" / "share" / "cairn" / "runs"
+from cairn.shared.run_logs import run_log_root
 
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
-
-def run_log_root() -> Path:
-    configured = os.environ.get("CAIRN_RUN_LOG_DIR")
-    if configured:
-        return Path(configured).expanduser()
-    return DEFAULT_RUN_LOG_DIR
 
 
 class RunLogWriter:

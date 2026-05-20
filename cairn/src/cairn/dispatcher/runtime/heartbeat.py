@@ -70,6 +70,25 @@ class HeartbeatLease:
             interval=interval,
         )
 
+    @classmethod
+    def for_execution(
+        cls,
+        client: CairnClient,
+        execution_id: str,
+        worker_name: str,
+        interval: int,
+    ) -> "HeartbeatLease":
+        return cls(
+            heartbeat=lambda: client.heartbeat_execution(
+                execution_id,
+                dispatcher_id="dispatcher",
+                lease_seconds=max(interval * HEARTBEAT_FAILURE_GRACE_MULTIPLIER, interval),
+            ),
+            scope=f"execution={execution_id}",
+            worker_name=worker_name,
+            interval=interval,
+        )
+
     def start(self) -> None:
         self._thread.start()
 

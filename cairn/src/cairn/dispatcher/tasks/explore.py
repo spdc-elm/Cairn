@@ -11,6 +11,7 @@ from cairn.dispatcher.prompting import load_prompt, render_prompt
 from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.runtime.cancellation import TaskCancellation
 from cairn.dispatcher.runtime.environments.base import EnvironmentHandle, WorkEnvironment
+from cairn.dispatcher.runtime.event_sink import ExecutionEventSink
 from cairn.dispatcher.runtime.heartbeat import HeartbeatLease
 from cairn.dispatcher.tasks.common import (
     best_effort_release,
@@ -26,6 +27,7 @@ from cairn.dispatcher.tasks.common import (
     worker_health_from_healthcheck,
     write_conclude_result,
     write_graph_snapshot_reference,
+    _worker_secrets,
 )
 from cairn.dispatcher.tasks.reports import (
     build_report_path,
@@ -34,7 +36,7 @@ from cairn.dispatcher.tasks.reports import (
     write_failure_report,
 )
 from cairn.dispatcher.workers.registry import get_driver
-from cairn.server.models import Intent, ProjectDetail
+from cairn.shared.api_models import Intent, ProjectDetail
 
 LOG = logging.getLogger(__name__)
 
@@ -48,11 +50,16 @@ def run_explore_task(
     intent: Intent,
     worker: WorkerConfig,
     cancellation: TaskCancellation | None,
+    execution_id: str | None = None,
 ) -> str:
     driver = get_driver(worker.type)
     task_started = time.perf_counter()
     healthcheck_timeout = config.runtime.healthcheck_timeout
-    lease = HeartbeatLease.for_intent(client, project.project.id, intent.id, worker.name, config.runtime.interval)
+    lease = (
+        HeartbeatLease.for_execution(client, execution_id, worker.name, config.runtime.interval)
+        if execution_id is not None
+        else HeartbeatLease.for_intent(client, project.project.id, intent.id, worker.name, config.runtime.interval)
+    )
     lease.start()
     try:
         handle = environment.prepare_project(project.project.id)
@@ -167,9 +174,10 @@ def run_explore_task(
             lease=lease,
             cancellation=cancellation,
             client=client,
+            execution_id=execution_id,
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
-        session = record_remote_session(client, project.project.id, first, driver, session)
+        session = record_remote_session(client, project.project.id, first, driver, session, execution_id=execution_id)
         cancelled = cancel_reason(first, cancellation)
         if cancelled is not None:
             if cancelled == "conclude_requested":
@@ -575,7 +583,9 @@ def _run_process(
     lease: HeartbeatLease,
     cancellation: TaskCancellation,
     client: CairnClient,
+    execution_id: str | None = None,
 ):
+    event_sink = ExecutionEventSink(client, execution_id, secrets=_worker_secrets(worker)) if execution_id is not None else None
     return run_worker_process(
         environment,
         handle,
@@ -589,6 +599,7 @@ def _run_process(
         lease=lease,
         cancellation=cancellation,
         provenance_recorder=HttpRunProvenanceRecorder(client),
+        event_sink=event_sink,
         extra_metadata={
             "report_path": report_path,
             "report_run_id": run_id,
