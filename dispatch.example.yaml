@@ -65,11 +65,12 @@ model_profiles:
 
 workers:
   # Worker priority is ascending: lower numbers are preferred first.
-  # endpoint is resolved from the selected server-side environment.
+  # endpoint must match the provider endpoint ID configured in the web UI Environment screen.
+  # It is an ID lookup, not a URL; base_url/provider_api/api_key live in the server database.
   - name: "claudecode-example"
     type: "claudecode"
     model_profile: "claudecode-example"
-    endpoint: "claudecode-example"
+    endpoint: "claudecode-default"
     task_types: [bootstrap, reason, explore]
     max_running: 2
     priority: 0
@@ -77,7 +78,7 @@ workers:
   - name: "codex-example"
     type: "codex"
     model_profile: "codex-example"
-    endpoint: "codex-example"
+    endpoint: "codex-default"
     task_types: [bootstrap, reason, explore]
     max_running: 2
     priority: 0
@@ -88,7 +89,7 @@ workers:
   - name: "pi-example"
     type: "pi"
     model_profile: "pi-example"
-    endpoint: "pi-example"
+    endpoint: "pi-default"
     task_types: [bootstrap, reason, explore]
     max_running: 2
     priority: 0

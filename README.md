@@ -5,6 +5,10 @@
 # Cairn
 ### More Than Just AI Penetration Testing — Towards General State-Space Search
 
+**Current self-developed MVP: `v1.3.2`**
+
+This line has diverged from the original upstream release track. The `1` prefix marks the current self-developed product line; `3.2` maps to the v3.2 live conversation thread milestone.
+
 <p>
   <a href="https://zc.tencent.com/hackathon" target="_blank" rel="noopener noreferrer">
     <img src="./README/tencent.png" alt="Tencent" height="55" />
@@ -45,15 +49,24 @@ This structure is not unique to penetration testing. Vulnerability research, mat
 
 Cairn is built for this class of problems. Penetration testing is the first domain it has been validated on.
 
-The engine is built on a **Blackboard Architecture** with an explicit fact-intent graph. Three primitives are all it needs:
+The engine is built on a **Blackboard Architecture** with an explicit fact-intent graph. The user-facing search model stays small:
 
 | Concept | Meaning |
 |---------|---------|
-| **Fact** | A confirmed, objective finding written to the board |
-| **Intent** | A declared direction of exploration, not yet executed |
-| **Hint** | Human judgment injected at any time; absorbed by agents on the next read |
+| **Fact** | A useful result node written back to the board after an exploration step |
+| **Intent** | A work order on the graph: what should be explored next |
+| **Hint** | Human judgment injected at any time; absorbed by workers on the next read |
 
 The graph grows from `origin` toward `goal`. Every new Fact is a stepping stone; every Intent is a step into the unknown.
+
+Runtime state is kept out of the graph:
+
+| Runtime layer | Meaning |
+|---------------|---------|
+| **ExecutionRun** | One actual worker run: lease, worker identity, workspace, session, status |
+| **ExecutionEvent** | The append-only event stream for output, messages, tools, sessions, and status |
+| **Branch** | The session lineage for `resume`, `fork`, and `fresh_context` conversations |
+| **Environment** | The place work runs: Docker container, SSH workspace, or another backend |
 
 Agent Workers run an OODA loop — Observe the full graph, Orient to the current state, Decide on next intents, Act to explore — and write their findings back as new Facts. Workers have no fixed roles. Tasks are generated at runtime from the graph's current state, not from predefined job descriptions.
 
@@ -66,44 +79,55 @@ https://github.com/user-attachments/assets/e557b1ac-dda4-41cb-87dd-9d56dbf05133
 
 ## How It Works
 
-Three task types, all executed by the same Worker:
+Four task types, all executed by the same Worker:
 
 | Task | What it does | Output |
 |------|-------------|--------|
 | **Bootstrap** | At project start, attempts to solve the problem directly | Fact + possible Complete |
 | **Reason** | Reads the full graph: is the goal met? What should be explored next? | Complete / new Intents / no-op |
 | **Explore** | Claims one Intent, executes the exploration, reports findings | One Fact |
+| **Question** | Lets the user ask follow-up questions against a run/session | ExecutionEvents, optional promoted Fact |
 
 System architecture:
 
 ```
-          ┌──────────────────────────────────┐
-          │           Cairn Server           │
-          │    Facts + Intents + Hints       │
-          └─────────────────┬────────────────┘
-                            │
-                     Read / Write API
-                            │
-          ┌─────────────────┴────────────────┐
-          │             Dispatcher           │
-          │   Schedules tasks, manages       │
-          │   containers, writes protocol    │
-          └──────────┬───────────────┬───────┘
-                     │               │
-     ┌───────────────┴──┐     ┌──────┴──────────────┐
-     │  Worker Container│     │  Worker Container   │
-     │   (Project A)    │     │   (Project B)       │
-     │  ┌────┐  ┌────┐  │     │  ┌────┐  ┌────┐     │
-     │  │ W. │  │ W. │  │     │  │ W. │  │ W. │     │
-     │  └────┘  └────┘  │     │  └────┘  └────┘     │
-     └──────────────────┘     └─────────────────────┘
+          ┌──────────────────────────────────────┐
+          │             Cairn Server             │
+          │  UI + API + Fact/Intent DAG          │
+          │  ExecutionRun/Event + Branch ledger  │
+          └──────────────────┬───────────────────┘
+                             │
+                      HTTP read/write API
+                             │
+          ┌──────────────────┴───────────────────┐
+          │              Dispatcher              │
+          │  Schedules work, runs workers,        │
+          │  streams ExecutionEvents back         │
+          └───────────┬────────────────┬─────────┘
+                      │                │
+       ┌──────────────┴─────┐   ┌──────┴──────────────┐
+       │ Docker Environment │   │ SSH Environment      │
+       │ per-project space  │   │ remote workspace     │
+       └──────────────┬─────┘   └──────┬──────────────┘
+                      │                │
+                Claude / Codex / Pi workers
 ```
 
-**Cairn Server** maintains graph consistency only.
+**Cairn Server** owns the UI, API, graph consistency, execution ledger, branch timelines, and persisted artifacts.
 
-**Cairn Dispatcher** reads the graph, schedules tasks, spins up and tears down worker containers, and is the sole writer to the protocol. Each project gets its own Worker Container; multiple Agent Workers run concurrently inside it. Agent Workers only receive a prompt and return structured output.
+**Cairn Dispatcher** reads pending work, chooses healthy workers, prepares the selected environment, runs the agent command, and streams stdout/stderr/message/tool/session events back to the server.
 
 Supported worker backends: **Claude Code**, **Codex**, and **Pi**.
+
+Supported execution environments: **Docker** and **SSH**.
+
+Live conversation support in this MVP:
+
+| Mode | Behavior |
+|------|----------|
+| **resume** | Continues the source session and persists the reply into the main Output history |
+| **fork** | Creates a temporary branch, supports multi-turn context, and stays in the Ask panel until closed |
+| **fresh_context** | Starts without remote session lineage and stays temporary |
 
 ## Results
 
@@ -129,18 +153,128 @@ Supported worker backends: **Claude Code**, **Codex**, and **Pi**.
  
 - macOS or Linux
 - Python ≥ 3.12
+- [uv](https://docs.astral.sh/uv/)
 - Docker
+- A worker CLI you plan to use: Claude Code, Codex, or Pi
 
+### Development mode with UV
+
+This is the recommended path when hacking on Cairn itself. It runs directly from the local source tree, so code changes are picked up without rebuilding an image.
+
+```bash
+# 1. Prepare a local dispatcher config
+cp dispatch.example.yaml dispatch.dev.yaml
+
+# 2. For local host development, make sure dispatch.dev.yaml points at:
+# server: "http://127.0.0.1:8000"
+#
+# Then configure workers/model profiles in dispatch.dev.yaml and add provider
+# endpoints/API keys in the server Environment UI.
+
+# 3. Initialize or migrate the local development database
+uv run --project cairn cairn db migrate --db-path cairn.local.db
+
+# 4. Start the API server and built-in web UI
+uv run --project cairn cairn serve --db-path cairn.local.db --host 127.0.0.1 --port 8000
+
+# 5. In another terminal, run startup checks
+uv run --project cairn cairn dispatch --config dispatch.dev.yaml --startup-healthcheck-only
+
+# 6. Start the dispatcher
+uv run --project cairn cairn dispatch --config dispatch.dev.yaml
+```
+
+Open the UI at <http://127.0.0.1:8000>. The web frontend is served by `cairn serve`; there is no separate frontend dev server in the current MVP.
+
+### Dispatcher config
+
+`dispatch.dev.yaml` tells the dispatcher which server to talk to, which worker commands are available, and how much concurrency each worker may use. Provider URLs and API keys are not stored in this YAML; add them in the web UI under Environment.
+
+Minimal local shape:
+
+```yaml
+server: "http://127.0.0.1:8000"
+
+runtime:
+  interval: 3
+  max_workers: 4
+  max_running_projects: 2
+  max_project_workers: 4
+  healthcheck_timeout: 20
+  prompt_group: "default"
+
+tasks:
+  bootstrap:
+    timeout: 300
+    conclude_timeout: 90
+  reason:
+    timeout: 300
+    max_intents: 2
+  explore:
+    timeout: 300
+    conclude_timeout: 90
+
+container:
+  image: "ghcr.io/oritera/cairn-worker-container:latest"
+  platform: "linux/amd64"
+  network_mode: "host"
+  completed_action: "stop"
+
+model_profiles:
+  - id: "pi-main"
+    type: "pi"
+    model: "gpt-5.4"
+    context_window: 262144
+
+workers:
+  - name: "pi-agent"
+    type: "pi"
+    model_profile: "pi-main"
+    endpoint: "pi-default"
+    task_types: [bootstrap, reason, explore]
+    max_running: 2
+    priority: 0
+```
+
+Important fields:
+
+| Field | Meaning |
+|-------|---------|
+| `model_profiles[].id` | Local profile name used by workers through `model_profile` |
+| `model_profiles[].type` | Worker adapter type: `pi`, `codex`, `claudecode`, or `mock` |
+| `model_profiles[].model` | Model name passed to the worker CLI |
+| `workers[].name` | Dispatcher-side worker name shown in health/runtime status |
+| `workers[].type` | Must match the intended adapter type |
+| `workers[].model_profile` | Must equal one `model_profiles[].id` |
+| `workers[].endpoint` | Must equal the provider endpoint ID you created in the web UI Environment screen |
+| `workers[].task_types` | Which task kinds this worker can claim |
+
+For example, if the web UI Environment endpoint ID is `pi-default`, then the YAML worker must use `endpoint: "pi-default"`. This is an ID lookup, not a base URL. The base URL, provider API type, and API key live in the server database through the web UI.
+
+Useful development commands:
+
+```bash
+# Check migration state
+uv run --project cairn cairn db status --db-path cairn.local.db
+
+# Recreate a v3.2 database, keeping an ignored backup beside it
+uv run --project cairn cairn db reset --to v3.2 --db-path cairn.local.db --yes
+
+# Run the test suite
+env PYTHONPATH=cairn/src python -m pytest cairn/tests -q
+```
+
+`cairn.local.db`, `cairn.local.db-*`, and `cairn.local.db.bak-*` are gitignored.
 
 ### Pull required images
  
-Both setup methods require the worker container image:
+Docker environments require the worker container image:
  
 ```bash
 docker pull --platform=linux/amd64 ghcr.io/oritera/cairn-worker-container:latest
 ```
  
-### Docker Compose (recommended)
+### Docker Compose
  
 Pull the base image used to build Cairn:
  
@@ -155,21 +289,6 @@ docker compose up --build
 ```
  
 This starts `cairn-server` on port `8000` and `cairn-dispatcher` once the server passes its health check. The dispatcher mounts `dispatch.dev.yaml` from the project root and connects to Docker via the host socket. Data is persisted to `./datas/cairn/`.
- 
-### Manual
- 
-Copy `dispatch.example.yaml` to gitignored `dispatch.dev.yaml`, configure model profiles/workers there, then add provider endpoints and API keys in the server Environment UI:
- 
-```bash
-# Start the server
-uv run --project cairn cairn server
-
-# Run the dispatcher
-uv run --project cairn cairn dispatch --config dispatch.dev.yaml
-
-# Run startup health checks only
-uv run --project cairn cairn dispatch --config dispatch.dev.yaml --startup-healthcheck-only
-```
 
 ## Disclaimer
 
