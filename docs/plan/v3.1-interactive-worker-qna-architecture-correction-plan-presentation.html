@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cairn v3.1 Q&A Architecture Correction</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fb;
+      --ink: #172033;
+      --muted: #5c6b80;
+      --line: #d9e1eb;
+      --panel: #ffffff;
+      --blue: #1d4ed8;
+      --teal: #0f766e;
+      --amber: #b45309;
+      --rose: #be123c;
+      --green: #15803d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+    header {
+      padding: 44px min(7vw, 72px) 30px;
+      background: #edf3f8;
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--teal);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 0;
+      max-width: 1060px;
+      font-size: clamp(32px, 5vw, 60px);
+      line-height: 1.04;
+      letter-spacing: 0;
+    }
+    .lead {
+      margin: 18px 0 0;
+      max-width: 980px;
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.65;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      display: flex;
+      gap: 8px;
+      padding: 12px min(7vw, 72px);
+      background: rgba(246, 248, 251, .94);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--line);
+      overflow-x: auto;
+    }
+    button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--muted);
+      padding: 9px 13px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 800;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    button.active {
+      border-color: #9bb8e8;
+      background: #eaf2ff;
+      color: var(--blue);
+    }
+    main { padding: 28px min(7vw, 72px) 64px; }
+    .view { display: none; }
+    .view.active { display: block; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 20px;
+      box-shadow: 0 14px 34px rgba(15, 23, 42, .07);
+    }
+    h2 { margin: 0 0 16px; font-size: 23px; letter-spacing: 0; }
+    h3 { margin: 0 0 8px; font-size: 15px; letter-spacing: 0; }
+    p { margin: 0; color: var(--muted); line-height: 1.58; }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 0 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+      margin-bottom: 10px;
+      background: #eaf2ff;
+      color: var(--blue);
+    }
+    .tag.rose { background: #ffe8ee; color: var(--rose); }
+    .tag.amber { background: #fff3d9; color: var(--amber); }
+    .tag.green { background: #e7f8ed; color: var(--green); }
+    .tag.teal { background: #e4f5f2; color: var(--teal); }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      color: #334155;
+      word-break: break-word;
+    }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(80px, 1fr));
+      gap: 9px;
+      align-items: stretch;
+    }
+    .node {
+      border: 1px solid #dfe7f1;
+      border-radius: 8px;
+      background: #fbfdff;
+      padding: 13px;
+      min-height: 106px;
+    }
+    .arrow {
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-weight: 900;
+    }
+    .phase {
+      display: grid;
+      grid-template-columns: 70px 1fr;
+      gap: 14px;
+      padding: 14px 0;
+      border-top: 1px solid #e6edf5;
+    }
+    .phase:first-of-type { border-top: 0; }
+    .badge {
+      width: 52px;
+      height: 52px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: #eaf2ff;
+      color: var(--blue);
+      font-weight: 900;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td {
+      border-bottom: 1px solid #e6edf5;
+      padding: 11px 12px;
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    th { background: #f1f5fa; color: #334155; }
+    tr:last-child td { border-bottom: 0; }
+    .checklist {
+      display: grid;
+      gap: 10px;
+    }
+    .rule {
+      border-left: 4px solid var(--rose);
+      background: #fff8fa;
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .rule.good { border-left-color: var(--green); background: #f1fbf4; }
+    @media (max-width: 960px) {
+      .grid, .grid.two, .flow { grid-template-columns: 1fr; }
+      .arrow { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="eyebrow">Execution Plan · v3.1 Q&A Correction</p>
+    <h1>先钉边界，再写代码</h1>
+    <p class="lead">新计划把 server、dispatcher、driver、environment、run provenance、question runtime 的职责写成硬契约。目标不是“能跑一次”，而是防止前期边界漂移，保证后续实现可维护、可测试、可恢复。</p>
+  </header>
+
+  <nav>
+    <button class="active" data-tab="boundary">边界</button>
+    <button data-tab="flow">流转</button>
+    <button data-tab="phases">阶段</button>
+    <button data-tab="tests">测试</button>
+    <button data-tab="redlines">红线</button>
+  </nav>
+
+  <main>
+    <section id="boundary" class="view active">
+      <div class="grid">
+        <div class="panel">
+          <span class="tag teal">Server</span>
+          <h3>控制面</h3>
+          <p>保存 question runtime、resolve anchor、读 capability、promotion、transcript API。不 import driver，不连远端，不跑 worker。</p>
+        </div>
+        <div class="panel">
+          <span class="tag amber">Dispatcher</span>
+          <h3>执行面</h3>
+          <p>claim question job，选 worker/env，调用 driver，执行进程，回写 events/result/provenance。</p>
+        </div>
+        <div class="panel">
+          <span class="tag green">Driver</span>
+          <h3>backend adapter</h3>
+          <p>声明真实 capability，构造 fork/resume/fresh_context 命令，解析 session，不写 DB。</p>
+        </div>
+      </div>
+      <div class="grid two" style="margin-top:14px">
+        <div class="panel">
+          <span class="tag">Truth</span>
+          <h3>RunProvenance</h3>
+          <p>run/session 的事实源是 DB。run JSONL 是 raw transcript artifact，不负责 backfill session。</p>
+        </div>
+        <div class="panel">
+          <span class="tag">Runtime</span>
+          <h3>QuestionRuntime</h3>
+          <p>跨进程短期状态。close/TTL 后清理，不是长期 archive；resume 的 run provenance 另行保留。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="flow" class="view">
+      <div class="panel">
+        <h2>Question Job Flow</h2>
+        <div class="flow">
+          <div class="node"><span class="tag teal">Browser</span><h3>Ask</h3><p>选择 anchor、mode、message。</p></div>
+          <div class="arrow">→</div>
+          <div class="node"><span class="tag">Server</span><h3>Enqueue</h3><p>resolve、lock、create pending job。</p></div>
+          <div class="arrow">→</div>
+          <div class="node"><span class="tag amber">Dispatcher</span><h3>Claim</h3><p>按 worker/env/capability claim，带 lease 与 heartbeat。</p></div>
+          <div class="arrow">→</div>
+          <div class="node"><span class="tag green">Worker</span><h3>Run</h3><p>fork/resume/fresh_context。</p></div>
+        </div>
+        <div class="flow" style="margin-top:10px">
+          <div class="node"><span class="tag green">Events</span><h3>Stream</h3><p>append normalized events。</p></div>
+          <div class="arrow">→</div>
+          <div class="node"><span class="tag">Server</span><h3>Finish</h3><p>job succeeded/failed/cancelled，幂等收敛并 release lock。</p></div>
+          <div class="arrow">→</div>
+          <div class="node"><span class="tag teal">Browser</span><h3>Render</h3><p>poll/SSE 展示状态与回答。</p></div>
+          <div class="arrow">→</div>
+          <div class="node"><span class="tag">Promote</span><h3>Explicit</h3><p>hint/fact/intent 手动提升。</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="phases" class="view">
+      <div class="panel">
+        <h2>傻瓜式执行阶段</h2>
+        <div class="phase"><div class="badge">0</div><div><h3>Contract RED</h3><p>先写架构护栏：server 不得 import env/process/driver；POST /questions 不执行 worker；fresh_context 多轮带历史。</p></div></div>
+        <div class="phase"><div class="badge">1</div><div><h3>Question Runtime</h3><p>删除 server executor，建立 thread/job/event/lock runtime tables、TTL、startup recovery 与幂等键。</p></div></div>
+        <div class="phase"><div class="badge">2</div><div><h3>Dispatcher Execution</h3><p>新增 claim/start/events/finish/fail/cancelled/requeue，dispatcher run_question_task 统一执行。</p></div></div>
+        <div class="phase"><div class="badge">3</div><div><h3>Capability/Fork</h3><p>capability 由 dispatcher 发布；Mock fork 只作测试替身；Pi 与 Codex 真实 fork 必须交付，Claude Code 可缓做。</p></div></div>
+        <div class="phase"><div class="badge">4</div><div><h3>Provenance/Transcript</h3><p>run provenance 与 transcript 各守边界；anchor 返回 candidates 与 reason。</p></div></div>
+        <div class="phase"><div class="badge">5</div><div><h3>UI</h3><p>Output tab 展示 run selector、capability、fork/fresh/resume、async job status。</p></div></div>
+        <div class="phase"><div class="badge">6</div><div><h3>E2E</h3><p>server + dispatcher + browser 走 fact -> fork ask -> close -> fresh fallback -> resume -> promote。</p></div></div>
+      </div>
+    </section>
+
+    <section id="tests" class="view">
+      <div class="panel">
+        <h2>测试矩阵</h2>
+        <table>
+          <thead><tr><th>层级</th><th>证明内容</th><th>失败即停</th></tr></thead>
+          <tbody>
+            <tr><td>Architecture</td><td>server 无 env/process/driver 执行侧 import。</td><td>是</td></tr>
+            <tr><td>Runtime API</td><td>enqueue pending job、close/TTL、resume lock、410 tombstone、startup recovery。</td><td>是</td></tr>
+            <tr><td>Dispatcher</td><td>claim、heartbeat、requeue、cancel、run_question_task、finish/fail。</td><td>是</td></tr>
+            <tr><td>Idempotency</td><td>duplicate event append / finish / fail 不重复写 UI event 或释放锁。</td><td>是</td></tr>
+            <tr><td>Capability</td><td>fork-first、unavailable reason、Mock fork、server 读库存。</td><td>是</td></tr>
+            <tr><td>Real Fork</td><td>Pi fork 与 Codex fork 均通过 E2E。Mock 与 Claude Code 不计入 v3.1 默认验收。</td><td>是</td></tr>
+            <tr><td>Provenance</td><td>fact producing run、legacy missing、session status finalized。</td><td>是</td></tr>
+            <tr><td>Transcript</td><td>完整 JSONL 输入、normalize 后 limit、Pi coalesce、raw fallback。</td><td>是</td></tr>
+            <tr><td>UI/E2E</td><td>mode buttons、async status、resume confirm、promotion metadata。</td><td>是</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="redlines" class="view">
+      <div class="grid two">
+        <div class="panel">
+          <span class="tag rose">禁止</span>
+          <div class="checklist">
+            <div class="rule"><h3>server direct execution</h3><p>server 不得运行 worker、不得读取 secret 以执行 worker。</p></div>
+            <div class="rule"><h3>driver import in server</h3><p>server 不得 import get_driver 算 capability。</p></div>
+            <div class="rule"><h3>sync long request</h3><p>POST /questions 不得等 worker 完成。</p></div>
+            <div class="rule"><h3>resume as fork</h3><p>不得把污染原 session 的 resume 包装成 fork。</p></div>
+            <div class="rule"><h3>state without recovery</h3><p>不得用“短期不保存”为由跳过 lease、requeue、cancel 与 restart recovery。</p></div>
+            <div class="rule"><h3>mock as delivery</h3><p>不得用 Mock fork、Claude Code fork 或 unavailable reason 替代 Pi/Codex fork 交付。</p></div>
+          </div>
+        </div>
+        <div class="panel">
+          <span class="tag green">必须</span>
+          <div class="checklist">
+            <div class="rule good"><h3>real fork</h3><p>v3.1 必须做出 Pi fork 与 Codex fork；Claude Code fork 可后续补。</p></div>
+            <div class="rule good"><h3>fresh history</h3><p>fresh_context 多轮必须带历史或摘要。</p></div>
+            <div class="rule good"><h3>resume lock</h3><p>同一 source session 只能一个 active resume。</p></div>
+            <div class="rule good"><h3>source truth</h3><p>run/session 事实只信 DB provenance。</p></div>
+            <div class="rule good"><h3>event idempotency</h3><p>dispatcher 重试不得制造重复 event 或 terminal state。</p></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const buttons = Array.from(document.querySelectorAll('nav button'));
+    const views = Array.from(document.querySelectorAll('.view'));
+    function show(tab) {
+      for (const button of buttons) button.classList.toggle('active', button.dataset.tab === tab);
+      for (const view of views) view.classList.toggle('active', view.id === tab);
+      history.replaceState(null, '', '#' + tab);
+    }
+    for (const button of buttons) button.addEventListener('click', () => show(button.dataset.tab));
+    const initial = location.hash.replace('#', '');
+    if (initial && document.getElementById(initial)) show(initial);
+  </script>
+</body>
+</html>

@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cairn v3 Worker Q&A Plan</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #16202a;
+      --muted: #607084;
+      --line: #d7dee8;
+      --panel: #ffffff;
+      --bg: #f5f7fb;
+      --blue: #2563eb;
+      --teal: #0f766e;
+      --amber: #b45309;
+      --rose: #be123c;
+      --slate: #334155;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      letter-spacing: 0;
+    }
+    header {
+      min-height: 28vh;
+      padding: 48px min(7vw, 72px) 34px;
+      background:
+        linear-gradient(90deg, rgba(37, 99, 235, 0.10), rgba(15, 118, 110, 0.08)),
+        #eef3f9;
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--teal);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    h1 {
+      margin: 0;
+      max-width: 980px;
+      font-size: clamp(34px, 5vw, 66px);
+      line-height: 1.02;
+      letter-spacing: 0;
+    }
+    .lead {
+      margin: 20px 0 0;
+      max-width: 880px;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.65;
+    }
+    main {
+      padding: 34px min(7vw, 72px) 64px;
+      display: grid;
+      gap: 22px;
+    }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 24px;
+      box-shadow: 0 16px 40px rgba(15, 23, 42, 0.06);
+    }
+    h2 {
+      margin: 0 0 16px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .item {
+      border: 1px solid #e3e8f1;
+      border-radius: 8px;
+      padding: 16px;
+      background: #fbfcfe;
+      min-height: 118px;
+    }
+    .item h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+      color: var(--slate);
+    }
+    .item p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 0 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 10px;
+      background: #e8eef8;
+      color: var(--blue);
+    }
+    .tag.teal { background: #e3f3f1; color: var(--teal); }
+    .tag.amber { background: #fff1dc; color: var(--amber); }
+    .tag.rose { background: #ffe6ec; color: var(--rose); }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+    .phase {
+      border: 1px solid #dfe6ef;
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfcfe;
+      position: relative;
+    }
+    .phase strong {
+      display: block;
+      font-size: 13px;
+      color: var(--blue);
+      margin-bottom: 8px;
+    }
+    .phase span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .matrix {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    .matrix th,
+    .matrix td {
+      border-bottom: 1px solid #e5eaf1;
+      padding: 12px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .matrix th {
+      color: var(--slate);
+      background: #f8fafc;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .matrix td {
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .callout {
+      border-left: 4px solid var(--teal);
+      padding: 14px 16px;
+      background: #eefaf8;
+      color: #164e47;
+      border-radius: 8px;
+      line-height: 1.6;
+    }
+    .risks {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .risk {
+      border: 1px solid #ead7df;
+      background: #fff7f8;
+      border-radius: 8px;
+      padding: 14px;
+      color: #7f1d1d;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .footer {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    @media (max-width: 980px) {
+      .grid, .two, .flow, .risks { grid-template-columns: 1fr; }
+      header { padding: 36px 22px 26px; }
+      main { padding: 22px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="eyebrow">Cairn v3 Planning</p>
+    <h1>先把 worker run 变成可追溯事实，再让 UI 和 Q&A 站上去</h1>
+    <p class="lead">v3 的关键不是“加一个聊天框”，而是修正事实链：Fact/Intent 必须能稳定追到 producing run，再从 DB provenance 找 remote session。没有这层，fork/resume 只是看起来像上下文相关。</p>
+  </header>
+
+  <main>
+    <section>
+      <h2>核心架构</h2>
+      <div class="grid">
+        <div class="item">
+          <span class="tag">Source of Truth</span>
+          <h3>DB RunProvenance</h3>
+          <p>DB 记录 run_log_id、worker、workspace、report、remote session。JSONL 只做 raw/transcript artifact，不负责 session provenance。</p>
+        </div>
+        <div class="item">
+          <span class="tag teal">Observation</span>
+          <h3>Normalized Transcript</h3>
+          <p>先全量重建 stdout/stderr，再解析 Codex/Pi/Claude 事件，最后按 normalized events 限制输出。Pi delta 必须合并。</p>
+        </div>
+        <div class="item">
+          <span class="tag amber">Action</span>
+          <h3>Temporary Q&A</h3>
+          <p>fork/fresh_context 不入 DB，关闭即销毁 Cairn 侧 transcript。resume 是例外：确认后继续原 session，并写 run log。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>实施路线</h2>
+      <div class="flow">
+        <div class="phase"><strong>0 Contract</strong><span>先写 schema、parser、question contract 的失败测试与真实 fixture。</span></div>
+        <div class="phase"><strong>1-2 Provenance</strong><span>新增 migration；dispatcher 暴露 run_log_id；session 解析后更新 DB；fact 写 producing_run_log_id。</span></div>
+        <div class="phase"><strong>3-4 Transcript API</strong><span>完整 JSONL reader、worker parsers、runs/transcript API、anchor resolution。</span></div>
+        <div class="phase"><strong>5-6 Q&A Backend</strong><span>adapter capability、question runtime、resume lock、fresh context builder、promotion provenance。</span></div>
+        <div class="phase"><strong>7-8 UI & E2E</strong><span>Conversation panel、Q&A composer、legacy/missing 状态、8000 端口真实 smoke。</span></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>边界矩阵</h2>
+      <table class="matrix">
+        <thead>
+          <tr>
+            <th>对象</th>
+            <th>保存什么</th>
+            <th>不保存什么</th>
+            <th>失败路径</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Fact</td>
+            <td>producing_intent_id、producing_run_log_id、report_run_id、report_path</td>
+            <td>remote_session_id</td>
+            <td>旧 fact 只显示 legacy report id，session missing</td>
+          </tr>
+          <tr>
+            <td>RunProvenance</td>
+            <td>run/session/workspace/report/finish/question provenance</td>
+            <td>完整 stdout 正文</td>
+            <td>session unresolved/missing 时禁用 fork/resume</td>
+          </tr>
+          <tr>
+            <td>Run JSONL</td>
+            <td>outer stream、raw transcript、可选 session_resolved 镜像</td>
+            <td>唯一 session 索引</td>
+            <td>legacy JSONL 可 raw 查看，但不恢复 session</td>
+          </tr>
+          <tr>
+            <td>QuestionThread</td>
+            <td>短期 transcript、anchor、mode、source session status</td>
+            <td>fork/fresh_context 的 DB 持久 transcript</td>
+            <td>关闭或 TTL 后 410；resume run 仍可追溯</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>UI 改动</h2>
+      <div class="grid two">
+        <div class="item">
+          <span class="tag teal">Panel</span>
+          <h3>Detail 变轻</h3>
+          <p>Detail 只放对象元信息与主要动作。Worker Output 从 intent detail 内移走，进入独立 Conversation tab。</p>
+        </div>
+        <div class="item">
+          <span class="tag">Conversation</span>
+          <h3>结构化看 run</h3>
+          <p>Conversation / Tools / Raw 三视图。message 分角色，tool call 默认折叠，大事件内部折叠，默认最后 200 条 normalized events。</p>
+        </div>
+        <div class="item">
+          <span class="tag amber">Ask</span>
+          <h3>历史对象可追问</h3>
+          <p>已结束 exact anchor 才显示可用 fork/resume。missing anchor 只显示 fresh_context。running intent 暂不显示 Ask。</p>
+        </div>
+        <div class="item">
+          <span class="tag rose">Warning</span>
+          <h3>resume 必须确认</h3>
+          <p>resume 会继续原 remote session，可能影响远程日志和上下文；UI 必须给确认与并发冲突反馈。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>主要风险</h2>
+      <div class="risks">
+        <div class="risk"><strong>双写不一致</strong><br>DB provenance 写失败时不能假装 session 可用；UI 标 has_provenance=false。</div>
+        <div class="risk"><strong>Pi 大日志</strong><br>100MB JSONL 不能逐 delta 渲染；parser coalesce 是硬门槛。</div>
+        <div class="risk"><strong>resume 污染</strong><br>确认弹窗、session lock、timeline/run log 三件套缺一不可。</div>
+        <div class="risk"><strong>fork 过早承诺</strong><br>不凭 backend 名字猜能力；未验证 CLI 前 fork capability 关闭。</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>验收口径</h2>
+      <div class="callout">
+        最小可上线切片应先交付 Provenance + Transcript Panel：新 run 可 exact 追溯，旧数据明确 missing，Codex/Pi/Claude transcript 可结构化展示。Q&A 在此基础上接入；没有 DB provenance 的“问当时 worker”一律不许伪装。
+      </div>
+    </section>
+
+    <section class="footer">
+      <strong>实现可开始的条件：</strong>v3 spec 已确认；versioned migration runner 已存在；当前 plan 已列出 schema、API、dispatcher、parser、UI、Q&A、E2E 的阶段与验收。实现前只需决定一个小点：Claude fork 是否等本地 CLI 验证后再开启，默认建议先不开。
+    </section>
+  </main>
+</body>
+</html>

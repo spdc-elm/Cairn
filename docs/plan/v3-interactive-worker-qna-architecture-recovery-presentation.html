@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cairn v3 Q&A Architecture Recovery</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fb;
+      --ink: #172033;
+      --muted: #5e6b7f;
+      --line: #d8e0ea;
+      --panel: #ffffff;
+      --blue: #1d4ed8;
+      --teal: #0f766e;
+      --amber: #b45309;
+      --rose: #be123c;
+      --green: #15803d;
+      --shadow: rgba(15, 23, 42, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      letter-spacing: 0;
+    }
+    header {
+      padding: 44px min(7vw, 72px) 26px;
+      border-bottom: 1px solid var(--line);
+      background: #edf3f9;
+    }
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--teal);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    h1 {
+      margin: 0;
+      max-width: 980px;
+      font-size: clamp(32px, 5vw, 58px);
+      line-height: 1.04;
+      letter-spacing: 0;
+    }
+    .lead {
+      margin: 18px 0 0;
+      max-width: 920px;
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.65;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      gap: 8px;
+      padding: 12px min(7vw, 72px);
+      background: rgba(246, 248, 251, .92);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--line);
+      overflow-x: auto;
+    }
+    button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--muted);
+      padding: 9px 13px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    button.active {
+      border-color: #93b4ea;
+      background: #eaf2ff;
+      color: var(--blue);
+    }
+    main {
+      padding: 28px min(7vw, 72px) 64px;
+    }
+    .view { display: none; }
+    .view.active { display: block; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 14px 34px var(--shadow);
+    }
+    h2 { margin: 0 0 16px; font-size: 23px; letter-spacing: 0; }
+    h3 { margin: 0 0 8px; font-size: 15px; letter-spacing: 0; }
+    p { margin: 0; color: var(--muted); line-height: 1.58; }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 0 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+      margin-bottom: 10px;
+      background: #eaf2ff;
+      color: var(--blue);
+    }
+    .tag.rose { background: #ffe8ee; color: var(--rose); }
+    .tag.amber { background: #fff3d9; color: var(--amber); }
+    .tag.green { background: #e7f8ed; color: var(--green); }
+    .tag.teal { background: #e4f5f2; color: var(--teal); }
+    .list { display: grid; gap: 10px; }
+    .finding {
+      border-left: 4px solid var(--rose);
+      background: #fff8fa;
+      padding: 12px 14px;
+      border-radius: 8px;
+    }
+    .finding.amber { border-left-color: var(--amber); background: #fffaf0; }
+    .finding.green { border-left-color: var(--green); background: #f1fbf4; }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      color: #334155;
+      word-break: break-all;
+    }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(120px, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+    .node {
+      border: 1px solid #dbe5f0;
+      border-radius: 8px;
+      background: #fbfdff;
+      padding: 14px;
+      min-height: 112px;
+    }
+    .arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-weight: 800;
+    }
+    .phase {
+      display: grid;
+      grid-template-columns: 74px 1fr;
+      gap: 14px;
+      padding: 14px 0;
+      border-top: 1px solid #e5ebf3;
+    }
+    .phase:first-of-type { border-top: 0; }
+    .badge {
+      width: 54px;
+      height: 54px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: #eaf2ff;
+      color: var(--blue);
+      font-weight: 900;
+    }
+    .matrix {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: white;
+    }
+    .matrix th, .matrix td {
+      border-bottom: 1px solid #e6ecf3;
+      padding: 11px 12px;
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .matrix th { background: #f1f5fa; color: #334155; }
+    .matrix tr:last-child td { border-bottom: 0; }
+    .switcher {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 0 0 14px;
+    }
+    .mini { font-size: 13px; color: var(--muted); }
+    @media (max-width: 900px) {
+      .grid, .grid.two, .flow { grid-template-columns: 1fr; }
+      .arrow { display: none; }
+      header { padding-top: 34px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="eyebrow">Architecture Recovery · 2026-05-19</p>
+    <h1>v3 Worker Q&A 不应由 server 亲自跑 worker</h1>
+    <p class="lead">审计结论：当前实现有可保留的 provenance/transcript 基础，但 Q&A 执行边界倒置，fork 能力被测试锁死为 false。修正方案是 server 控制面、dispatcher 执行面、adapter 真实能力声明。</p>
+  </header>
+
+  <nav aria-label="presentation sections">
+    <button class="active" data-tab="audit">审计</button>
+    <button data-tab="target">目标架构</button>
+    <button data-tab="phases">执行阶段</button>
+    <button data-tab="tests">测试验收</button>
+    <button data-tab="decision">取舍</button>
+  </nav>
+
+  <main>
+    <section id="audit" class="view active">
+      <div class="grid">
+        <div class="panel">
+          <span class="tag rose">P0</span>
+          <h3>server 执行面上移</h3>
+          <p>现实现由 server 解析 worker/env，直接 import SSH environment 并运行远端命令。此路绕开 dispatcher 调度、环境抽象、lease、timeout、cancellation 与 worker pool。</p>
+          <p class="mono">server/questions/executor.py:60-80</p>
+        </div>
+        <div class="panel">
+          <span class="tag rose">P0</span>
+          <h3>fork=false 被固化</h3>
+          <p>adapter 与基类默认禁用 fork，测试还断言真实 driver 不支持 fork。坏体验被写成 contract，后续很难自然长出 fork-first。</p>
+          <p class="mono">workers/base.py:67-76 · test_v3_question_capabilities.py:40-49</p>
+        </div>
+        <div class="panel">
+          <span class="tag amber">P1</span>
+          <h3>同步长请求</h3>
+          <p>POST message 直接调用 executor.execute。真实 worker 执行会阻塞 HTTP request，无法稳健支持 pending/running、取消、失败恢复、SSE/poll 与 dispatcher 不在线状态。</p>
+          <p class="mono">routers/questions.py:143-155</p>
+        </div>
+      </div>
+      <div class="grid two" style="margin-top:14px">
+        <div class="panel">
+          <span class="tag amber">P1</span>
+          <h3>多轮不成立</h3>
+          <p>prompt 只含 project、anchor、run provenance 与当前 user question；没有 previous messages，也没有 fresh_context 摘要压缩策略。</p>
+          <p class="mono">questions/context.py:10-37</p>
+        </div>
+        <div class="panel">
+          <span class="tag green">可保留</span>
+          <h3>正确底座</h3>
+          <p>run provenance、run_log_id/report_run_id 分离、fact producing_run_log_id、完整 run JSONL transcript parser、Pi coalesce 方向正确，应收敛边界后保留。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="target" class="view">
+      <div class="panel">
+        <h2>目标数据流</h2>
+        <div class="flow">
+          <div class="node"><span class="tag teal">Browser</span><h3>发问</h3><p>选择 fact/intent/run，提交 message 与 mode。</p></div>
+          <div class="arrow">→</div>
+          <div class="node"><span class="tag">Server</span><h3>控制面</h3><p>resolve anchor，建 QuestionThread/Job，加 resume lock。</p></div>
+          <div class="arrow">→</div>
+          <div class="node"><span class="tag amber">Dispatcher</span><h3>执行面</h3><p>claim job，选 worker/env，用 driver build_question 执行。</p></div>
+        </div>
+        <div class="flow" style="margin-top:10px">
+          <div class="node"><span class="tag green">Driver</span><h3>能力与命令</h3><p>fork/resume/fresh_context 差异由 adapter 吸收。</p></div>
+          <div class="arrow">→</div>
+          <div class="node"><span class="tag teal">Environment</span><h3>远端执行</h3><p>SSH/Docker/后续 runtime 共用 dispatcher 抽象。</p></div>
+          <div class="arrow">→</div>
+          <div class="node"><span class="tag">Server/UI</span><h3>回写展示</h3><p>events/result/provenance 回写；UI poll/SSE 展示状态。</p></div>
+        </div>
+      </div>
+      <div class="grid two" style="margin-top:14px">
+        <div class="panel">
+          <h3>短期不等于纯内存</h3>
+          <p>dispatcher 与 server 分进程后，需要 runtime table 或 temp artifact 承载 active job。它不是长期 archive：close/TTL 后清理；resume 的 run provenance 另行永久保留。</p>
+        </div>
+        <div class="panel">
+          <h3>fork-first，不伪造</h3>
+          <p>auto mode 应是 fork > resume-with-confirm > fresh_context。Claude fork 先实现；Codex/Pi 做 probe，不能 fork 就显示原因。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="phases" class="view">
+      <div class="panel">
+        <h2>Recovery Phases</h2>
+        <div class="phase"><div class="badge">0</div><div><h3>RED 架构护栏</h3><p>写测试证明 server 不得 import environment/process；POST /questions 不执行 worker；fork false 不再是期望。</p></div></div>
+        <div class="phase"><div class="badge">1</div><div><h3>Question Runtime Contract</h3><p>新增 QuestionThread/Job/Event runtime；dispatcher claim/finish API；close/TTL purge。</p></div></div>
+        <div class="phase"><div class="badge">2</div><div><h3>Dispatcher Question Task</h3><p>新增 run_question_task；复用 run_worker_process、lease、timeout、cancellation、environment、endpoint。</p></div></div>
+        <div class="phase"><div class="badge">3</div><div><h3>Fork Capability</h3><p>capability 带 detection 与 unavailable reason；Claude fork 优先；Codex/Pi probe；Mock fork 支撑 contract/UI 测试。</p></div></div>
+        <div class="phase"><div class="badge">4</div><div><h3>Transcript/Provenance 收敛</h3><p>保留 DB provenance 与 parser；parser registry 与 adapter 单源绑定；anchor 返回 run candidates。</p></div></div>
+        <div class="phase"><div class="badge">5</div><div><h3>UI 重做</h3><p>Output tab 加 run selector、mode buttons、async status、fork/resume/fresh_context 原因提示与 promotion。</p></div></div>
+      </div>
+    </section>
+
+    <section id="tests" class="view">
+      <div class="panel">
+        <h2>验收矩阵</h2>
+        <table class="matrix">
+          <thead><tr><th>层级</th><th>必须证明</th><th>当前缺口</th></tr></thead>
+          <tbody>
+            <tr><td>Architecture</td><td>server question code 不执行 worker；dispatcher claim job 后执行。</td><td>当前 server 直接 SSH 执行。</td></tr>
+            <tr><td>Capability</td><td>fork 可用则优先；不可用有 reason；测试不锁死 false。</td><td>当前真实 driver 全 false。</td></tr>
+            <tr><td>Runtime</td><td>pending/running/succeeded/failed 可观测；支持取消/超时/requeue。</td><td>当前 HTTP 同步阻塞。</td></tr>
+            <tr><td>Transcript</td><td>完整 JSONL 输入，normalized limit 输出，Pi delta coalesce。</td><td>方向可保留，需收敛到 adapter/parser contract。</td></tr>
+            <tr><td>UX</td><td>fork/fresh/resume 三模式与风险提示；running intent 无 Ask。</td><td>当前只有 fresh/resume checkbox。</td></tr>
+            <tr><td>E2E</td><td>fact -> exact producing run -> fork ask -> promote fact；resume 写 run provenance。</td><td>尚无真实服务流程验证。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="decision" class="view">
+      <div class="grid two">
+        <div class="panel">
+          <span class="tag green">保留</span>
+          <div class="list">
+            <div class="finding green"><h3>run provenance</h3><p>DB 做 source of truth 是正确方向。</p></div>
+            <div class="finding green"><h3>transcript normalization</h3><p>完整 raw run log 输入、事件级 limit 与大事件 collapse 应保留。</p></div>
+            <div class="finding green"><h3>promotion provenance</h3><p>promoted object 保存 anchor/source run/mode/session effect，比保存临时 thread id 更稳。</p></div>
+          </div>
+        </div>
+        <div class="panel">
+          <span class="tag rose">废改</span>
+          <div class="list">
+            <div class="finding"><h3>server direct execution</h3><p>删除 DefaultQuestionExecutor 的远端执行职责，改为 job enqueue。</p></div>
+            <div class="finding"><h3>hard-coded no fork</h3><p>删除“真实 driver 无 fork”的测试期望，改为 capability probe + reason。</p></div>
+            <div class="finding"><h3>worker secret reconstruction</h3><p>server 不应为了执行 worker 重建 env/secrets；执行信息归 dispatcher。</p></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const buttons = Array.from(document.querySelectorAll('nav button'));
+    const views = Array.from(document.querySelectorAll('.view'));
+    function show(tab) {
+      for (const button of buttons) button.classList.toggle('active', button.dataset.tab === tab);
+      for (const view of views) view.classList.toggle('active', view.id === tab);
+      history.replaceState(null, '', '#' + tab);
+    }
+    for (const button of buttons) {
+      button.addEventListener('click', () => show(button.dataset.tab));
+    }
+    const initial = location.hash.replace('#', '');
+    if (initial && document.getElementById(initial)) show(initial);
+  </script>
+</body>
+</html>
