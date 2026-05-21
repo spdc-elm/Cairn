@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import posixpath
 from pathlib import PurePosixPath
 import shlex
@@ -174,7 +173,7 @@ class SshEnvironment:
         self.config = config
         self.workspace_root = config.workspace_root.rstrip("/")
         self._ssh_argv = config.ssh_argv()
-        self.runner_path = config.runner_path or self._remote_home_path(RUNNER_PATH)
+        self.runner_path = config.runner_path or RUNNER_PATH
         self._install_lock = threading.Lock()
         self._installed = False
 
@@ -443,13 +442,6 @@ class SshEnvironment:
         if check and proc.returncode != 0:
             raise RuntimeError(_preview(proc.stderr or proc.stdout or f"ssh command failed: {proc.returncode}"))
         return proc
-
-    def _remote_home_path(self, relative_path: str) -> str:
-        result = self._remote_run(
-            ["python3", "-c", "import os,sys;print(os.path.join(os.path.expanduser('~'), sys.argv[1]))", relative_path],
-            timeout=10,
-        )
-        return result.stdout.strip()
 
     def _redact_command(self, argv: list[str]) -> str:
         redacted = []

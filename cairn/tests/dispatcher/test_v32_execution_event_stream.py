@@ -10,7 +10,7 @@ from cairn.dispatcher.runtime.event_sink import ExecutionEventSink
 from cairn.dispatcher.runtime.process import ProcessResult
 from cairn.dispatcher.tasks.common import WorkerProcessRun, record_remote_session
 from cairn.dispatcher.tasks.common import run_worker_process
-from cairn.dispatcher.tasks.explore import _mark_execution_postprocess_failed
+from cairn.dispatcher.tasks.explore import _mark_execution_before_stream_finished, _mark_execution_postprocess_failed
 from cairn.dispatcher.tasks.questions import run_question_task
 from cairn.dispatcher.workers.registry import get_driver
 
@@ -386,6 +386,28 @@ class V32ExecutionEventStreamTests(unittest.TestCase):
         self.assertEqual(flattened[-1]["event_type"], "status")
         self.assertEqual(flattened[-1]["payload"]["status"], "failed")
         self.assertEqual(flattened[-1]["payload"]["error_code"], "missing_report")
+
+    def test_pre_stream_failure_marks_execution_failed_and_adds_diagnostic(self) -> None:
+        client = FakeClient()
+
+        _mark_execution_before_stream_finished(
+            client,
+            "proj_001_ex007",
+            "failed",
+            "runtime_healthcheck_timeout",
+            "dispatcher worker healthcheck failed before stdout/stderr streaming started",
+        )
+
+        flattened = [event for batch in client.batches for event in batch]
+        self.assertEqual(client.patches[-1]["status"], "failed")
+        self.assertEqual(client.patches[-1]["error_code"], "runtime_healthcheck_timeout")
+        self.assertIn("healthcheck failed", client.patches[-1]["error_detail"])
+        self.assertEqual(flattened[-2]["event_type"], "message")
+        self.assertEqual(flattened[-2]["role"], "system")
+        self.assertIn("before stdout/stderr streaming started", flattened[-2]["payload"]["text"])
+        self.assertEqual(flattened[-1]["event_type"], "status")
+        self.assertEqual(flattened[-1]["payload"]["status"], "failed")
+        self.assertEqual(flattened[-1]["payload"]["error_code"], "runtime_healthcheck_timeout")
 
     def test_record_remote_session_updates_execution_run_session(self) -> None:
         client = FakeClient()

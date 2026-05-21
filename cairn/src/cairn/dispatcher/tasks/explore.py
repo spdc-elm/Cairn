@@ -109,6 +109,13 @@ def run_explore_task(
                     execution_id=execution_id,
                 )
             else:
+                _mark_execution_before_stream_finished(
+                    client,
+                    execution_id,
+                    "cancelled",
+                    "cancelled_before_worker_stream",
+                    f"dispatcher cancelled during worker healthcheck before stdout/stderr streaming started: {cancelled}",
+                )
                 best_effort_release(client, project.project.id, intent.id, worker.name)
             return "cancelled"
         if lease.failure is not None:
@@ -118,6 +125,13 @@ def run_explore_task(
                 intent.id,
                 worker.name,
                 lease.failure.status_code,
+            )
+            _mark_execution_before_stream_finished(
+                client,
+                execution_id,
+                "failed",
+                "heartbeat_lost_before_worker_stream",
+                f"dispatcher heartbeat failed during worker healthcheck before stdout/stderr streaming started: status={lease.failure.status_code} {preview(lease.failure.text)}",
             )
             best_effort_release(client, project.project.id, intent.id, worker.name)
             return "failed"
@@ -129,6 +143,19 @@ def run_explore_task(
                 worker.name,
                 healthcheck.duration_ms,
                 preview(healthcheck.result.stderr),
+            )
+            error_code = "runtime_healthcheck_timeout" if did_timeout(healthcheck.result) else "runtime_healthcheck_failed"
+            detail = (
+                preview(healthcheck.result.stderr)
+                or preview(healthcheck.result.stdout)
+                or f"worker healthcheck exited with returncode {healthcheck.result.returncode}"
+            )
+            _mark_execution_before_stream_finished(
+                client,
+                execution_id,
+                "failed",
+                error_code,
+                f"dispatcher worker healthcheck failed before stdout/stderr streaming started: {detail}",
             )
             best_effort_release(client, project.project.id, intent.id, worker.name)
             return TaskOutcome(
@@ -799,6 +826,52 @@ def _mark_execution_postprocess_failed(
     if not response.ok:
         LOG.warning(
             "execution postprocess failure status append failed execution=%s status=%s body=%s",
+            execution_id,
+            response.status_code,
+            response.text,
+        )
+
+
+def _mark_execution_before_stream_finished(
+    client: CairnClient,
+    execution_id: str | None,
+    status: str,
+    error_code: str,
+    error_detail: str,
+) -> None:
+    if not execution_id:
+        return
+    _append_execution_diagnostic(client, execution_id, error_detail)
+    response = client.patch_execution(
+        execution_id,
+        {
+            "status": status,
+            "error_code": error_code,
+            "error_detail": error_detail,
+        },
+    )
+    if not response.ok:
+        LOG.warning(
+            "execution pre-stream terminal patch failed execution=%s status=%s body=%s",
+            execution_id,
+            response.status_code,
+            response.text,
+        )
+    response = client.append_execution_events(
+        execution_id,
+        dispatcher_id="dispatcher",
+        events=[
+            status_event(
+                status,
+                event_key=f"{execution_id}:status:pre-stream:{uuid.uuid4().hex[:8]}",
+                error_code=error_code,
+                error_detail=error_detail,
+            ).to_api_payload()
+        ],
+    )
+    if not response.ok:
+        LOG.warning(
+            "execution pre-stream terminal status append failed execution=%s status=%s body=%s",
             execution_id,
             response.status_code,
             response.text,

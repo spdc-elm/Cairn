@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from cairn.dispatcher.config import DispatchConfig, resolve_worker_env
+from cairn.dispatcher.runtime.environments.ssh import SshEnvironment
 from cairn.dispatcher.runtime.startup_healthcheck import run_startup_healthchecks
 from cairn.dispatcher.scheduler.loop import DispatcherLoop
 from cairn.server.models import ProviderEndpointPublic, ProviderEndpointSecret, WorkEnvironmentPublic
@@ -52,6 +54,87 @@ BASE_CONFIG = {
 
 
 class EndpointResolutionTests(unittest.TestCase):
+    def test_environment_registry_build_does_not_connect_to_ssh_environments(self) -> None:
+        config = DispatchConfig.model_validate(
+            {
+                **BASE_CONFIG,
+                "environments": [
+                    {
+                        "id": "local-ssh",
+                        "label": "Local SSH",
+                        "backend": "ssh",
+                        "ssh_command": "ssh local.example",
+                        "workspace_root": "/tmp/cairn-local",
+                    }
+                ],
+            }
+        )
+        loop = DispatcherLoop.__new__(DispatcherLoop)
+        loop.config = config
+        loop._environment_hashes = {}
+        loop.environment_metadata = {}
+        loop.client = SimpleNamespace(
+            list_environments=lambda: [
+                WorkEnvironmentPublic(
+                    id="remote-ssh",
+                    label="Remote SSH",
+                    backend="ssh",
+                    ssh_command="ssh remote.example",
+                    workspace_root="/tmp/cairn-remote",
+                    provider_endpoints=[],
+                )
+            ]
+        )
+
+        with (
+            patch("cairn.dispatcher.runtime.environments.DockerEnvironment", lambda config: SimpleNamespace(id=config.id)),
+            patch.object(SshEnvironment, "_remote_run", side_effect=AssertionError("registry must not ssh")),
+        ):
+            registry = loop._build_environment_registry()
+
+        self.assertEqual(sorted(registry), ["docker-default", "local-ssh", "remote-ssh"])
+
+    def test_startup_healthcheck_reports_prepare_startup_failure(self) -> None:
+        config = DispatchConfig.model_validate(BASE_CONFIG)
+        environment = SimpleNamespace(
+            id="pentestvm",
+            backend="ssh",
+            prepare_startup=lambda: (_ for _ in ()).throw(RuntimeError("ssh connect timed out")),
+        )
+
+        results = run_startup_healthchecks(
+            config,
+            {"pentestvm": environment},
+            environment_metadata={
+                "pentestvm": WorkEnvironmentPublic(
+                    id="pentestvm",
+                    label="pentestVM",
+                    backend="ssh",
+                    provider_endpoints=[
+                        ProviderEndpointPublic(
+                            id="pi-default",
+                            type="pi",
+                            base_url="http://pi.example.test/v1",
+                            provider_api="openai-completions",
+                            has_api_key=True,
+                        )
+                    ],
+                )
+            },
+            endpoint_loader=lambda _environment_id, _endpoint_id: ProviderEndpointSecret(
+                id="pi-default",
+                type="pi",
+                base_url="http://pi.example.test/v1",
+                provider_api="openai-completions",
+                has_api_key=True,
+                api_key="sk-test",
+            ),
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].ok)
+        self.assertIn("ssh connect timed out", results[0].stderr_preview)
+
     def test_same_worker_resolves_different_environment_endpoint_values(self) -> None:
         config = DispatchConfig.model_validate(BASE_CONFIG)
         worker = config.workers[0]

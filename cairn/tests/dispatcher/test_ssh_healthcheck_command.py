@@ -10,10 +10,24 @@ import unittest
 from unittest.mock import patch
 
 from cairn.dispatcher.config import SshEnvironmentConfig
-from cairn.dispatcher.runtime.environments.ssh import RUNNER_SCRIPT, SshEnvironment
+from cairn.dispatcher.runtime.environments.ssh import RUNNER_PATH, RUNNER_SCRIPT, SshEnvironment
 
 
 class SshHealthcheckCommandTests(unittest.TestCase):
+    def test_constructor_does_not_connect_when_runner_path_omitted(self) -> None:
+        config = SshEnvironmentConfig(
+            id="ssh",
+            label="SSH",
+            backend="ssh",
+            ssh_command="ssh host",
+            workspace_root="/tmp/cairn-workspaces",
+        )
+
+        with patch.object(SshEnvironment, "_remote_run", side_effect=AssertionError("constructor must not ssh")):
+            environment = SshEnvironment(config)
+
+        self.assertEqual(environment.runner_path, RUNNER_PATH)
+
     def test_stopped_cleanup_is_needed_when_workspace_exists(self) -> None:
         environment = self._environment()
 

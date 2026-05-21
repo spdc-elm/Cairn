@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Callable
@@ -141,8 +142,12 @@ def _run_worker_healthcheck(
     timeout_seconds: int,
 ) -> StartupHealthcheckResult:
     driver = get_driver(worker.type)
-    handle = environment.prepare_startup()
+    secrets = _worker_secrets(worker)
+    command = redact_text(driver.describe_startup_healthcheck(worker), secrets)
+    started = time.perf_counter()
+    handle = None
     try:
+        handle = environment.prepare_startup()
         healthcheck = run_healthcheck(
             environment,
             handle,
@@ -163,12 +168,43 @@ def _run_worker_healthcheck(
             returncode=result.returncode,
             duration_ms=healthcheck.duration_ms,
             http_status=http_status,
-            response_preview=redact_text(response_preview, _worker_secrets(worker)),
-            stderr_preview=redact_text(_preview(result.stderr), _worker_secrets(worker)),
-            command=redact_text(driver.describe_startup_healthcheck(worker), _worker_secrets(worker)),
+            response_preview=redact_text(response_preview, secrets),
+            stderr_preview=redact_text(_preview(result.stderr), secrets),
+            command=command,
+        )
+    except Exception as exc:
+        LOG.warning(
+            "startup healthcheck unavailable environment=%s worker=%s error=%s",
+            environment.id,
+            worker.name,
+            exc,
+        )
+        return StartupHealthcheckResult(
+            environment_id=environment.id,
+            backend=environment.backend,
+            worker_name=worker.name,
+            worker_type=worker.type,
+            model_profile_id=worker.model_profile,
+            endpoint_id=worker.endpoint,
+            ok=False,
+            returncode=1,
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            http_status=None,
+            response_preview="",
+            stderr_preview=redact_text(_preview(str(exc)), secrets),
+            command=command,
         )
     finally:
-        environment.cleanup_startup(handle)
+        if handle is not None:
+            try:
+                environment.cleanup_startup(handle)
+            except Exception as exc:
+                LOG.warning(
+                    "startup healthcheck cleanup failed environment=%s worker=%s error=%s",
+                    environment.id,
+                    worker.name,
+                    exc,
+                )
 
 
 def _log_report(results: list[StartupHealthcheckResult], *, show_commands: bool) -> None:
