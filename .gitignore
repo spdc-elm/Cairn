@@ -9,5 +9,7 @@ cairn.local.db
 cairn.local.db-*
 cairn.local.db.bak-*
 cairn/tests/e2e/*.db*
+cairn/tests/e2e/*.yaml
 cairn/tests/e2e/*_ed25519
+cairn/tests/e2e/*_ssh_config
 cairn/tests/e2e/run-logs/
