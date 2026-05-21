@@ -68,7 +68,7 @@ class EndpointResolutionTests(unittest.TestCase):
         endpoint_b = ProviderEndpointSecret(
             id="pi-default",
             type="pi",
-            base_url="http://host.docker.internal:3000/v1",
+            base_url="http://host.docker.internal:3000",
             provider_api="openai-completions",
             has_api_key=True,
             api_key="sk-b",

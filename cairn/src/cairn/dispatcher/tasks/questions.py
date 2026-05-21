@@ -62,7 +62,12 @@ def _run_question_execution_task(
         )
         return "rejected"
 
-    sink = ExecutionEventSink(client, execution_id, secrets=_worker_secrets(worker))
+    sink = ExecutionEventSink(
+        client,
+        execution_id,
+        secrets=_worker_secrets(worker),
+        event_projector=driver.stream_event_projector(execution_id),
+    )
     client.patch_execution(execution_id, {"dispatcher_id": dispatcher_id, "status": "running"})
     try:
         handle = environment.prepare_project(project.project.id)

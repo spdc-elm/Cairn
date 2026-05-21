@@ -12,6 +12,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cairn.shared.api_models import ProviderEndpointPublic
+from cairn.shared.endpoints import normalize_provider_base_url
 
 
 TaskType = Literal["reason", "explore", "bootstrap"]
@@ -474,14 +475,14 @@ def resolve_worker_env(
     profile_env: dict[str, str] = {}
     if profile.type == "pi":
         profile_env["PI_MODEL"] = profile.model
-        profile_env["PI_BASE_URL"] = _required_endpoint_field(endpoint, "base_url")
+        profile_env["PI_BASE_URL"] = _normalized_endpoint_base_url(endpoint)
         profile_env["PI_PROVIDER_API"] = _required_endpoint_field(endpoint, "provider_api")
         profile_env["PI_API_KEY"] = _required_endpoint_field(endpoint, "api_key")
         if profile.context_window is not None:
             profile_env["PI_MODEL_CONTEXT_WINDOW"] = str(profile.context_window)
     elif profile.type == "codex":
         profile_env["CODEX_MODEL"] = profile.model
-        profile_env["CODEX_BASE_URL"] = _required_endpoint_field(endpoint, "base_url")
+        profile_env["CODEX_BASE_URL"] = _normalized_endpoint_base_url(endpoint)
         profile_env["OPENAI_API_KEY"] = _required_endpoint_field(endpoint, "api_key")
     elif profile.type == "claudecode":
         profile_env["ANTHROPIC_MODEL"] = profile.model
@@ -495,6 +496,14 @@ def _required_endpoint_field(endpoint: ProviderEndpointPublic, name: str) -> str
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"endpoint {endpoint.id} missing field: {name}")
     return value.strip()
+
+
+def _normalized_endpoint_base_url(endpoint: ProviderEndpointPublic) -> str:
+    return normalize_provider_base_url(
+        endpoint_type=endpoint.type,
+        base_url=_required_endpoint_field(endpoint, "base_url"),
+        provider_api=endpoint.provider_api,
+    )
 
 
 def _validate_optional_positive_int_env(worker_name: str, env: dict[str, str], key: str) -> None:

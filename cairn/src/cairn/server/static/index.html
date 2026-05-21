@@ -2721,10 +2721,29 @@ function cairnApp() {
       const payload = event.payload || {};
       if (event.event_type === 'message') {
         const role = event.role || 'assistant';
-        return [{ id: event.id, execution_id: event.execution_id, kind: 'message', role, text: payload.text || '', status: 'success', stream_key: this.messageStreamKey(event, payload, role) }];
+        return [{
+          id: event.id,
+          execution_id: event.execution_id,
+          kind: 'message',
+          role,
+          text: payload.text || '',
+          status: payload.status || 'success',
+          stream_key: this.messageStreamKey(event, payload, role),
+          stream_delta: !!payload.stream_delta,
+        }];
       }
       if (event.event_type === 'tool') {
-        return [{ id: event.id, execution_id: event.execution_id, kind: payload.result ? 'tool_result' : 'tool_call', title: payload.name || 'tool', raw: payload, status: payload.status || 'success' }];
+        return [{
+          id: event.id,
+          execution_id: event.execution_id,
+          kind: payload.result ? 'tool_result' : 'tool_call',
+          title: payload.name || 'tool',
+          tool_name: payload.name || '',
+          tool_args_preview: this.workerToolArgsPreview(payload.input || payload.args || {}),
+          raw: payload,
+          status: payload.status || 'success',
+          stream_key: payload.stream_key || null,
+        }];
       }
       if (event.event_type === 'status') {
         const status = payload.status || 'success';
@@ -4833,18 +4852,21 @@ function cairnApp() {
     intentDotClass(i) {
       if (i.to) return 'bg-teal-400';
       if (i.control_state === 'conclude_requested') return i.worker ? 'bg-amber-500' : 'bg-rose-500';
+      if (i.runtime_status === 'failed') return 'bg-rose-500';
       if (this.isBootstrapIntent(i)) return i.worker ? 'bg-orange-400' : 'bg-orange-200';
       return i.worker ? 'bg-amber-400' : 'bg-slate-300';
     },
     intentStatusClass(i) {
       if (i.to) return 'text-teal-600';
       if (i.control_state === 'conclude_requested') return i.worker ? 'text-amber-600' : 'text-rose-600';
+      if (i.runtime_status === 'failed') return 'text-rose-600';
       if (this.isBootstrapIntent(i)) return i.worker ? 'text-orange-600' : 'text-orange-400';
       return i.worker ? 'text-amber-600' : 'text-slate-400';
     },
     intentStatusLabel(i) {
       if (i.to) return 'Concluded';
       if (i.control_state === 'conclude_requested') return i.worker ? 'Concluding' : 'Conclude Failed';
+      if (i.runtime_status === 'failed') return this.isBootstrapIntent(i) ? 'Bootstrap Failed' : 'Failed';
       if (this.isBootstrapIntent(i)) return i.worker ? 'Bootstrap Running' : 'Bootstrap Pending';
       return i.worker ? 'In Progress' : 'Unclaimed';
     },

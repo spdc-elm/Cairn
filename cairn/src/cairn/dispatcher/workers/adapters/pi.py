@@ -5,7 +5,8 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from cairn.dispatcher.config import WorkerConfig
-from cairn.dispatcher.workers.base import DriverResult, QuestionCapability, WorkerDriver
+from cairn.dispatcher.workers.base import DriverResult, JsonLineStreamProjector, QuestionCapability, WorkerDriver
+from cairn.shared.worker_events import WorkerEvent, session_event
 
 
 class PiDriver(WorkerDriver):
@@ -164,6 +165,9 @@ class PiDriver(WorkerDriver):
                 parts.append(text)
         return "\n".join(parts).strip() or stdout
 
+    def stream_event_projector(self, execution_id: str) -> "PiStreamProjector":
+        return PiStreamProjector(execution_id)
+
     def _wrap_with_models(self, worker: WorkerConfig, pi_argv: list[str], *, enable_tools: bool = True) -> list[str]:
         remote_credentials = not worker.env.get("PI_API_KEY")
         script = (
@@ -222,6 +226,28 @@ class PiDriver(WorkerDriver):
         return events
 
     @staticmethod
+    def _message_text(message: Any) -> str:
+        if not isinstance(message, dict):
+            return ""
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return ""
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "text":
+                text = item.get("text")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+        return "\n".join(parts).strip()
+
+    @staticmethod
     def _models_json(worker: WorkerConfig) -> str:
         env = worker.env
         model: dict[str, Any] = {
@@ -240,3 +266,86 @@ class PiDriver(WorkerDriver):
         }
         payload = {"providers": {"cairn": provider}}
         return json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+
+
+class PiStreamProjector(JsonLineStreamProjector):
+    def __init__(self, execution_id: str):
+        super().__init__(execution_id)
+        self._seq = 0
+        self._saw_assistant_turn = False
+        self._pending_agent_messages: list[list[dict[str, Any]]] = []
+
+    def project_json_event(self, payload: dict[str, Any]) -> list[WorkerEvent]:
+        event_type = payload.get("type")
+        if event_type == "session":
+            session_id = payload.get("id")
+            if isinstance(session_id, str) and session_id:
+                return [
+                    session_event(
+                        kind="pi_session",
+                        session_id=session_id,
+                        status="available",
+                        capture_method="stdout_event",
+                        event_key=f"{self.execution_id}:session:{session_id}",
+                    )
+                ]
+        if event_type in {"message_update", "message_end", "turn_end"}:
+            message = payload.get("message")
+            text = PiDriver._message_text(message)
+            if text and isinstance(message, dict) and message.get("role") == "assistant":
+                if event_type == "turn_end":
+                    self._saw_assistant_turn = True
+                return [
+                    WorkerEvent(
+                        event_type="message",
+                        role="assistant",
+                        payload={
+                            "text": text,
+                            "status": "success" if event_type in {"message_end", "turn_end"} else "running",
+                            "stream_key": f"{self.execution_id}:pi:text",
+                        },
+                        event_key=self._event_key("assistant"),
+                    )
+                ]
+        if event_type == "agent_end":
+            messages = payload.get("messages")
+            if isinstance(messages, list):
+                self._pending_agent_messages.append([item for item in messages if isinstance(item, dict)])
+        if event_type in {"tool_execution_start", "tool_execution_update", "tool_execution_end"}:
+            return [
+                WorkerEvent(
+                    event_type="tool",
+                    payload={
+                        "name": payload.get("toolName") or payload.get("name") or "tool",
+                        "status": "error" if payload.get("isError") else ("success" if event_type.endswith("_end") else "running"),
+                        "result": payload.get("result"),
+                        "args": payload.get("args"),
+                        "stream_key": f"{self.execution_id}:tool-call:{payload.get('toolCallId') or payload.get('name') or 'tool'}",
+                    },
+                    event_key=self._event_key("tool"),
+                )
+            ]
+        return []
+
+    def close(self) -> list[WorkerEvent]:
+        events = super().close()
+        if self._saw_assistant_turn:
+            return events
+        for messages in reversed(self._pending_agent_messages):
+            assistant = next((message for message in reversed(messages) if message.get("role") == "assistant"), None)
+            text = PiDriver._message_text(assistant)
+            if text:
+                events.append(
+                    WorkerEvent(
+                        event_type="message",
+                        role="assistant",
+                        payload={"text": text, "status": "success", "stream_key": f"{self.execution_id}:pi:text"},
+                        event_key=f"{self.execution_id}:assistant:final",
+                    )
+                )
+                break
+        return events
+
+    def _event_key(self, label: str) -> str:
+        self._seq += 1
+        return f"{self.execution_id}:pi-projector:{label}:{self._seq}"

@@ -62,6 +62,12 @@ class V32BranchSessionLineageTests(unittest.TestCase):
         self.assertEqual(second["session_action"], "fresh_context")
 
     def test_fork_later_turn_continues_fork_session(self) -> None:
+        self._assert_fork_later_turn_continues_worker_session("pi-main", "pi", "pi_session")
+
+    def test_claudecode_fork_later_turn_continues_fork_session(self) -> None:
+        self._assert_fork_later_turn_continues_worker_session("claude-main", "claudecode", "claude_session")
+
+    def _assert_fork_later_turn_continues_worker_session(self, worker_name: str, worker_type: str, session_kind: str) -> None:
         with db.get_conn() as conn:
             conn.execute(
                 """
@@ -71,13 +77,14 @@ class V32BranchSessionLineageTests(unittest.TestCase):
                 ) VALUES (?, ?, ?, 1, 0, ?, '2026-05-20T00:00:00Z')
                 """,
                 (
-                    "pi-main",
-                    "pi",
+                    worker_name,
+                    worker_type,
                     dumps_json(["question"]),
                     dumps_json({"can_resume_session": True, "can_fork_session": True, "unavailable_reasons": {}}),
                 ),
             )
-            conn.execute("UPDATE execution_runs SET worker_name = 'pi-main', worker_type = 'pi' WHERE id = ?", (self.source.id,))
+            conn.execute("UPDATE execution_runs SET worker_name = ?, worker_type = ? WHERE id = ?", (worker_name, worker_type, self.source.id))
+            conn.execute("UPDATE execution_runs SET remote_session_out_kind = ? WHERE id = ?", (session_kind, self.source.id))
         branch = create_branch(
             self.project_id,
             CreateBranchRequest(

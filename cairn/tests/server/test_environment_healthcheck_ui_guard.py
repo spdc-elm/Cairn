@@ -20,6 +20,8 @@ class EnvironmentHealthcheckUiGuardTests(unittest.TestCase):
 class V32ConversationUiGuardTests(unittest.TestCase):
     def test_output_polling_and_question_history_use_execution_events(self) -> None:
         html = Path("cairn/src/cairn/server/static/index.html").read_text(encoding="utf-8")
+        self.assertNotIn("/runs/", html)
+        self.assertNotIn("/questions", html)
 
         conversation_start = html.index("async loadSelectedConversation")
         conversation_end = html.index("\n    executionTranscript", conversation_start)

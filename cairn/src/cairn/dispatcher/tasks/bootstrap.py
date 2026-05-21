@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 
 from cairn.dispatcher.config import DispatchConfig, WorkerConfig
 from cairn.dispatcher.contracts import (
@@ -33,6 +34,7 @@ from cairn.dispatcher.tasks.common import (
 )
 from cairn.dispatcher.tasks.reports import metadata_for_worker_fact
 from cairn.dispatcher.workers.registry import get_driver
+from cairn.shared.worker_events import message_event, status_event
 from cairn.shared.api_models import Intent, ProjectDetail
 
 LOG = logging.getLogger(__name__)
@@ -150,7 +152,16 @@ def run_bootstrap_task(
             intent_id=intent.id,
             lease=lease,
             cancellation=cancellation,
-            event_sink=ExecutionEventSink(client, execution_id, secrets=_worker_secrets(worker)) if execution_id is not None else None,
+            event_sink=(
+                ExecutionEventSink(
+                    client,
+                    execution_id,
+                    secrets=_worker_secrets(worker),
+                    event_projector=driver.stream_event_projector(execution_id),
+                )
+                if execution_id is not None
+                else None
+            ),
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
         session = record_remote_session(client, project.project.id, first, driver, session, execution_id=execution_id)
@@ -176,6 +187,7 @@ def run_bootstrap_task(
                     session,
                     lease,
                     cancellation,
+                    execution_id=execution_id,
                 )
             LOG.info(
                 "bootstrap cancelled project=%s intent=%s worker=%s reason=%s execute_ms=%s",
@@ -215,7 +227,7 @@ def run_bootstrap_task(
                     preview(first.stdout),
                     preview(first.stderr),
                 )
-                return _try_conclude_fallback(
+                outcome = _try_conclude_fallback(
                     config,
                     client,
                     environment,
@@ -227,7 +239,11 @@ def run_bootstrap_task(
                     session,
                     lease,
                     cancellation,
+                    execution_id=execution_id,
                 )
+                if outcome != "success":
+                    _mark_execution_postprocess_failed(client, execution_id, "bootstrap_parse_failed", str(exc))
+                return outcome
             if kind == "rejected":
                 LOG.warning(
                     "bootstrap rejected project=%s intent=%s worker=%s execute_ms=%s total_ms=%s stdout_preview=%s",
@@ -264,7 +280,7 @@ def run_bootstrap_task(
                 preview(first.stdout),
                 preview(first.stderr),
             )
-            return _try_conclude_fallback(
+            outcome = _try_conclude_fallback(
                 config,
                 client,
                 environment,
@@ -276,7 +292,11 @@ def run_bootstrap_task(
                 session,
                 lease,
                 cancellation,
+                execution_id=execution_id,
             )
+            if outcome != "success":
+                _mark_execution_postprocess_failed(client, execution_id, "bootstrap_timeout", "bootstrap execution timed out")
+            return outcome
         LOG.warning(
             "bootstrap command failed project=%s intent=%s worker=%s code=%s execute_ms=%s total_ms=%s stdout_preview=%s stderr_preview=%s",
             project.project.id,
@@ -310,6 +330,7 @@ def _try_conclude_fallback(
     session: str | None,
     lease: HeartbeatLease,
     cancellation: TaskCancellation,
+    execution_id: str | None = None,
 ) -> str:
     if not driver.supports_conclude() or not session:
         LOG.info(
@@ -320,6 +341,12 @@ def _try_conclude_fallback(
             driver.supports_conclude(),
             bool(session),
         )
+        _mark_execution_postprocess_failed(
+            client,
+            execution_id,
+            "bootstrap_conclude_unavailable",
+            "conclude fallback unavailable before a usable bootstrap result was produced",
+        )
         best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
     if lease.failure is not None:
@@ -329,6 +356,7 @@ def _try_conclude_fallback(
             intent.id,
             worker.name,
         )
+        _mark_execution_postprocess_failed(client, execution_id, "heartbeat_lost", "heartbeat lost before bootstrap conclude fallback")
         best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
     if cancellation.is_cancelled and cancellation.reason != "conclude_requested":
@@ -348,6 +376,7 @@ def _try_conclude_fallback(
         worker_name=worker.name,
         intent_id=intent.id,
     ):
+        _mark_execution_postprocess_failed(client, execution_id, "project_not_active", "project became inactive before bootstrap conclude fallback")
         best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
 
@@ -389,6 +418,7 @@ def _try_conclude_fallback(
         best_effort_release(client, project.project.id, intent.id, worker.name)
         return "cancelled"
     if lease.failure is not None:
+        _mark_execution_postprocess_failed(client, execution_id, "heartbeat_lost", "heartbeat lost during bootstrap conclude fallback")
         best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
     if result.timed_out or result.returncode != 0:
@@ -402,6 +432,12 @@ def _try_conclude_fallback(
             conclude_ms,
             preview(result.stdout),
             preview(result.stderr),
+        )
+        _mark_execution_postprocess_failed(
+            client,
+            execution_id,
+            "bootstrap_conclude_process_failed",
+            preview(result.stderr) or preview(result.stdout) or "bootstrap conclude process failed",
         )
         best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
@@ -429,6 +465,7 @@ def _try_conclude_fallback(
             preview(result.stdout),
             preview(result.stderr),
         )
+        _mark_execution_postprocess_failed(client, execution_id, "bootstrap_conclude_parse_failed", str(exc))
         best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
     if kind == "rejected":
@@ -440,9 +477,10 @@ def _try_conclude_fallback(
             conclude_ms,
             preview(result.stdout),
         )
+        _mark_execution_postprocess_failed(client, execution_id, "bootstrap_conclude_rejected", "bootstrap conclude returned rejected")
         best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "rejected"
-    return write_conclude_result(
+    outcome = write_conclude_result(
         client,
         project.project.id,
         intent.id,
@@ -453,6 +491,77 @@ def _try_conclude_fallback(
         phase_ms=conclude_ms,
         metadata=metadata_for_worker_fact(worker.name, intent.id, producing_run_log_id=result.run_log_id),
     )
+    if outcome != "success":
+        _mark_execution_postprocess_failed(client, execution_id, "bootstrap_conclude_write_failed", "bootstrap conclude fact write failed")
+    return outcome
+
+
+def _append_execution_diagnostic(client: CairnClient, execution_id: str | None, message: str) -> None:
+    if not execution_id:
+        return
+    response = client.append_execution_events(
+        execution_id,
+        dispatcher_id="dispatcher",
+        events=[
+            message_event(
+                "system",
+                message,
+                event_key=f"{execution_id}:dispatcher-diagnostic:{uuid.uuid4().hex[:8]}",
+            ).to_api_payload()
+        ],
+    )
+    if not response.ok:
+        LOG.warning(
+            "bootstrap execution diagnostic append failed execution=%s status=%s body=%s",
+            execution_id,
+            response.status_code,
+            response.text,
+        )
+
+
+def _mark_execution_postprocess_failed(
+    client: CairnClient,
+    execution_id: str | None,
+    error_code: str,
+    error_detail: str,
+) -> None:
+    if not execution_id:
+        return
+    _append_execution_diagnostic(client, execution_id, f"dispatcher postprocess failed: {error_code}: {error_detail}")
+    response = client.patch_execution(
+        execution_id,
+        {
+            "status": "failed",
+            "error_code": error_code,
+            "error_detail": error_detail,
+        },
+    )
+    if not response.ok:
+        LOG.warning(
+            "bootstrap execution postprocess failure patch failed execution=%s status=%s body=%s",
+            execution_id,
+            response.status_code,
+            response.text,
+        )
+    response = client.append_execution_events(
+        execution_id,
+        dispatcher_id="dispatcher",
+        events=[
+            status_event(
+                "failed",
+                event_key=f"{execution_id}:status:postprocess-failed:{uuid.uuid4().hex[:8]}",
+                error_code=error_code,
+                error_detail=error_detail,
+            ).to_api_payload()
+        ],
+    )
+    if not response.ok:
+        LOG.warning(
+            "bootstrap execution postprocess failure status append failed execution=%s status=%s body=%s",
+            execution_id,
+            response.status_code,
+            response.text,
+        )
 
 
 def _bootstrap_prompt_replacements(project: ProjectDetail) -> dict[str, str]:

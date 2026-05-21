@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import abc
+import json
 import re
 import shlex
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 from cairn.dispatcher.config import WorkerConfig
+from cairn.shared.worker_events import WorkerEvent
 
 
 @dataclass(slots=True)
@@ -123,6 +126,68 @@ class WorkerDriver(abc.ABC):
 
     def extract_response_text(self, stdout: str, stderr: str) -> str:
         return stdout
+
+    def stream_event_projector(self, execution_id: str) -> "WorkerStreamProjector | None":
+        return None
+
+
+class WorkerStreamProjector:
+    def feed(self, stream: str, text: str) -> list[WorkerEvent]:
+        return []
+
+    def close(self) -> list[WorkerEvent]:
+        return []
+
+
+class JsonLineStreamProjector(WorkerStreamProjector):
+    def __init__(self, execution_id: str):
+        self.execution_id = execution_id
+        self._stdout_buffer = ""
+        self._stderr_buffer = ""
+
+    def feed(self, stream: str, text: str) -> list[WorkerEvent]:
+        if stream == "stdout":
+            return self._feed_buffer("_stdout_buffer", text)
+        if stream == "stderr":
+            return self._feed_buffer("_stderr_buffer", text)
+        return []
+
+    def close(self) -> list[WorkerEvent]:
+        events: list[WorkerEvent] = []
+        events.extend(self._drain_buffer("_stdout_buffer"))
+        events.extend(self._drain_buffer("_stderr_buffer"))
+        return events
+
+    def _feed_buffer(self, attr: str, text: str) -> list[WorkerEvent]:
+        buffered = getattr(self, attr) + text
+        lines = buffered.splitlines(keepends=True)
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            setattr(self, attr, lines.pop())
+        else:
+            setattr(self, attr, "")
+        return self._parse_lines(lines)
+
+    def _drain_buffer(self, attr: str) -> list[WorkerEvent]:
+        buffered = getattr(self, attr)
+        setattr(self, attr, "")
+        return self._parse_lines([buffered]) if buffered.strip() else []
+
+    def _parse_lines(self, lines: list[str]) -> list[WorkerEvent]:
+        events: list[WorkerEvent] = []
+        for line in lines:
+            text = line.strip()
+            if not text:
+                continue
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                events.extend(self.project_json_event(payload))
+        return events
+
+    def project_json_event(self, payload: dict[str, Any]) -> list[WorkerEvent]:
+        return []
 
 
 class SeedSessionDriver(WorkerDriver):

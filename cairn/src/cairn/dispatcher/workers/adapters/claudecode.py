@@ -4,7 +4,8 @@ import json
 from typing import Any
 
 from cairn.dispatcher.config import WorkerConfig
-from cairn.dispatcher.workers.base import DriverResult, QuestionCapability, SeedSessionDriver
+from cairn.dispatcher.workers.base import DriverResult, JsonLineStreamProjector, QuestionCapability, SeedSessionDriver
+from cairn.shared.worker_events import WorkerEvent, session_event
 
 
 class ClaudeCodeDriver(SeedSessionDriver):
@@ -166,6 +167,9 @@ class ClaudeCodeDriver(SeedSessionDriver):
             return assistant_text.strip()
         return stdout
 
+    def stream_event_projector(self, execution_id: str) -> "ClaudeCodeStreamProjector":
+        return ClaudeCodeStreamProjector(execution_id)
+
     @staticmethod
     def _iter_events(stdout: str) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
@@ -200,3 +204,96 @@ class ClaudeCodeDriver(SeedSessionDriver):
             if isinstance(text, str) and text:
                 parts.append(text)
         return "\n".join(parts)
+
+
+class ClaudeCodeStreamProjector(JsonLineStreamProjector):
+    def __init__(self, execution_id: str):
+        super().__init__(execution_id)
+        self._seq = 0
+
+    def project_json_event(self, payload: dict[str, Any]) -> list[WorkerEvent]:
+        event_type = payload.get("type")
+        events: list[WorkerEvent] = []
+        session_id = self._session_id(payload)
+        if session_id:
+            events.append(
+                session_event(
+                    kind="claude_session",
+                    session_id=session_id,
+                    status="available",
+                    capture_method="stdout_event",
+                    event_key=f"{self.execution_id}:session:{session_id}",
+                )
+            )
+        if event_type == "assistant":
+            text = ClaudeCodeDriver._message_text(payload.get("message"))
+            if text:
+                events.append(self._assistant_message(text, status="running"))
+        elif event_type == "result":
+            result = payload.get("result")
+            if isinstance(result, str) and result.strip():
+                events.append(self._assistant_message(result.strip(), status="success", final=True))
+        elif event_type == "stream_event":
+            events.extend(self._project_stream_event(payload.get("event")))
+        return events
+
+    def _project_stream_event(self, stream_event: Any) -> list[WorkerEvent]:
+        if not isinstance(stream_event, dict):
+            return []
+        stream_type = stream_event.get("type")
+        if stream_type == "content_block_delta":
+            delta = stream_event.get("delta")
+            if isinstance(delta, dict) and delta.get("type") == "text_delta":
+                text = delta.get("text")
+                if isinstance(text, str) and text:
+                    return [self._assistant_message(text, status="running", stream_delta=True)]
+        if stream_type == "content_block_start":
+            block = stream_event.get("content_block")
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                return [
+                    WorkerEvent(
+                        event_type="tool",
+                        payload={
+                            "name": block.get("name") or "tool",
+                            "status": "running",
+                            "input": block.get("input") or {},
+                            "stream_key": f"{self.execution_id}:tool-call:{block.get('id') or stream_event.get('index') or 0}",
+                        },
+                        event_key=self._event_key("tool"),
+                    )
+                ]
+        return []
+
+    def _assistant_message(
+        self,
+        text: str,
+        *,
+        status: str,
+        final: bool = False,
+        stream_delta: bool = False,
+    ) -> WorkerEvent:
+        payload: dict[str, Any] = {
+            "text": text,
+            "status": status,
+            "stream_key": f"{self.execution_id}:claude:text",
+        }
+        if stream_delta:
+            payload["stream_delta"] = True
+        return WorkerEvent(
+            event_type="message",
+            role="assistant",
+            payload=payload,
+            event_key=f"{self.execution_id}:assistant:final" if final else self._event_key("assistant"),
+        )
+
+    def _event_key(self, label: str) -> str:
+        self._seq += 1
+        return f"{self.execution_id}:claude-projector:{label}:{self._seq}"
+
+    @staticmethod
+    def _session_id(payload: dict[str, Any]) -> str | None:
+        for key in ("session_id", "sessionId"):
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return None

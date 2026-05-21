@@ -29,6 +29,7 @@ from cairn.server.models import (
     WorkEnvironmentPublic,
     WorkEnvironmentUpsert,
 )
+from cairn.shared.endpoints import normalize_provider_base_url
 
 SYSTEM_HEALTHCHECK_PROJECT_ID = "__system_healthchecks__"
 
@@ -497,6 +498,11 @@ def upsert_environment_provider_endpoint(
         (environment_id, body.id),
     ).fetchone()
     api_key = _next_api_key(existing["api_key"] if existing is not None else None, body)
+    base_url = normalize_provider_base_url(
+        endpoint_type=body.type,
+        base_url=body.base_url,
+        provider_api=body.provider_api,
+    )
     if existing is None:
         conn.execute(
             """
@@ -508,7 +514,7 @@ def upsert_environment_provider_endpoint(
                 environment_id,
                 body.id,
                 body.type,
-                body.base_url,
+                base_url,
                 body.provider_api,
                 api_key,
                 now,
@@ -528,7 +534,7 @@ def upsert_environment_provider_endpoint(
             """,
             (
                 body.type,
-                body.base_url,
+                base_url,
                 body.provider_api,
                 api_key,
                 now,

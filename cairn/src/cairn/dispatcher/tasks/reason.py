@@ -159,7 +159,16 @@ def run_reason_task(
             intent_id=None,
             lease=lease,
             cancellation=cancellation,
-            event_sink=ExecutionEventSink(client, execution_id, secrets=_worker_secrets(worker)) if execution_id is not None else None,
+            event_sink=(
+                ExecutionEventSink(
+                    client,
+                    execution_id,
+                    secrets=_worker_secrets(worker),
+                    event_projector=driver.stream_event_projector(execution_id),
+                )
+                if execution_id is not None
+                else None
+            ),
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
         total_ms = int((time.perf_counter() - task_started) * 1000)

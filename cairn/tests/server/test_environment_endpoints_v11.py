@@ -87,6 +87,44 @@ class EnvironmentEndpointTests(unittest.TestCase):
         self.assertEqual(secret.base_url, "https://new.example.test/v1")
         self.assertEqual(secret.api_key, "sk-old")
 
+    def test_openai_compatible_endpoint_base_url_gets_v1_suffix(self) -> None:
+        pi_endpoint = create_environment_endpoint(
+            "pentestvm",
+            ProviderEndpointUpsert(
+                id="pi-default",
+                type="pi",
+                base_url="http://host.docker.internal:3000",
+                provider_api="openai-completions",
+                api_key="sk-test",
+            ),
+        )
+        self.assertEqual(pi_endpoint.base_url, "http://host.docker.internal:3000/v1")
+
+        claude_endpoint = create_environment_endpoint(
+            "pentestvm",
+            ProviderEndpointUpsert(
+                id="claude-default",
+                type="claudecode",
+                base_url="http://host.docker.internal:3000",
+                api_key="sk-test",
+            ),
+        )
+        self.assertEqual(claude_endpoint.base_url, "http://host.docker.internal:3000")
+
+    def test_openai_compatible_endpoint_preserves_existing_v1_suffix(self) -> None:
+        endpoint = create_environment_endpoint(
+            "pentestvm",
+            ProviderEndpointUpsert(
+                id="pi-default",
+                type="pi",
+                base_url="http://host.docker.internal:3000/v1",
+                provider_api="openai-completions",
+                api_key="sk-test",
+            ),
+        )
+
+        self.assertEqual(endpoint.base_url, "http://host.docker.internal:3000/v1")
+
     def test_clear_api_key_removes_existing_key(self) -> None:
         create_environment_endpoint(
             "pentestvm",

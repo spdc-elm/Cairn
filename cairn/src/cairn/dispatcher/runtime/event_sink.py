@@ -7,7 +7,7 @@ from typing import Any
 
 from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.redaction import redact_text
-from cairn.shared.worker_events import WorkerEvent, status_event, stream_event
+from cairn.shared.worker_events import WorkerEvent, message_event, status_event, stream_event
 
 LOG = logging.getLogger(__name__)
 
@@ -19,10 +19,12 @@ class ExecutionEventSink:
     dispatcher_id: str = "dispatcher"
     secrets: list[str] = field(default_factory=list)
     batch_size: int = 1
+    event_projector: Any | None = None
     _lock: Any = field(init=False, repr=False)
     _seq: int = field(default=0, init=False, repr=False)
     _queue: list[WorkerEvent] = field(default_factory=list, init=False, repr=False)
     _failed_flushes: int = field(default=0, init=False, repr=False)
+    _projector_failed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
@@ -39,6 +41,7 @@ class ExecutionEventSink:
             return
         redacted = redact_text(text, self.secrets)
         self.write_event(stream_event(stream, redacted, event_key=self._event_key(stream)))
+        self._write_projected_stream_events(stream, redacted)
 
     def write_event(self, event: WorkerEvent) -> None:
         with self._lock:
@@ -80,6 +83,7 @@ class ExecutionEventSink:
         error_detail: str | None = None,
     ) -> bool:
         flushed = True
+        self._flush_projector()
         if terminal_status is not None:
             self.write_status(terminal_status)
             flushed = self.flush()
@@ -102,6 +106,42 @@ class ExecutionEventSink:
     def _event_key(self, prefix: str) -> str:
         self._seq += 1
         return f"{self.execution_id}:{prefix}:{self._seq}"
+
+    def _write_projected_stream_events(self, stream: str, text: str) -> None:
+        if self.event_projector is None or self._projector_failed:
+            return
+        try:
+            events = self.event_projector.feed(stream, text)
+        except Exception as exc:
+            self._projector_failed = True
+            self.write_event(
+                message_event(
+                    "system",
+                    f"dispatcher parser diagnostic: worker output projector failed: {exc}",
+                    event_key=self._event_key("parser-diagnostic"),
+                )
+            )
+            return
+        for event in events or []:
+            self.write_event(event)
+
+    def _flush_projector(self) -> None:
+        if self.event_projector is None or self._projector_failed:
+            return
+        try:
+            events = self.event_projector.close()
+        except Exception as exc:
+            self._projector_failed = True
+            self.write_event(
+                message_event(
+                    "system",
+                    f"dispatcher parser diagnostic: worker output projector failed during close: {exc}",
+                    event_key=self._event_key("parser-diagnostic"),
+                )
+            )
+            return
+        for event in events or []:
+            self.write_event(event)
 
 
 class CompositeRunLogger:

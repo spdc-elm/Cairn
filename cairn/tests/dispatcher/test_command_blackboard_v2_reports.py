@@ -158,9 +158,12 @@ class CommandBlackboardV2ReportTests(unittest.TestCase):
         self.assertEqual(client.patches[-1]["status"], "failed")
         self.assertEqual(client.patches[-1]["error_code"], "conclude_parse_failed")
         self.assertIn("invalid JSON", client.patches[-1]["error_detail"])
-        self.assertEqual(client.events[-1]["event_type"], "message")
-        self.assertEqual(client.events[-1]["role"], "system")
-        self.assertIn("dispatcher postprocess failed", client.events[-1]["payload"]["text"])
+        self.assertEqual(client.events[-2]["event_type"], "message")
+        self.assertEqual(client.events[-2]["role"], "system")
+        self.assertIn("dispatcher postprocess failed", client.events[-2]["payload"]["text"])
+        self.assertEqual(client.events[-1]["event_type"], "status")
+        self.assertEqual(client.events[-1]["payload"]["status"], "failed")
+        self.assertEqual(client.events[-1]["payload"]["error_code"], "conclude_parse_failed")
         self.assertEqual(client.released, [("proj_001", "i001", "pi")])
 
 

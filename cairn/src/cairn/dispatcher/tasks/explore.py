@@ -13,7 +13,7 @@ from cairn.dispatcher.runtime.cancellation import TaskCancellation
 from cairn.dispatcher.runtime.environments.base import EnvironmentHandle, WorkEnvironment
 from cairn.dispatcher.runtime.event_sink import ExecutionEventSink
 from cairn.dispatcher.runtime.heartbeat import HeartbeatLease
-from cairn.shared.worker_events import message_event
+from cairn.shared.worker_events import message_event, status_event
 from cairn.dispatcher.tasks.common import (
     best_effort_release,
     best_effort_release_after_conclude_failure,
@@ -701,7 +701,17 @@ def _run_process(
     client: CairnClient,
     execution_id: str | None = None,
 ):
-    event_sink = ExecutionEventSink(client, execution_id, secrets=_worker_secrets(worker)) if execution_id is not None else None
+    driver = get_driver(worker.type)
+    event_sink = (
+        ExecutionEventSink(
+            client,
+            execution_id,
+            secrets=_worker_secrets(worker),
+            event_projector=driver.stream_event_projector(execution_id),
+        )
+        if execution_id is not None
+        else None
+    )
     return run_worker_process(
         environment,
         handle,
@@ -770,6 +780,25 @@ def _mark_execution_postprocess_failed(
     if not response.ok:
         LOG.warning(
             "execution postprocess failure patch failed execution=%s status=%s body=%s",
+            execution_id,
+            response.status_code,
+            response.text,
+        )
+    response = client.append_execution_events(
+        execution_id,
+        dispatcher_id="dispatcher",
+        events=[
+            status_event(
+                "failed",
+                event_key=f"{execution_id}:status:postprocess-failed:{uuid.uuid4().hex[:8]}",
+                error_code=error_code,
+                error_detail=error_detail,
+            ).to_api_payload()
+        ],
+    )
+    if not response.ok:
+        LOG.warning(
+            "execution postprocess failure status append failed execution=%s status=%s body=%s",
             execution_id,
             response.status_code,
             response.text,
