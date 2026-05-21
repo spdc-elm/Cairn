@@ -21,7 +21,6 @@ from cairn.dispatcher.tasks.common import (
     best_effort_release_reason,
     cancel_reason,
     did_timeout,
-    HttpRunProvenanceRecorder,
     preview,
     record_remote_session,
     run_healthcheck,
@@ -160,7 +159,6 @@ def run_reason_task(
             intent_id=None,
             lease=lease,
             cancellation=cancellation,
-            provenance_recorder=HttpRunProvenanceRecorder(client),
             event_sink=ExecutionEventSink(client, execution_id, secrets=_worker_secrets(worker)) if execution_id is not None else None,
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)

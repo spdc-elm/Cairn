@@ -4,16 +4,7 @@ import json
 from typing import Any
 
 from cairn.dispatcher.config import WorkerConfig
-from cairn.dispatcher.workers.adapters._curl import (
-    build_curl_healthcheck,
-    build_verbose_curl_healthcheck,
-    expand_env,
-    render_curl_command,
-)
 from cairn.dispatcher.workers.base import DriverResult, QuestionCapability, SeedSessionDriver
-
-
-ANTHROPIC_VERSION = "2023-06-01"
 
 
 class ClaudeCodeDriver(SeedSessionDriver):
@@ -24,63 +15,44 @@ class ClaudeCodeDriver(SeedSessionDriver):
         return self._required_executables
 
     def build_healthcheck(self, worker: WorkerConfig) -> list[str]:
-        env = worker.env
-        return build_curl_healthcheck(
-            f"{env['ANTHROPIC_BASE_URL']}/v1/messages",
-            headers=[
-                "-H",
-                f"Authorization: Bearer {env['ANTHROPIC_AUTH_TOKEN']}",
-                "-H",
-                f"anthropic-version: {ANTHROPIC_VERSION}",
-                "-H",
-                "content-type: application/json",
-            ],
-            payload=self._healthcheck_payload(worker),
-            required_executables=self.required_executables(),
-        )
+        return self._healthcheck_argv(worker)
 
     def build_startup_healthcheck(self, worker: WorkerConfig) -> list[str]:
-        env = worker.env
-        return build_verbose_curl_healthcheck(
-            f"{env['ANTHROPIC_BASE_URL']}/v1/messages",
-            headers=[
-                "-H",
-                f"Authorization: Bearer {env['ANTHROPIC_AUTH_TOKEN']}",
-                "-H",
-                f"anthropic-version: {ANTHROPIC_VERSION}",
-                "-H",
-                "content-type: application/json",
-            ],
-            payload=self._healthcheck_payload(worker),
-            required_executables=self.required_executables(),
-        )
+        return self._healthcheck_argv(worker)
 
     def describe_startup_healthcheck(self, worker: WorkerConfig) -> str:
-        env = worker.env
-        return render_curl_command(
-            f"{env['ANTHROPIC_BASE_URL']}/v1/messages",
-            headers=[
-                "-H",
-                expand_env("Authorization: Bearer $ANTHROPIC_AUTH_TOKEN"),
-                "-H",
-                f"anthropic-version: {ANTHROPIC_VERSION}",
-                "-H",
-                "content-type: application/json",
-            ],
-            payload=self._healthcheck_payload(worker),
-            required_executables=self.required_executables(),
-        )
+        return " ".join(self._healthcheck_argv(worker))
+
+    def _healthcheck_argv(self, worker: WorkerConfig) -> list[str]:
+        return [
+            "claude",
+            "--bare",
+            "--tools",
+            "",
+            "--model",
+            worker.env["ANTHROPIC_MODEL"],
+            "--dangerously-skip-permissions",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "-p",
+            "Reply exactly: OK",
+        ]
 
     def build_execute(self, worker: WorkerConfig, prompt: str, session: str | None) -> DriverResult:
         assert session is not None
         return DriverResult(
             argv=[
                 "claude",
+                "--model",
+                worker.env["ANTHROPIC_MODEL"],
                 "--session-id",
                 session,
                 "--dangerously-skip-permissions",
                 "--output-format",
                 "stream-json",
+                "--verbose",
+                "--include-partial-messages",
                 "-p",
                 "--",
                 prompt,
@@ -91,11 +63,15 @@ class ClaudeCodeDriver(SeedSessionDriver):
     def build_conclude(self, worker: WorkerConfig, prompt: str, session: str) -> list[str]:
         return [
             "claude",
+            "--model",
+            worker.env["ANTHROPIC_MODEL"],
             "-r",
             session,
             "--dangerously-skip-permissions",
             "--output-format",
             "stream-json",
+            "--verbose",
+            "--include-partial-messages",
             "-p",
             "--",
             prompt,
@@ -128,12 +104,16 @@ class ClaudeCodeDriver(SeedSessionDriver):
         return DriverResult(
             argv=[
                 "claude",
+                "--model",
+                worker.env["ANTHROPIC_MODEL"],
                 "--resume",
                 source_session,
                 "--fork-session",
                 "--dangerously-skip-permissions",
                 "--output-format",
                 "stream-json",
+                "--verbose",
+                "--include-partial-messages",
                 "-p",
                 "--",
                 prompt,
@@ -185,14 +165,6 @@ class ClaudeCodeDriver(SeedSessionDriver):
         if assistant_text and assistant_text.strip():
             return assistant_text.strip()
         return stdout
-
-    @staticmethod
-    def _healthcheck_payload(worker: WorkerConfig) -> str:
-        return (
-            '{"model":"'
-            + worker.env["ANTHROPIC_MODEL"]
-            + '","max_tokens":10,"messages":[{"role":"user","content":"ping"}]}'
-        )
 
     @staticmethod
     def _iter_events(stdout: str) -> list[dict[str, Any]]:

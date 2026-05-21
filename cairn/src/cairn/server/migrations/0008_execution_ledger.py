@@ -29,8 +29,6 @@ def apply(conn: sqlite3.Connection) -> None:
     _add_column(conn, "facts", "produced_by_intent_id", "TEXT")
     _add_column(conn, "facts", "created_at", "TEXT")
     _add_column(conn, "facts", "updated_at", "TEXT")
-    _add_column(conn, "question_jobs", "execution_id", "TEXT")
-
     statements = """
         CREATE TABLE IF NOT EXISTS execution_runs (
             id TEXT PRIMARY KEY,

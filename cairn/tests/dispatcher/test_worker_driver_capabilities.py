@@ -57,11 +57,15 @@ class WorkerDriverCapabilityTests(unittest.TestCase):
         argv = driver.build_healthcheck(worker)
         description = driver.describe_startup_healthcheck(worker)
 
-        self.assertEqual(argv[:2], ["/bin/sh", "-lc"])
-        self.assertIn("command -v claude", argv[2])
-        self.assertIn("missing executable: claude", argv[2])
-        self.assertIn("curl", argv[2])
-        self.assertIn("$ANTHROPIC_AUTH_TOKEN", description)
+        self.assertEqual(argv[0], "claude")
+        self.assertIn("--bare", argv)
+        self.assertIn("--tools", argv)
+        self.assertIn("--model", argv)
+        self.assertIn("claude-test", argv)
+        self.assertIn("--output-format", argv)
+        self.assertIn("stream-json", argv)
+        self.assertIn("--verbose", argv)
+        self.assertIn("claude-test", description)
         self.assertNotIn("sk-secret", description)
 
     def test_codex_driver_uses_jsonl_and_extracts_final_agent_message(self) -> None:
@@ -126,8 +130,16 @@ class WorkerDriverCapabilityTests(unittest.TestCase):
 
         self.assertIn("--output-format", execute.argv)
         self.assertIn("stream-json", execute.argv)
+        self.assertIn("--model", execute.argv)
+        self.assertIn("claude-test", execute.argv)
+        self.assertIn("--verbose", execute.argv)
+        self.assertIn("--include-partial-messages", execute.argv)
         self.assertIn("--output-format", conclude)
         self.assertIn("stream-json", conclude)
+        self.assertIn("--model", conclude)
+        self.assertIn("claude-test", conclude)
+        self.assertIn("--verbose", conclude)
+        self.assertIn("--include-partial-messages", conclude)
         self.assertEqual(driver.extract_response_text(stdout, ""), '{"ok": true}')
 
 

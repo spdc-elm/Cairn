@@ -138,105 +138,6 @@ class WorkEnvironmentUpsert(BaseModel):
         return text
 
 
-RemoteSessionStatus = Literal["available", "missing", "unresolved"]
-AnchorStatus = Literal["exact", "missing"]
-
-
-class RemoteSessionProvenance(BaseModel):
-    id: str | None = None
-    kind: str | None = None
-    status: RemoteSessionStatus = "unresolved"
-    capture_method: str | None = None
-
-
-class RunProvenance(BaseModel):
-    run_log_id: str
-    project_id: str
-    intent_id: str | None = None
-    task_type: str
-    phase: str
-    worker_name: str
-    worker_type: str | None = None
-    environment_id: str | None = None
-    environment_backend: str | None = None
-    environment_target: str | None = None
-    workspace: str | None = None
-    model_profile_id: str | None = None
-    endpoint_id: str | None = None
-    timeout_seconds: int | None = None
-    report_path: str | None = None
-    report_run_id: str | None = None
-    remote_session: RemoteSessionProvenance = Field(default_factory=RemoteSessionProvenance)
-    parent_run_log_id: str | None = None
-    parent_remote_session_id: str | None = None
-    question_mode: str | None = None
-    question_anchor_type: str | None = None
-    question_anchor_id: str | None = None
-    source_run_log_id: str | None = None
-    source_remote_session_id: str | None = None
-    session_effect: str | None = None
-    started_at: str
-    finished_at: str | None = None
-    returncode: int | None = None
-    timed_out: bool | None = None
-    cancelled: bool | None = None
-    cancel_reason: str | None = None
-    metadata: dict[str, Any] | None = None
-    created_at: str
-    updated_at: str
-
-
-class RunProvenanceUpsert(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    run_log_id: str
-    intent_id: str | None = None
-    task_type: str
-    phase: str
-    worker_name: str
-    worker_type: str | None = None
-    environment_id: str | None = None
-    environment_backend: str | None = None
-    environment_target: str | None = None
-    workspace: str | None = None
-    model_profile_id: str | None = None
-    endpoint_id: str | None = None
-    timeout_seconds: int | None = None
-    report_path: str | None = None
-    report_run_id: str | None = None
-    remote_session: RemoteSessionProvenance | None = None
-    parent_run_log_id: str | None = None
-    parent_remote_session_id: str | None = None
-    question_mode: str | None = None
-    question_anchor_type: str | None = None
-    question_anchor_id: str | None = None
-    source_run_log_id: str | None = None
-    source_remote_session_id: str | None = None
-    session_effect: str | None = None
-    started_at: str | None = None
-    metadata: dict[str, Any] | None = None
-
-    @field_validator("run_log_id", "task_type", "phase", "worker_name")
-    @classmethod
-    def validate_required_text(cls, value: str) -> str:
-        text = value.strip()
-        if not text:
-            raise ValueError("must not be empty")
-        return text
-
-
-class RunProvenancePatch(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    finished_at: str | None = None
-    returncode: int | None = None
-    timed_out: bool | None = None
-    cancelled: bool | None = None
-    cancel_reason: str | None = None
-    remote_session: RemoteSessionProvenance | None = None
-    metadata: dict[str, Any] | None = None
-
-
 ExecutionTaskType = Literal["explore", "conclude", "reason", "question", "healthcheck"]
 ExecutionPhase = Literal["bootstrap", "run", "followup", "healthcheck"]
 ExecutionSessionAction = Literal["fresh_context", "fork_initial", "resume_continue", "branch_continue"]
@@ -503,17 +404,6 @@ class IntentRuntimeProjection(BaseModel):
     runtime_status: str | None = None
     worker_name: str | None = None
     last_heartbeat_at: str | None = None
-
-
-class AnchorResolution(BaseModel):
-    anchor_type: Literal["fact", "intent", "run"]
-    anchor_id: str
-    source_run_log_id: str | None = None
-    status: AnchorStatus
-    reason: str | None = None
-    provenance: RunProvenance | None = None
-    available_modes: list[str] = Field(default_factory=list)
-    unavailable_reasons: dict[str, str] = Field(default_factory=dict)
 
 
 class ProjectMeta(BaseModel):

@@ -32,6 +32,15 @@ class FakeProcess:
         return None
 
 
+class FailingProcess(FakeProcess):
+    def start(self) -> None:
+        if self.run_logger is not None:
+            self.run_logger.write_stream("stderr", "driver exploded\n")
+
+    def communicate(self, timeout: float | None) -> ProcessResult:
+        return ProcessResult(returncode=2, stdout="", stderr="driver exploded\n")
+
+
 class FakeEnvironment:
     id = "ssh-main"
     label = "SSH Main"
@@ -42,6 +51,11 @@ class FakeEnvironment:
 
     def build_process(self, handle, env, command, timeout_seconds=None, kill_after_seconds=5, run_logger=None):
         return FakeProcess(run_logger=run_logger)
+
+
+class FailingEnvironment(FakeEnvironment):
+    def build_process(self, handle, env, command, timeout_seconds=None, kill_after_seconds=5, run_logger=None):
+        return FailingProcess(run_logger=run_logger)
 
 
 class FakeClient:
@@ -99,6 +113,42 @@ class V32ExecutionEventStreamTests(unittest.TestCase):
         self.assertEqual(flattened[-1]["payload"]["status"], "succeeded")
         self.assertEqual(client.patches[-1]["status"], "succeeded")
         self.assertFalse(run.event_flush_failed)
+
+    def test_run_worker_process_patches_failed_execution_with_driver_error_detail(self) -> None:
+        with tempfile.TemporaryDirectory() as run_dir:
+            self.addCleanupEnv("CAIRN_RUN_LOG_DIR")
+            import os
+
+            os.environ["CAIRN_RUN_LOG_DIR"] = run_dir
+            worker = WorkerConfig(
+                name="pi-main",
+                type="pi",
+                task_types=["explore"],
+                max_running=1,
+                priority=0,
+                env={},
+            )
+            handle = EnvironmentHandle(project_id="proj_001", target_name="remote", workspace="/tmp/work")
+            client = FakeClient()
+            sink = ExecutionEventSink(client, "proj_001_ex001", batch_size=10)
+
+            run = run_worker_process(
+                FailingEnvironment(),
+                handle,
+                worker,
+                ["pi"],
+                phase="explore_execute",
+                timeout_seconds=5,
+                project_id="proj_001",
+                task_type="explore",
+                intent_id="i001",
+                event_sink=sink,
+            )
+
+        self.assertEqual(run.returncode, 2)
+        self.assertEqual(client.patches[-1]["status"], "failed")
+        self.assertEqual(client.patches[-1]["error_code"], "worker_process_failed")
+        self.assertIn("driver exploded", client.patches[-1]["error_detail"])
 
     def test_question_execution_task_writes_execution_events(self) -> None:
         with tempfile.TemporaryDirectory() as run_dir:

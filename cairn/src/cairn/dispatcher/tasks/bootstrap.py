@@ -21,7 +21,6 @@ from cairn.dispatcher.tasks.common import (
     best_effort_release_after_conclude_failure,
     cancel_reason,
     did_timeout,
-    HttpRunProvenanceRecorder,
     project_allows_conclude_fallback,
     preview,
     record_remote_session,
@@ -151,7 +150,6 @@ def run_bootstrap_task(
             intent_id=intent.id,
             lease=lease,
             cancellation=cancellation,
-            provenance_recorder=HttpRunProvenanceRecorder(client),
             event_sink=ExecutionEventSink(client, execution_id, secrets=_worker_secrets(worker)) if execution_id is not None else None,
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
@@ -374,7 +372,6 @@ def _try_conclude_fallback(
         intent_id=intent.id,
         lease=lease,
         cancellation=None if cancellation.reason == "conclude_requested" else cancellation,
-        provenance_recorder=HttpRunProvenanceRecorder(client),
     )
     conclude_ms = int((time.perf_counter() - conclude_started) * 1000)
     session = record_remote_session(client, project.project.id, result, driver, session)

@@ -5,7 +5,6 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Protocol
 
 from cairn.dispatcher.config import WorkerConfig
 from cairn.dispatcher.redaction import redact_text
@@ -40,49 +39,6 @@ class WorkerProcessRun:
         return getattr(self.result, name)
 
 
-class RunProvenanceRecorder(Protocol):
-    def start_run(self, **payload) -> None: ...
-
-    def finish_run(self, *, project_id: str, run_log_id: str, result: ProcessResult) -> None: ...
-
-
-@dataclass(slots=True)
-class HttpRunProvenanceRecorder:
-    client: CairnClient
-
-    def start_run(self, **payload) -> None:
-        project_id = payload.pop("project_id")
-        response = self.client.upsert_run_provenance(project_id, payload)
-        if not response.ok:
-            LOG.warning(
-                "run provenance start failed project=%s run=%s status=%s body=%s",
-                project_id,
-                payload.get("run_log_id"),
-                response.status_code,
-                response.text,
-            )
-
-    def finish_run(self, *, project_id: str, run_log_id: str, result: ProcessResult) -> None:
-        response = self.client.patch_run_provenance(
-            project_id,
-            run_log_id,
-            {
-                "returncode": result.returncode,
-                "timed_out": result.timed_out,
-                "cancelled": result.cancelled,
-                "cancel_reason": result.cancel_reason,
-            },
-        )
-        if not response.ok:
-            LOG.warning(
-                "run provenance finish failed project=%s run=%s status=%s body=%s",
-                project_id,
-                run_log_id,
-                response.status_code,
-                response.text,
-            )
-
-
 @dataclass(slots=True)
 class ConcludeWriteResult:
     status: str
@@ -98,6 +54,24 @@ def preview(text: str, limit: int = LOG_PREVIEW_LIMIT) -> str:
 
 def did_timeout(result: ProcessResult) -> bool:
     return not result.cancelled and (result.timed_out or result.returncode in (124, 137))
+
+
+def _process_error_code(result: ProcessResult) -> str | None:
+    if result.cancelled:
+        return "cancelled"
+    if did_timeout(result):
+        return "timeout"
+    if result.returncode != 0:
+        return "worker_process_failed"
+    return None
+
+
+def _process_error_detail(result: ProcessResult) -> str | None:
+    if result.cancel_reason:
+        return result.cancel_reason
+    if result.returncode == 0 and not result.timed_out:
+        return None
+    return preview(result.stderr) or preview(result.stdout) or None
 
 
 def cancel_reason(result: ProcessResult, cancellation: TaskCancellation | None = None) -> str | None:
@@ -211,7 +185,6 @@ def run_worker_process(
     lease: HeartbeatLease | None = None,
     cancellation: TaskCancellation | None = None,
     extra_metadata: dict | None = None,
-    provenance_recorder: RunProvenanceRecorder | None = None,
     event_sink: ExecutionEventSink | None = None,
     close_event_sink_on_finish: bool = True,
 ) -> WorkerProcessRun:
@@ -246,18 +219,6 @@ def run_worker_process(
             metadata=run_metadata,
             secrets=_worker_secrets(worker),
         )
-        if provenance_recorder is not None:
-            _safe_start_run_provenance(
-                provenance_recorder,
-                project_id=project_id,
-                run_log_id=jsonl_logger.run_id,
-                intent_id=intent_id,
-                task_type=task_type,
-                phase=phase,
-                worker_name=worker.name,
-                worker_type=worker.type,
-                metadata=run_metadata,
-            )
         LOG.info(
             "run log opened project=%s intent=%s worker=%s phase=%s run_id=%s path=%s",
             project_id,
@@ -297,11 +258,9 @@ def run_worker_process(
                 event_flush_failed = not event_sink.close(
                     terminal_status=terminal_status,
                     returncode=result.returncode,
-                    error_code="timeout" if result.timed_out else None,
-                    error_detail=result.cancel_reason,
+                    error_code=_process_error_code(result),
+                    error_detail=_process_error_detail(result),
                 )
-            if provenance_recorder is not None and project_id is not None and jsonl_logger is not None:
-                _safe_finish_run_provenance(provenance_recorder, project_id, jsonl_logger.run_id, result)
         return WorkerProcessRun(
             result=result,
             run_log_id=jsonl_logger.run_id if jsonl_logger is not None else None,
@@ -327,62 +286,6 @@ def project_allows_conclude_fallback(client: CairnClient, project_id: str, *, wo
         project.project.status,
     )
     return False
-
-
-def _safe_start_run_provenance(
-    recorder: RunProvenanceRecorder,
-    *,
-    project_id: str,
-    run_log_id: str,
-    intent_id: str | None,
-    task_type: str,
-    phase: str,
-    worker_name: str,
-    worker_type: str,
-    metadata: dict,
-) -> None:
-    try:
-        recorder.start_run(
-            project_id=project_id,
-            run_log_id=run_log_id,
-            intent_id=intent_id,
-            task_type=task_type,
-            phase=phase,
-            worker_name=worker_name,
-            worker_type=worker_type,
-            environment_id=metadata.get("environment_id"),
-            environment_backend=metadata.get("backend"),
-            environment_target=metadata.get("target"),
-            workspace=metadata.get("workspace"),
-            model_profile_id=metadata.get("model_profile_id"),
-            endpoint_id=metadata.get("endpoint_id"),
-            timeout_seconds=metadata.get("timeout_seconds"),
-            report_path=metadata.get("report_path"),
-            report_run_id=metadata.get("report_run_id"),
-            parent_run_log_id=metadata.get("parent_run_log_id"),
-            parent_remote_session_id=metadata.get("parent_remote_session_id"),
-            question_mode=metadata.get("question_mode"),
-            question_anchor_type=metadata.get("question_anchor_type"),
-            question_anchor_id=metadata.get("question_anchor_id"),
-            source_run_log_id=metadata.get("source_run_log_id"),
-            source_remote_session_id=metadata.get("source_remote_session_id"),
-            session_effect=metadata.get("session_effect"),
-            metadata=metadata,
-        )
-    except Exception:
-        LOG.exception("run provenance start crashed project=%s run=%s", project_id, run_log_id)
-
-
-def _safe_finish_run_provenance(
-    recorder: RunProvenanceRecorder,
-    project_id: str,
-    run_log_id: str,
-    result: ProcessResult,
-) -> None:
-    try:
-        recorder.finish_run(project_id=project_id, run_log_id=run_log_id, result=result)
-    except Exception:
-        LOG.exception("run provenance finish crashed project=%s run=%s", project_id, run_log_id)
 
 
 def best_effort_release_reason(client: CairnClient, project_id: str, worker_name: str) -> None:
@@ -431,24 +334,6 @@ def record_remote_session(
                 response.status_code,
                 response.text,
             )
-    if run.run_log_id is None:
-        return session.id
-    response = client.update_run_session(
-        project_id,
-        run.run_log_id,
-        remote_session_id=session.id,
-        remote_session_kind=session.kind,
-        remote_session_status=session.status,
-        remote_session_capture_method=session.capture_method,
-    )
-    if not response.ok:
-        LOG.warning(
-            "run provenance session update failed project=%s run=%s status=%s body=%s",
-            project_id,
-            run.run_log_id,
-            response.status_code,
-            response.text,
-        )
     return session.id
 
 

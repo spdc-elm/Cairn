@@ -35,15 +35,3 @@ def apply(conn: sqlite3.Connection) -> None:
         ON worker_runtime_health (worker_name, worker_type, endpoint_id, model_profile_id)
         """
     )
-    for table in ("question_threads", "question_jobs"):
-        _add_column(conn, table, "execution_environment_id", "TEXT")
-        _add_column(conn, table, "execution_worker_type", "TEXT")
-        _add_column(conn, table, "execution_endpoint_id", "TEXT")
-        _add_column(conn, table, "execution_model_profile_id", "TEXT")
-
-
-def _add_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
-    columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
-    if column in columns:
-        return
-    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")

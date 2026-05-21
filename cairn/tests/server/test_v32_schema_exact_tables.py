@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import unittest
 
+from cairn.server.app import app
 from cairn.server.migrations import runner
 
 
@@ -54,6 +55,13 @@ class V32SchemaTests(unittest.TestCase):
         self.assertIn("session_action", columns)
         self.assertIn("remote_session_in_id", columns)
         self.assertIn("remote_session_out_id", columns)
+
+    def test_v32_app_does_not_mount_legacy_runs_router(self) -> None:
+        paths = {route.path for route in app.routes}
+
+        self.assertNotIn("/projects/{project_id}/runs", paths)
+        self.assertNotIn("/projects/{project_id}/runs/provenance", paths)
+        self.assertNotIn("/projects/{project_id}/runs/{run_id}/transcript", paths)
 
 
 if __name__ == "__main__":

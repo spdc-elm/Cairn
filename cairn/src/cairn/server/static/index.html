@@ -2727,7 +2727,16 @@ function cairnApp() {
         return [{ id: event.id, execution_id: event.execution_id, kind: payload.result ? 'tool_result' : 'tool_call', title: payload.name || 'tool', raw: payload, status: payload.status || 'success' }];
       }
       if (event.event_type === 'status') {
-        return [{ id: event.id, execution_id: event.execution_id, kind: payload.status === 'running' ? 'run_started' : 'run_finished', text: payload.status || '', status: payload.status || 'success' }];
+        const status = payload.status || 'success';
+        const running = status === 'running';
+        return [{
+          id: event.id,
+          execution_id: event.execution_id,
+          kind: running ? 'run_started' : 'run_finished',
+          text: status,
+          status,
+          stream_key: `${event.execution_id}:run:${running ? 'started' : 'finished'}`,
+        }];
       }
       if (event.event_type === 'stdout' || event.event_type === 'stderr') {
         const text = payload.text || '';
@@ -2753,6 +2762,51 @@ function cairnApp() {
         try { payload = JSON.parse(line); } catch { return; }
         if (!payload || typeof payload !== 'object') return;
         const type = payload.type || payload.event_type || '';
+        if (type === 'system') {
+          parsed.push({
+            id: `${event.id}:json:${index}:system`,
+            execution_id: event.execution_id,
+            kind: 'run_started',
+            title: payload.subtype || 'Claude session',
+            text: payload.session_id || payload.sessionId || '',
+            raw: payload,
+            status: 'success',
+            stream_key: `${event.execution_id}:run:started`,
+          });
+          return;
+        }
+        if ((type === 'assistant' || type === 'user') && payload.message) {
+          const message = { ...(payload.message || {}), role: payload.message.role || type };
+          const events = this.workerMessageToConversationEvents(message, `${event.id}:json:${index}`, {
+            status: 'success',
+            streamKey: type === 'assistant' ? this.claudeMessageStreamKey(event, message) : this.messageStreamKey(event, message, message.role, index),
+            executionId: event.execution_id,
+          });
+          parsed.push(...events);
+          return;
+        }
+        if (type === 'result') {
+          const result = typeof payload.result === 'string' ? payload.result : this.workerToolArgsPreview(payload.result);
+          if (result) {
+            parsed.push({
+              id: `${event.id}:json:${index}:result`,
+              execution_id: event.execution_id,
+              kind: 'message',
+              role: 'assistant',
+              title: 'Result',
+              text: result,
+              raw: payload,
+              status: payload.is_error ? 'error' : 'success',
+              stream_key: `${event.execution_id}:claude:text`,
+            });
+          }
+          return;
+        }
+        if (type === 'stream_event' && payload.event) {
+          const streamEvents = this.claudeStreamEventToConversationEvents(event, payload.event, `${event.id}:json:${index}`);
+          parsed.push(...streamEvents);
+          return;
+        }
         if (type === 'message_update' && payload.message?.role) {
           if (payload.message.role === 'user') return;
           const events = this.workerMessageToConversationEvents(payload.message, `${event.id}:json:${index}`, {
@@ -2828,6 +2882,67 @@ function cairnApp() {
       return parsed;
     },
 
+    claudeStreamEventToConversationEvents(event, streamEvent, idPrefix) {
+      const streamType = streamEvent?.type || '';
+      if (streamType === 'content_block_delta') {
+        const delta = streamEvent.delta || {};
+        if (delta.type === 'text_delta' && delta.text) {
+          return [{
+            id: `${idPrefix}:claude-text-delta`,
+            execution_id: event.execution_id,
+            kind: 'message',
+            role: 'assistant',
+            text: delta.text,
+            raw: streamEvent,
+            status: 'running',
+            stream_key: `${event.execution_id}:claude:text`,
+            stream_delta: true,
+          }];
+        }
+        if (delta.type === 'thinking_delta' && delta.thinking) {
+          return [{
+            id: `${idPrefix}:claude-thinking-delta`,
+            execution_id: event.execution_id,
+            kind: 'thinking',
+            title: 'Thinking',
+            text: delta.thinking,
+            raw: streamEvent,
+            status: 'running',
+            stream_key: `${event.execution_id}:claude:thinking:${streamEvent.index || 0}`,
+            stream_delta: true,
+          }];
+        }
+      }
+      if (streamType === 'content_block_start') {
+        const block = streamEvent.content_block || {};
+        if (block.type === 'tool_use') {
+          return [{
+            id: `${idPrefix}:claude-tool-start:${block.id || streamEvent.index || 0}`,
+            execution_id: event.execution_id,
+            kind: 'tool_call',
+            title: block.name || 'tool',
+            tool_name: block.name || '',
+            tool_args_preview: this.workerToolArgsPreview(block.input || {}),
+            raw: streamEvent,
+            status: 'running',
+            stream_key: `${event.execution_id}:tool-call:${block.id || streamEvent.index || 0}`,
+          }];
+        }
+      }
+      if (streamType === 'content_block_stop' || streamType === 'message_stop' || streamType === 'message_delta') {
+        return [];
+      }
+      return [];
+    },
+
+    claudeMessageStreamKey(event, message) {
+      const text = this.workerMessageText(message);
+      if (text) return `${event.execution_id}:claude:text`;
+      const content = Array.isArray(message?.content) ? message.content : [];
+      if (content.some(item => item?.type === 'thinking')) return `${event.execution_id}:claude:thinking`;
+      return this.messageStreamKey(event, message, message?.role || 'assistant');
+    },
+
     workerMessageToConversationEvents(message, idPrefix, options = {}) {
       const status = options.status || 'success';
       const streamPrefix = options.executionId || idPrefix.split(':json:')[0];
@@ -2862,7 +2977,7 @@ function cairnApp() {
       if (Array.isArray(message.content)) {
         message.content.forEach((item, index) => {
           const itemType = item?.type || item?.kind || '';
-          if (itemType === 'toolCall' || itemType === 'tool_call') {
+          if (itemType === 'toolCall' || itemType === 'tool_call' || itemType === 'tool_use') {
             const toolKey = item.id || `${item.name || 'tool'}:${index}`;
             events.push({
               id: `${idPrefix}:tool-call:${toolKey}`,
@@ -2871,10 +2986,23 @@ function cairnApp() {
               title: item.name || 'tool',
               tool_name: item.name || '',
               text: item.partialArgs || '',
-              tool_args_preview: this.workerToolArgsPreview(item.arguments || item.partialArgs || {}),
+              tool_args_preview: this.workerToolArgsPreview(item.arguments || item.input || item.partialArgs || {}),
               raw: item,
               status,
               stream_key: `${streamPrefix}:tool-call:${toolKey}`,
+            });
+          } else if (itemType === 'tool_result') {
+            const toolKey = item.tool_use_id || item.id || `tool:${index}`;
+            events.push({
+              id: `${idPrefix}:tool-result:${toolKey}`,
+              execution_id: options.executionId || null,
+              kind: 'tool_result',
+              title: 'tool result',
+              tool_name: item.name || '',
+              text: this.workerToolText(item),
+              raw: item,
+              status: item.is_error ? 'error' : status,
+              stream_key: `${streamPrefix}:tool-result:${toolKey}`,
             });
           }
         });
@@ -2964,11 +3092,25 @@ function cairnApp() {
       const compacted = [];
       const streamIndexes = new Map();
       const messageTextIndexes = new Map();
+      const terminalStatusByExecution = new Map();
       for (const event of deduped) {
+        if (event?.kind === 'run_finished' && event.execution_id && event.status && event.status !== 'running') {
+          terminalStatusByExecution.set(event.execution_id, event.status);
+        }
         if (event?.stream_key) {
           const existing = streamIndexes.get(event.stream_key);
           if (existing !== undefined) {
-            compacted[existing] = event;
+            const previous = compacted[existing] || {};
+            if (event.stream_delta) {
+              compacted[existing] = {
+                ...previous,
+                ...event,
+                id: previous.id || event.id,
+                text: `${previous.text || ''}${event.text || ''}`,
+              };
+            } else {
+              compacted[existing] = event;
+            }
             continue;
           }
           streamIndexes.set(event.stream_key, compacted.length);
@@ -2985,7 +3127,13 @@ function cairnApp() {
         }
         compacted.push(event);
       }
-      return compacted;
+      return compacted.map(event => {
+        if (event?.status !== 'running' || !event.execution_id) return event;
+        const terminalStatus = terminalStatusByExecution.get(event.execution_id);
+        return terminalStatus
+          ? { ...event, status: terminalStatus, text: event.kind === 'run_started' ? terminalStatus : event.text }
+          : event;
+      });
     },
 
     conversationEventLabel(event) {
