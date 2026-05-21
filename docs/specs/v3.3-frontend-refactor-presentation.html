@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>V3.3 Frontend Refactor Spec</title>
+<style>
+  :root {
+    --bg: #f8fafc;
+    --panel: #ffffff;
+    --ink: #0f172a;
+    --muted: #64748b;
+    --line: #dbe3ef;
+    --brand: #4f46e5;
+    --teal: #0f766e;
+    --amber: #b45309;
+    --rose: #be123c;
+    --slate: #334155;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  header {
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    background: rgba(255,255,255,0.88);
+    border-bottom: 1px solid var(--line);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-weight: 700;
+    letter-spacing: 0;
+  }
+  .mark {
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    display: grid;
+    place-items: center;
+    color: var(--brand);
+    background: white;
+  }
+  nav {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  nav button {
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--muted);
+    padding: 8px 10px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  nav button.active {
+    border-color: #c7d2fe;
+    background: #eef2ff;
+    color: #3730a3;
+  }
+  main {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 28px;
+  }
+  section {
+    display: none;
+    min-height: calc(100vh - 120px);
+  }
+  section.active {
+    display: grid;
+    align-content: center;
+    gap: 22px;
+  }
+  h1 {
+    font-size: clamp(34px, 5vw, 58px);
+    line-height: 1.02;
+    margin: 0;
+    letter-spacing: 0;
+    max-width: 900px;
+  }
+  h2 {
+    font-size: clamp(26px, 3.4vw, 42px);
+    line-height: 1.08;
+    margin: 0;
+    letter-spacing: 0;
+  }
+  p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 17px;
+    line-height: 1.65;
+    max-width: 820px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 18px;
+  }
+  .card h3 {
+    margin: 0 0 8px;
+    font-size: 15px;
+    letter-spacing: 0;
+  }
+  .card p, .card li {
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  ul {
+    margin: 10px 0 0;
+    padding-left: 18px;
+    color: var(--muted);
+  }
+  li { margin: 7px 0; }
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: white;
+    padding: 5px 9px;
+    font-size: 12px;
+    color: var(--slate);
+    margin-right: 6px;
+    margin-top: 6px;
+  }
+  .accent { color: var(--brand); }
+  .ok { color: var(--teal); }
+  .warn { color: var(--amber); }
+  .bad { color: var(--rose); }
+  .flow {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
+    align-items: stretch;
+  }
+  .step {
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+    min-height: 120px;
+  }
+  .step strong {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--ink);
+  }
+  .step span {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .footer {
+    color: #94a3b8;
+    font-size: 12px;
+    padding-top: 4px;
+  }
+  @media (max-width: 800px) {
+    header {
+      height: auto;
+      min-height: 64px;
+      align-items: flex-start;
+      flex-direction: column;
+      padding: 14px 18px;
+      gap: 10px;
+    }
+    main { padding: 20px; }
+    .grid, .two, .flow { grid-template-columns: 1fr; }
+    section.active { align-content: start; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><div class="mark">C</div><span>V3.3 Frontend Refactor</span></div>
+  <nav aria-label="Slides">
+    <button class="active" data-slide="0">判断</button>
+    <button data-slide="1">病因</button>
+    <button data-slide="2">不变量</button>
+    <button data-slide="3">边界</button>
+    <button data-slide="4">测试</button>
+    <button data-slide="5">决策</button>
+  </nav>
+</header>
+<main>
+  <section class="active">
+    <div>
+      <span class="tag">Spec Draft</span>
+      <span class="tag">2026-05-20</span>
+    </div>
+    <h1>不是换框架。是把 UI 从全能脚本改成可测投影层。</h1>
+    <p>展示能力基本不变；事实源更单一；状态边界更清楚。v3.3 的第一约束不是工期，而是重构后 Graph、Log、Output、Ask 仍指向同一真实对象。</p>
+    <div class="footer">验收口径：用户可见工作流与语义不退化，非像素级一致。</div>
+  </section>
+
+  <section>
+    <h2>当前病因</h2>
+    <div class="grid">
+      <div class="card">
+        <h3 class="bad">单文件边界坍缩</h3>
+        <p>`index.html` 同时承载模板、状态、API、图布局、conversation、healthcheck、replay、modal。</p>
+      </div>
+      <div class="card">
+        <h3 class="bad">事实解释外溢</h3>
+        <p>浏览器端仍解析 worker stdout，并把 ExecutionEvent 投影成多套 UI 语义。</p>
+      </div>
+      <div class="card">
+        <h3 class="bad">测试护栏偏弱</h3>
+        <p>字符串守卫能防删调用，不能证明页面能跑、图非空、点击有效、布局不破。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>不可退让的不变量</h2>
+    <div class="flow">
+      <div class="step"><strong>Fact/Intent DAG</strong><span>仍是用户心智模型，不被 execution list 替代。</span></div>
+      <div class="step"><strong>ExecutionEvent</strong><span>仍是 Output 与 Conversation 的实时事实源。</span></div>
+      <div class="step"><strong>Branch</strong><span>表达 fork/resume/fresh_context 的连续线。</span></div>
+      <div class="step"><strong>Selection Parity</strong><span>Graph、Detail、Log、Output、Ask 不错锚。</span></div>
+      <div class="step"><strong>Raw Fallback</strong><span>parser 漂移时仍有最后可信视图。</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>重构边界</h2>
+    <div class="grid two">
+      <div class="card">
+        <h3 class="accent">前端边界</h3>
+        <ul>
+          <li>ApiClient</li>
+          <li>ProjectionContracts</li>
+          <li>GraphSelectionStore</li>
+          <li>GraphModelAdapter / GraphCanvas</li>
+          <li>ExecutionStreamStore</li>
+          <li>Conversation / QuestionBranch / Timeline</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 class="accent">服务端边界</h3>
+        <ul>
+          <li>`/ui-projection` 有明确 response model</li>
+          <li>Transcript normalization 下沉到 server/shared</li>
+          <li>Ask availability 来自 capability + session + health</li>
+          <li>前端不按 worker type 猜能力</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>测试先行</h2>
+    <div class="grid">
+      <div class="card">
+        <h3 class="ok">Contract</h3>
+        <p>FastAPI TestClient 覆盖 graph projection、events cursor、branches、worker capability、healthcheck request。</p>
+      </div>
+      <div class="card">
+        <h3 class="ok">Unit</h3>
+        <p>抽出 buildElements、selection reducer、event view model、conversation compaction、question availability。</p>
+      </div>
+      <div class="card">
+        <h3 class="ok">Browser / Visual</h3>
+        <p>Playwright 或等价 smoke：创建项目、图非空、Output 实时、Ask、healthcheck、窄屏无溢出。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>待决策</h2>
+    <div class="grid two">
+      <div class="card">
+        <h3 class="warn">技术底座</h3>
+        <ul>
+          <li>Alpine + ES modules 过渡</li>
+          <li>React + TypeScript + Vite 为长期推荐</li>
+          <li>Vue/Svelte/Lit 皆可，但状态边界先行</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 class="warn">验收底座</h3>
+        <ul>
+          <li>`/ui-projection` 取代 `/graph` 主命名</li>
+          <li>Playwright 纳入仓库，或 Browser MCP 过渡</li>
+          <li>视觉基线是否进入 CI</li>
+        </ul>
+      </div>
+    </div>
+    <p>下一步应进入 `cairn-planning`：先定测试护栏，再定框架与迁移顺序。</p>
+  </section>
+</main>
+<script>
+  const buttons = [...document.querySelectorAll("nav button")];
+  const slides = [...document.querySelectorAll("main section")];
+  function showSlide(index) {
+    slides.forEach((slide, i) => slide.classList.toggle("active", i === index));
+    buttons.forEach((button, i) => button.classList.toggle("active", i === index));
+  }
+  buttons.forEach((button, index) => button.addEventListener("click", () => showSlide(index)));
+  window.addEventListener("keydown", (event) => {
+    const current = slides.findIndex(slide => slide.classList.contains("active"));
+    if (event.key === "ArrowRight") showSlide(Math.min(slides.length - 1, current + 1));
+    if (event.key === "ArrowLeft") showSlide(Math.max(0, current - 1));
+  });
+</script>
+</body>
+</html>

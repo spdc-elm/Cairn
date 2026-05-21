@@ -5,20 +5,27 @@ description: Use for Cairn Specification Mode when the user wants to clarify a f
 
 # Cairn Specification Mode
 
-Use this skill when shaping a Cairn requirement before implementation. The goal is not to code yet; it is to turn natural language into a clear specification that can later feed planning.
+Use this skill when shaping a Cairn requirement before implementation. The requirement may be a user-facing feature, architecture refactor, compatibility cleanup, module boundary change, or technical-debt cleanup. The goal is not to code yet; it is to turn natural language into a clear specification that can later feed planning.
 
 ## Workflow
 
 1. Read current facts first:
+   - Must read `docs/architecture/cairn-architecture-ssot.md` before making any architecture, data model, runtime, Output/Conversation, worker session, migration, or compatibility claim.
    - Relevant files in `docs/specs/`, `docs/plan/`, README, code, and tests.
    - Do not claim how the repo works unless you read the relevant files in this turn.
+   - Treat older specs/plans as historical context when they conflict with the architecture SSOT.
 2. Clarify the requirement:
    - Identify the original goal, user scenario, success criteria, non-goals, and key decision points.
    - Ask targeted questions only when the answer changes the spec.
    - Challenge unnecessary entities and premature implementation assumptions.
+   - If the feature would revive `run_provenance`, `/runs/*/transcript`, `/questions`, `question_jobs`, or `server/transcripts/*` as a main path, flag it as an architecture conflict unless the user explicitly wants to revise the SSOT.
+   - For refactor specs, define the reason, current architecture fact, target architecture boundary, preserved behavior, migration/cleanup scope, rollback risk, and acceptance criteria.
 3. Write the spec once the core intent is clear:
    - Open questions are allowed, but the core goal must not be empty.
    - Keep the design simple: 如无必要，勿增实体.
+   - Reference the architecture SSOT in the spec basis when the feature touches core architecture.
+   - If the spec changes architecture, add a `Proposed Architecture Delta` section. Do not rewrite the SSOT main body as if the target is already implemented.
+   - If the user confirms the refactor spec and future agents need to plan from it, add or request a matching `Pending Architecture Delta` marker in `docs/architecture/cairn-architecture-ssot.md`.
 
 ## Outputs
 
@@ -56,9 +63,14 @@ Use this structure unless the task clearly needs less:
 
 ## 8. 关键决策点
 
-## 9. 验收标准
+## 9. Proposed Architecture Delta
 
-## 10. 待确认问题
+> Only include this section when the spec intentionally changes architecture.
+> State: current SSOT fact, proposed target fact, affected SSOT sections, preserved behavior, cleanup/migration scope, and when the delta becomes current.
+
+## 10. 验收标准
+
+## 11. 待确认问题
 ```
 
 Rules:
@@ -66,6 +78,11 @@ Rules:
 - Define what is wanted, what is not wanted, and how it will be accepted.
 - Do not write detailed implementation phases; leave that to `cairn-planning`.
 - Mark uncertainty explicitly. Do not present guesses as facts.
+- Refactor specs must not be vague cleanup wishes; they need crisp before/after boundaries and behavior that must remain unchanged.
+- A refactor spec may intentionally conflict with Current SSOT only through an explicit `Proposed Architecture Delta`; otherwise treat the conflict as an error to clarify.
+- Do not make future architecture look current. Current facts live in the SSOT main body; planned changes live in Proposed/Pending deltas until implemented.
+- If requirements imply changing the architecture SSOT, list that as a key decision point instead of silently drifting.
+- If old compatibility code is unnecessary and likely to mislead future implementation, mention cleanup as a requirement or non-goal boundary.
 
 ## HTML Presentation
 
@@ -81,4 +98,3 @@ Summarize briefly:
 - Core spec conclusion.
 - Remaining decisions, if any.
 - Next step: use `cairn-planning` on the spec.
-

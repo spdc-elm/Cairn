@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cairn v3.3 Frontend Refactor Plan</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --ink: #172033;
+      --muted: #64748b;
+      --line: #d8e1ec;
+      --panel: #ffffff;
+      --blue: #2563eb;
+      --teal: #0f766e;
+      --rose: #be123c;
+      --amber: #b45309;
+      --green: #15803d;
+      --slate: #334155;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+    header {
+      padding: 36px min(7vw, 72px) 26px;
+      background: #edf3f8;
+      border-bottom: 1px solid var(--line);
+    }
+    h1 {
+      margin: 0;
+      max-width: 1120px;
+      font-size: 40px;
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+    .lead {
+      margin: 14px 0 0;
+      max-width: 980px;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.6;
+    }
+    main { padding: 28px min(7vw, 72px) 58px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 18px;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, .06);
+    }
+    h2 { margin: 0 0 14px; font-size: 22px; letter-spacing: 0; }
+    h3 { margin: 0 0 8px; font-size: 15px; letter-spacing: 0; }
+    p, li { color: var(--muted); line-height: 1.55; font-size: 13px; }
+    p { margin: 0; }
+    ul { margin: 8px 0 0; padding-left: 18px; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      background: #eef2f7;
+      border-radius: 5px;
+      padding: 1px 4px;
+      color: #263449;
+    }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 23px;
+      padding: 0 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      margin-bottom: 9px;
+      background: #eaf2ff;
+      color: var(--blue);
+      white-space: nowrap;
+    }
+    .tag.rose { background: #ffe8ee; color: var(--rose); }
+    .tag.amber { background: #fff3d9; color: var(--amber); }
+    .tag.green { background: #e7f8ed; color: var(--green); }
+    .tag.teal { background: #e4f5f2; color: var(--teal); }
+    .tag.slate { background: #eef2f7; color: var(--slate); }
+    .phase {
+      display: grid;
+      grid-template-columns: 78px 1fr;
+      gap: 14px;
+      padding: 13px 0;
+      border-top: 1px solid #e6edf5;
+    }
+    .phase:first-of-type { border-top: 0; }
+    .badge {
+      width: 54px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: #eaf2ff;
+      color: var(--blue);
+      font-weight: 900;
+    }
+    .rule {
+      border-left: 4px solid var(--rose);
+      background: #fff8fa;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+    }
+    .rule.good { border-left-color: var(--green); background: #f1fbf4; }
+    .rule.warn { border-left-color: var(--amber); background: #fffaf0; }
+    .arch {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .box {
+      min-height: 84px;
+      border: 1px solid #dce5ef;
+      border-radius: 8px;
+      padding: 12px;
+      background: #fbfdff;
+    }
+    .box strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+    .box span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    @media (max-width: 1040px) {
+      .arch { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 920px) {
+      .grid, .grid.two { grid-template-columns: 1fr; }
+      header { padding: 28px 18px 22px; }
+      main { padding: 22px 18px 42px; }
+      h1 { font-size: 30px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>V3.3 Plan: 换框架，但先钉契约</h1>
+    <p class="lead">前端重构的目标不是现代化外观，而是把 UI 从全能脚本改成薄渲染层：server 给稳定 projection，React/TypeScript 消费它，reducer 与 browser smoke 证明 Graph、Output、Ask、Log 的锚点一致。</p>
+  </header>
+
+  <main>
+    <section class="grid">
+      <article class="panel">
+        <span class="tag rose">拒绝</span>
+        <h3>只拆 Alpine 大文件</h3>
+        <p>短期改动小，但 selection、stream、Ask lifecycle 仍难测试，容易从一个大 store 变成多个隐形大 store。</p>
+      </article>
+      <article class="panel">
+        <span class="tag green">采用</span>
+        <h3>React + TypeScript + Vite</h3>
+        <p>组件边界、类型契约、Vitest、Playwright 更适合当前复杂交互面。Cytoscape 作为 imperative island 封装。</p>
+      </article>
+      <article class="panel">
+        <span class="tag amber">约束</span>
+        <h3>不破坏 cairn serve</h3>
+        <p>npm 只作开发与构建依赖。生产静态产物仍由 FastAPI 托管，迁移期保留 legacy fallback。</p>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>目标架构</h2>
+      <div class="arch">
+        <div class="box">
+          <strong>Server Projection</strong>
+          <span><code>/ui-projection</code> owns runtime status, capability, provenance, timeline input.</span>
+        </div>
+        <div class="box">
+          <strong>ApiClient</strong>
+          <span>HTTP, JSON/text, errors, AbortSignal, no product semantics.</span>
+        </div>
+        <div class="box">
+          <strong>Reducers</strong>
+          <span>Selection, graph elements, conversation view, polling, question availability.</span>
+        </div>
+        <div class="box">
+          <strong>React Panes</strong>
+          <span>ProjectList, Detail, Output, Ask, Timeline, Settings, Environment.</span>
+        </div>
+        <div class="box">
+          <strong>GraphCanvas</strong>
+          <span>Cytoscape init, layout, highlight, resize; semantic events only.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid two" style="margin-top:18px">
+      <article class="panel">
+        <span class="tag teal">关键取舍</span>
+        <ul>
+          <li>React 不是第一步；<code>/ui-projection</code> contract 与 reducer tests 先行。</li>
+          <li>Build output 放入 <code>server/static/app</code>，保证 Python-only 运行体验。</li>
+          <li><code>/graph</code> 降为 alias，新代码统一使用 <code>/ui-projection</code>。</li>
+          <li>Raw fallback 保留，但不得成为 Conversation 主事实源。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <span class="tag slate">失败红线</span>
+        <ul>
+          <li>Graph 与 Output 锚到不同 execution。</li>
+          <li>UI 继续按 worker type 判断 fork/resume。</li>
+          <li>主路径调用 <code>/questions</code> 或 <code>/runs/*/transcript</code>。</li>
+          <li>需要单独前端 dev server 才能使用生产 UI。</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="panel" style="margin-top:18px">
+      <h2>阶段路线</h2>
+      <div class="phase">
+        <div class="badge">0</div>
+        <div><h3>Contract First</h3><p>新增 <code>ProjectUiProjection</code> 与 TestClient contract tests；建立 frontend test scaffold；legacy fallback 保留。</p></div>
+      </div>
+      <div class="phase">
+        <div class="badge">1</div>
+        <div><h3>React/Vite Shell</h3><p>建立 <code>cairn/frontend</code>，Vite build 到 <code>server/static/app</code>，FastAPI 返回新 shell。</p></div>
+      </div>
+      <div class="phase">
+        <div class="badge">2</div>
+        <div><h3>Typed Domain Core</h3><p>API client、contracts、graph builder、selection reducer、conversation mapper、question availability、polling reducer。</p></div>
+      </div>
+      <div class="phase">
+        <div class="badge">3</div>
+        <div><h3>Graph 工作面</h3><p>ProjectList、ProjectShell、GraphCanvas、Detail、Timeline；先证明 selection parity。</p></div>
+      </div>
+      <div class="phase">
+        <div class="badge">4</div>
+        <div><h3>Output / Ask</h3><p>ExecutionStream cursor、Messages/Tools/Raw、Fork/Resume/Fresh Context、resume timeline merge。</p></div>
+      </div>
+      <div class="phase">
+        <div class="badge">5</div>
+        <div><h3>剩余面板与视觉</h3><p>Environment、Settings、Hints、Replay；桌面/窄屏 visual smoke，canvas pixel check。</p></div>
+      </div>
+      <div class="phase">
+        <div class="badge">6</div>
+        <div><h3>Cutover</h3><p>React UI 成为主路径；architecture guards 禁 legacy API；README 与 CI/local validation 补齐。</p></div>
+      </div>
+    </section>
+
+    <section class="grid two" style="margin-top:18px">
+      <article class="panel">
+        <span class="tag green">验收</span>
+        <ul>
+          <li>ProjectList、Graph、Detail、Output、Ask、Log、Settings、Hints、Environment、Replay 能力不退。</li>
+          <li>Browser E2E 覆盖 running output、missing provenance、fork 两轮、resume 确认、healthcheck、replay。</li>
+          <li>Visual smoke 覆盖空/有项目、小/多节点 graph、running Output、Ask、Environment、Replay。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <span class="tag amber">开放</span>
+        <ul>
+          <li>建议提交 production build artifact，保证包内 UI 可用。</li>
+          <li>E2E 默认用 seeded DB 与 mock events；真实 dispatcher/worker 留作 manual E2E。</li>
+          <li>Legacy fallback 至少保留到 React browser smoke 全绿。</li>
+        </ul>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
