@@ -22,6 +22,9 @@ from cairn.dispatcher.tasks.common import (
     best_effort_release_after_conclude_failure,
     cancel_reason,
     did_timeout,
+    finish_deferred_worker_process,
+    finish_execution_terminal,
+    flush_deferred_worker_process_events,
     project_allows_conclude_fallback,
     preview,
     record_remote_session,
@@ -162,7 +165,9 @@ def run_bootstrap_task(
                 if execution_id is not None
                 else None
             ),
+            close_event_sink_on_finish=False,
         )
+        flush_deferred_worker_process_events(first)
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
         session = record_remote_session(client, project.project.id, first, driver, session, execution_id=execution_id)
         cancelled = cancel_reason(first, cancellation)
@@ -175,7 +180,7 @@ def run_bootstrap_task(
                     worker.name,
                     execute_ms,
                 )
-                return _try_conclude_fallback(
+                outcome = _try_conclude_fallback(
                     config,
                     client,
                     environment,
@@ -189,6 +194,8 @@ def run_bootstrap_task(
                     cancellation,
                     execution_id=execution_id,
                 )
+                _finish_after_bootstrap_fallback(client, execution_id, first, outcome)
+                return outcome
             LOG.info(
                 "bootstrap cancelled project=%s intent=%s worker=%s reason=%s execute_ms=%s",
                 project.project.id,
@@ -196,6 +203,14 @@ def run_bootstrap_task(
                 worker.name,
                 cancelled,
                 execute_ms,
+            )
+            finish_deferred_worker_process(
+                client,
+                execution_id,
+                first,
+                "cancelled",
+                error_code="cancelled",
+                error_detail=cancelled,
             )
             best_effort_release(client, project.project.id, intent.id, worker.name)
             return "cancelled"
@@ -207,6 +222,14 @@ def run_bootstrap_task(
                 worker.name,
                 lease.failure.status_code,
                 execute_ms,
+            )
+            finish_deferred_worker_process(
+                client,
+                execution_id,
+                first,
+                "failed",
+                error_code="heartbeat_lost",
+                error_detail=f"heartbeat lost during bootstrap: status={lease.failure.status_code} {preview(lease.failure.text)}",
             )
             best_effort_release(client, project.project.id, intent.id, worker.name)
             return "failed"
@@ -241,8 +264,17 @@ def run_bootstrap_task(
                     cancellation,
                     execution_id=execution_id,
                 )
-                if outcome != "success":
-                    _mark_execution_postprocess_failed(client, execution_id, "bootstrap_parse_failed", str(exc))
+                if outcome == "success":
+                    finish_deferred_worker_process(client, execution_id, first, "succeeded", returncode=first.returncode)
+                elif outcome == "cancelled":
+                    finish_deferred_worker_process(
+                        client,
+                        execution_id,
+                        first,
+                        "cancelled",
+                        error_code="cancelled",
+                        error_detail="worker execution was cancelled before bootstrap conclude fallback completed",
+                    )
                 return outcome
             if kind == "rejected":
                 LOG.warning(
@@ -254,9 +286,17 @@ def run_bootstrap_task(
                     int((time.perf_counter() - task_started) * 1000),
                     preview(first.stdout),
                 )
+                finish_deferred_worker_process(
+                    client,
+                    execution_id,
+                    first,
+                    "failed",
+                    error_code="bootstrap_rejected",
+                    error_detail="worker returned rejected instead of an accepted bootstrap fact",
+                )
                 best_effort_release(client, project.project.id, intent.id, worker.name)
                 return "rejected"
-            return _write_bootstrap_complete_result(
+            outcome = _write_bootstrap_complete_result(
                 client,
                 project.project.id,
                 intent.id,
@@ -268,7 +308,13 @@ def run_bootstrap_task(
                 phase_ms=execute_ms,
                 total_ms=int((time.perf_counter() - task_started) * 1000),
                 producing_run_log_id=first.run_log_id,
+                execution_id=execution_id,
             )
+            if outcome == "success":
+                finish_deferred_worker_process(client, execution_id, first, "succeeded", returncode=first.returncode)
+            else:
+                _mark_execution_postprocess_failed(client, execution_id, "bootstrap_write_failed", "bootstrap fact write failed")
+            return outcome
         if did_timeout(first):
             LOG.warning(
                 "bootstrap timed out project=%s intent=%s worker=%s execute_ms=%s total_ms=%s stdout_preview=%s stderr_preview=%s",
@@ -294,8 +340,17 @@ def run_bootstrap_task(
                 cancellation,
                 execution_id=execution_id,
             )
-            if outcome != "success":
-                _mark_execution_postprocess_failed(client, execution_id, "bootstrap_timeout", "bootstrap execution timed out")
+            if outcome == "success":
+                finish_deferred_worker_process(client, execution_id, first, "succeeded", returncode=first.returncode)
+            elif outcome == "cancelled":
+                finish_deferred_worker_process(
+                    client,
+                    execution_id,
+                    first,
+                    "cancelled",
+                    error_code="cancelled",
+                    error_detail="worker execution was cancelled before bootstrap conclude fallback completed",
+                )
             return outcome
         LOG.warning(
             "bootstrap command failed project=%s intent=%s worker=%s code=%s execute_ms=%s total_ms=%s stdout_preview=%s stderr_preview=%s",
@@ -307,6 +362,14 @@ def run_bootstrap_task(
             int((time.perf_counter() - task_started) * 1000),
             preview(first.stdout),
             preview(first.stderr),
+        )
+        finish_deferred_worker_process(
+            client,
+            execution_id,
+            first,
+            "failed",
+            error_code="worker_process_failed",
+            error_detail=preview(first.stderr) or preview(first.stdout) or "bootstrap worker process failed",
         )
         best_effort_release(client, project.project.id, intent.id, worker.name)
         return "failed"
@@ -490,6 +553,7 @@ def _try_conclude_fallback(
         source="bootstrap_conclude",
         phase_ms=conclude_ms,
         metadata=metadata_for_worker_fact(worker.name, intent.id, producing_run_log_id=result.run_log_id),
+        execution_id=execution_id,
     )
     if outcome != "success":
         _mark_execution_postprocess_failed(client, execution_id, "bootstrap_conclude_write_failed", "bootstrap conclude fact write failed")
@@ -528,24 +592,9 @@ def _mark_execution_postprocess_failed(
     if not execution_id:
         return
     _append_execution_diagnostic(client, execution_id, f"dispatcher postprocess failed: {error_code}: {error_detail}")
-    response = client.patch_execution(
+    response = finish_execution_terminal(
+        client,
         execution_id,
-        {
-            "status": "failed",
-            "error_code": error_code,
-            "error_detail": error_detail,
-        },
-    )
-    if not response.ok:
-        LOG.warning(
-            "bootstrap execution postprocess failure patch failed execution=%s status=%s body=%s",
-            execution_id,
-            response.status_code,
-            response.text,
-        )
-    response = client.append_execution_events(
-        execution_id,
-        dispatcher_id="dispatcher",
         events=[
             status_event(
                 "failed",
@@ -554,10 +603,15 @@ def _mark_execution_postprocess_failed(
                 error_detail=error_detail,
             ).to_api_payload()
         ],
+        patch={
+            "status": "failed",
+            "error_code": error_code,
+            "error_detail": error_detail,
+        },
     )
     if not response.ok:
         LOG.warning(
-            "bootstrap execution postprocess failure status append failed execution=%s status=%s body=%s",
+            "bootstrap execution postprocess finish failed execution=%s status=%s body=%s",
             execution_id,
             response.status_code,
             response.text,
@@ -595,6 +649,7 @@ def _write_bootstrap_complete_result(
     phase_ms: int,
     total_ms: int | None = None,
     producing_run_log_id: str | None = None,
+    execution_id: str | None = None,
 ) -> str:
     conclude = write_conclude_result_with_fact_id(
         client,
@@ -607,6 +662,7 @@ def _write_bootstrap_complete_result(
         phase_ms=phase_ms,
         total_ms=total_ms,
         metadata=metadata_for_worker_fact(worker_name, intent_id, producing_run_log_id=producing_run_log_id),
+        execution_id=execution_id,
     )
     if conclude.status != "success":
         return "failed"
@@ -666,3 +722,22 @@ def _write_bootstrap_complete_result(
             total_ms,
         )
     return "success"
+
+
+def _finish_after_bootstrap_fallback(
+    client: CairnClient,
+    execution_id: str | None,
+    run,
+    outcome: str,
+) -> None:
+    if outcome == "success":
+        finish_deferred_worker_process(client, execution_id, run, "succeeded", returncode=run.returncode)
+    elif outcome == "cancelled":
+        finish_deferred_worker_process(
+            client,
+            execution_id,
+            run,
+            "cancelled",
+            error_code="cancelled",
+            error_detail="worker execution was cancelled before bootstrap conclude fallback completed",
+        )

@@ -15,6 +15,7 @@ from cairn.server.models import (
     ExecutionEvent,
     ExecutionConclusionReportRequest,
     ExecutionRun,
+    FinishExecutionRequest,
     Fact,
     Intent,
     LeaseExecutionRequest,
@@ -32,6 +33,7 @@ from cairn.server.models import (
 from cairn.shared.endpoints import normalize_provider_base_url
 
 SYSTEM_HEALTHCHECK_PROJECT_ID = "__system_healthchecks__"
+TERMINAL_EXECUTION_STATUSES = {"succeeded", "failed", "cancelled"}
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1236,9 +1238,22 @@ def _reject_active_project_execution(
 
 def patch_execution(conn: sqlite3.Connection, execution_id: str, body: PatchExecutionRequest) -> ExecutionRun:
     current = get_execution_or_404(conn, None, execution_id)
+    fields = body.model_fields_set
+    if current.status in TERMINAL_EXECUTION_STATUSES:
+        allowed_terminal_followup = {
+            "dispatcher_id",
+            "remote_session_out_kind",
+            "remote_session_out_id",
+            "remote_session_out_status",
+            "metadata",
+        }
+        if "status" in fields and body.status != current.status:
+            raise HTTPException(409, "Execution is already terminal")
+        disallowed = fields - allowed_terminal_followup - {"status"}
+        if disallowed:
+            raise HTTPException(409, "Execution is already terminal")
     updates: list[str] = []
     params: list[object] = []
-    fields = body.model_fields_set
     if "status" in fields:
         updates.append("status = ?")
         params.append(body.status)
@@ -1421,6 +1436,7 @@ def append_execution_events(
                 (execution_id, event.event_key),
             ).fetchone()
             if existing is not None:
+                _ensure_canonical_event_matches(existing, event)
                 written.append(execution_event_row_to_model(existing))
                 continue
         seq = _next_scoped_value(conn, execution.project_id, f"execution_event_seq:{execution_id}")
@@ -1456,6 +1472,33 @@ def append_execution_events(
     return written
 
 
+def finish_execution(
+    conn: sqlite3.Connection,
+    execution_id: str,
+    body: FinishExecutionRequest,
+) -> ExecutionRun:
+    current = get_execution_or_404(conn, None, execution_id)
+    if current.leased_by is not None and current.leased_by != body.dispatcher_id:
+        raise HTTPException(403, "Execution is leased by another dispatcher")
+    if current.status in TERMINAL_EXECUTION_STATUSES:
+        _ensure_duplicate_finish(conn, current, body)
+        return current
+    if current.status not in {"leased", "running"}:
+        raise HTTPException(409, "Execution is not leased or running")
+
+    if body.events:
+        append_execution_events(
+            conn,
+            execution_id,
+            AppendExecutionEventsRequest(dispatcher_id=body.dispatcher_id, events=body.events),
+        )
+    patch_fields = body.patch.model_dump(exclude_unset=True)
+    patch_fields["dispatcher_id"] = body.dispatcher_id
+    updated = patch_execution(conn, execution_id, PatchExecutionRequest(**patch_fields))
+    release_execution_session_lock(conn, updated.id)
+    return updated
+
+
 def list_execution_events(
     conn: sqlite3.Connection,
     project_id: str,
@@ -1468,7 +1511,7 @@ def list_execution_events(
     after_project_seq = 0
     if after_cursor:
         row = conn.execute(
-            "SELECT project_seq FROM execution_events WHERE project_id = ? AND cursor = ?",
+            "SELECT execution_id, project_seq FROM execution_events WHERE project_id = ? AND cursor = ?",
             (project_id, after_cursor),
         ).fetchone()
         if row is None:
@@ -1478,6 +1521,8 @@ def list_execution_events(
             ).fetchone()
             detail = "Foreign cursor" if any_cursor is not None else "Invalid cursor"
             raise HTTPException(400, detail)
+        if row["execution_id"] != execution_id:
+            raise HTTPException(400, "Cursor does not belong to execution")
         after_project_seq = row["project_seq"]
     rows = conn.execute(
         """
@@ -1492,6 +1537,55 @@ def list_execution_events(
         (execution.id, project_id, after_project_seq, max(1, min(limit, 1000))),
     ).fetchall()
     return [execution_event_row_to_model(row) for row in rows]
+
+
+def _canonical_event_tuple(event_type: str, role: str | None, payload_json: str | None, ts: str | None) -> tuple:
+    payload = loads_json_object(payload_json) or {}
+    return (event_type, role, dumps_json(payload) or "{}", ts)
+
+
+def _canonical_append_tuple(event) -> tuple:
+    return (event.event_type, event.role, dumps_json(event.payload) or "{}", event.ts)
+
+
+def _ensure_canonical_event_matches(row: sqlite3.Row, event) -> None:
+    append_ts = event.ts if event.ts is not None else row["ts"]
+    if _canonical_event_tuple(row["event_type"], row["role"], row["payload_json"], row["ts"]) != (
+        event.event_type,
+        event.role,
+        dumps_json(event.payload) or "{}",
+        append_ts,
+    ):
+        raise HTTPException(409, "Event key conflict")
+
+
+def _ensure_duplicate_finish(conn: sqlite3.Connection, current: ExecutionRun, body: FinishExecutionRequest) -> None:
+    patch = body.patch
+    if patch.status != current.status:
+        raise HTTPException(409, "Execution already finished with different status")
+    for field, current_value in (
+        ("returncode", current.returncode),
+        ("error_code", current.error_code),
+        ("error_detail", current.error_detail),
+        ("remote_session_out_kind", current.remote_session_out_kind),
+        ("remote_session_out_id", current.remote_session_out_id),
+        ("remote_session_out_status", current.remote_session_out_status),
+    ):
+        value = getattr(patch, field)
+        if value is not None and value != current_value:
+            raise HTTPException(409, "Execution already finished with different patch")
+    if patch.metadata is not None and patch.metadata != (current.metadata or {}):
+        raise HTTPException(409, "Execution already finished with different patch")
+    for event in body.events:
+        if event.event_key is None:
+            raise HTTPException(409, "Duplicate finish requires event keys")
+        row = conn.execute(
+            "SELECT * FROM execution_events WHERE execution_id = ? AND event_key = ?",
+            (current.id, event.event_key),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(409, "Execution already finished; new terminal events are not allowed")
+        _ensure_canonical_event_matches(row, event)
 
 
 def release_execution_session_lock(conn: sqlite3.Connection, execution_id: str) -> None:

@@ -30,7 +30,7 @@
 
 ## 1.2 Pending Architecture Deltas
 
-当前无 pending architecture delta。
+暂无。
 
 ## 2. 产品心智模型
 
@@ -58,6 +58,8 @@ Intent / Branch
 
 - `ExecutionRun` 是运行层原子，表示某个 worker 在某个 environment/profile/endpoint/workspace/session 下实际执行一次。
 - `ExecutionEvent` 是实时 Output、conversation transcript、tool/message stream、stdout/stderr 的唯一主数据源。
+- Terminal status 必须通过 `POST /dispatcher/executions/{execution_id}/finish` 或等价持久化屏障与 terminal/final events 一起提交；dispatcher 主路径不得先丢 final events 再单独把 execution patch 成 succeeded。
+- `event_key` 是 immutable idempotency key。同 execution 同 key 同 canonical event 可重放；同 key 不同 event 必须冲突，不得静默吞掉新内容。
 - `Artifact` 保存大产物与证据，如 report、transcript、scan output、screenshot、文件。
 - `EvidenceLink` 连接 fact 与 artifact/execution，用于表达证据关系。
 - Output UI、Conversation UI、fork/resume 历史、实时状态，必须从 `execution_runs` 与 `execution_events` 投影。
@@ -82,6 +84,8 @@ Intent / Branch
 - `resume_continue`
 - `branch_continue`
 
+`branch_continue` 继续该 branch 最新 successful execution 的 available session；只有没有 branch-local successful session 时才回退到 source execution session。
+
 ## 5. Dispatcher / Server / Driver 边界
 
 Server 负责：
@@ -97,7 +101,8 @@ Dispatcher 负责：
 - 选择 worker driver 与 environment。
 - 启动/取消/心跳/收尾 worker process。
 - 将 stdout/stderr/message/tool/session/status 等实时写入 `ExecutionEvent`。
-- patch `ExecutionRun` 的 terminal status、session output、returncode、error。
+- 通过 bounded EventSink 写入 events：timeout/backpressure 必须 retry、暴露 diagnostic，且队列不得无限增长。
+- 通过 finish contract 提交 terminal events、session output、returncode、error 与 terminal status。finish 失败时不得把 execution 标记为 succeeded；最后手段只能暴露 failed diagnostic。
 
 Worker driver 负责：
 
@@ -120,6 +125,8 @@ Web UI 应只把以下内容作为 Output/Conversation 主路径：
 - branch/execution 相关 v3.2 API
 
 UI 不得调用旧 `/questions` 或 `/runs/*/transcript` 作为 Output/Conversation 主路径。
+UI Conversation 主路径不得解析 backend-specific stdout JSONL 生成语义 message/tool/session；raw stdout/stderr 只属于 Raw/Debug 呈现。
+Execution events 与 branch timeline 必须使用 endpoint-scoped cursor 完整读取；跨 execution/branch cursor 必须被 server 拒绝，前端不得依赖 project cursor 混用跳读。
 
 实时展示规则：
 

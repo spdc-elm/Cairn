@@ -178,12 +178,19 @@ def get_branch_timeline(project_id: str, branch_id: str, after_cursor: str | Non
         after_project_seq = 0
         if after_cursor:
             row = conn.execute(
-                "SELECT project_seq FROM execution_events WHERE project_id = ? AND cursor = ?",
+                """
+                SELECT ev.project_seq, er.branch_id
+                FROM execution_events ev
+                JOIN execution_runs er ON er.id = ev.execution_id
+                WHERE ev.project_id = ? AND ev.cursor = ?
+                """,
                 (project_id, after_cursor),
             ).fetchone()
             if row is None:
                 any_cursor = conn.execute("SELECT 1 FROM execution_events WHERE cursor = ? LIMIT 1", (after_cursor,)).fetchone()
                 raise HTTPException(400, "Foreign cursor" if any_cursor is not None else "Invalid cursor")
+            if row["branch_id"] != branch_id:
+                raise HTTPException(400, "Cursor does not belong to branch")
             after_project_seq = row["project_seq"]
         rows = conn.execute(
             """

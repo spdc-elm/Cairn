@@ -13,6 +13,7 @@ from cairn.server.models import (
     ExecutionConclusionReportRequest,
     ExecutionEventsResponse,
     ExecutionRun,
+    FinishExecutionRequest,
     LeaseExecutionRequest,
     PatchExecutionRequest,
     UploadExecutionArtifactRequest,
@@ -22,6 +23,7 @@ from cairn.server.services import (
     claim_pending_healthcheck_executions,
     claim_pending_question_executions,
     create_execution_run,
+    finish_execution,
     get_execution_or_404,
     lease_execution,
     list_execution_events,
@@ -111,6 +113,12 @@ def dispatcher_patch_execution(execution_id: str, body: PatchExecutionRequest):
 def dispatcher_append_execution_events(execution_id: str, body: AppendExecutionEventsRequest):
     with get_conn() as conn:
         return append_execution_events(conn, execution_id, body)
+
+
+@router.post("/dispatcher/executions/{execution_id}/finish", response_model=ExecutionRun)
+def dispatcher_finish_execution(execution_id: str, body: FinishExecutionRequest):
+    with get_conn() as conn:
+        return finish_execution(conn, execution_id, body)
 
 
 @router.post("/dispatcher/executions/{execution_id}/conclusion-report", response_model=ConcludeResponse)

@@ -9,8 +9,9 @@ from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.runtime.cancellation import TaskCancellation
 from cairn.dispatcher.runtime.environments.base import WorkEnvironment
 from cairn.dispatcher.runtime.event_sink import ExecutionEventSink
-from cairn.dispatcher.tasks.common import run_worker_process, _worker_secrets
+from cairn.dispatcher.tasks.common import finish_execution_terminal, run_worker_process, _worker_secrets
 from cairn.dispatcher.workers.registry import get_driver
+from cairn.shared.worker_events import message_event, status_event
 from cairn.shared.api_models import ProjectDetail
 
 LOG = logging.getLogger(__name__)
@@ -51,9 +52,18 @@ def _run_question_execution_task(
     try:
         driver_result = driver.build_question(worker, mode=mode, prompt=prompt, source_session=source_session)
     except Exception as exc:
-        client.patch_execution(
+        finish_execution_terminal(
+            client,
             execution_id,
-            {
+            events=[
+                status_event(
+                    "failed",
+                    event_key=f"{execution_id}:status:worker-not-available",
+                    error_code="worker_not_available",
+                    error_detail=str(exc),
+                ).to_api_payload()
+            ],
+            patch={
                 "dispatcher_id": dispatcher_id,
                 "status": "failed",
                 "error_code": "worker_not_available",
@@ -92,9 +102,18 @@ def _run_question_execution_task(
             },
         )
     except Exception as exc:
-        client.patch_execution(
+        finish_execution_terminal(
+            client,
             execution_id,
-            {
+            events=[
+                status_event(
+                    "failed",
+                    event_key=f"{execution_id}:status:worker-process-failed",
+                    error_code="worker_process_failed",
+                    error_detail=str(exc),
+                ).to_api_payload()
+            ],
+            patch={
                 "dispatcher_id": dispatcher_id,
                 "status": "failed",
                 "error_code": "worker_process_failed",
@@ -103,37 +122,31 @@ def _run_question_execution_task(
         )
         return "error"
 
+    sink.flush_projector_events()
     session = driver.extract_session_provenance(driver_result.session, run.stdout, run.stderr)
-    client.patch_execution(
-        execution_id,
-        {
-            "dispatcher_id": dispatcher_id,
+    answer = driver.extract_response_text(run.stdout, run.stderr).strip() or run.stderr.strip() or run.stdout.strip()
+    if answer and not sink.has_projected_assistant_message:
+        sink.write_event(
+            message_event(
+                "assistant",
+                answer,
+                event_key=f"{execution_id}:assistant:final",
+            )
+        )
+    terminal_status = "cancelled" if run.cancelled else ("succeeded" if run.returncode == 0 else "failed")
+    closed = sink.close(
+        terminal_status=terminal_status,
+        returncode=run.returncode,
+        error_code="timeout" if run.timed_out else None,
+        error_detail=run.cancel_reason,
+        patch_fields={
             "remote_session_out_kind": session.kind,
             "remote_session_out_id": session.id,
             "remote_session_out_status": session.status,
         },
     )
-    answer = driver.extract_response_text(run.stdout, run.stderr).strip() or run.stderr.strip() or run.stdout.strip()
-    if answer:
-        client.append_execution_events(
-            execution_id,
-            dispatcher_id=dispatcher_id,
-            events=[
-                {
-                    "event_type": "message",
-                    "role": "assistant",
-                    "payload": {"text": answer},
-                    "event_key": f"{execution_id}:assistant:final",
-                }
-            ],
-        )
-    terminal_status = "cancelled" if run.cancelled else ("succeeded" if run.returncode == 0 else "failed")
-    sink.close(
-        terminal_status=terminal_status,
-        returncode=run.returncode,
-        error_code="timeout" if run.timed_out else None,
-        error_detail=run.cancel_reason,
-    )
+    if not closed:
+        return "error"
     if run.returncode != 0:
         return "error"
     return "success"

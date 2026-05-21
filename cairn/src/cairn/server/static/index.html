@@ -2603,10 +2603,10 @@ function cairnApp() {
         let resolution = { status: 'missing', reason: 'no_execution_for_anchor' };
         const executionId = this.executionIdForConversationAnchor(anchor);
         if (executionId) {
-          const page = await this.api('GET', `/projects/${projectId}/executions/${encodeURIComponent(executionId)}/events?limit=${this.conversation.limitEvents}`);
+          const events = await this.loadAllExecutionEvents(projectId, executionId, this.conversation.limitEvents);
           const execution = await this.api('GET', `/projects/${projectId}/executions/${encodeURIComponent(executionId)}`);
           const branchEvents = await this.loadConversationBranchHistory(projectId, anchor);
-          transcript = this.executionTranscript(execution, [...(page.events || []), ...branchEvents]);
+          transcript = this.executionTranscript(execution, [...events, ...branchEvents]);
           const availability = this.questionAvailabilityForExecution(execution);
           resolution = {
             status: 'exact',
@@ -2643,10 +2643,43 @@ function cairnApp() {
       const params = new URLSearchParams({ anchor_kind: anchor.type, anchor_id: anchor.id, limit: '50' });
       const branches = await this.api('GET', `/projects/${projectId}/branches?${params.toString()}`);
       const histories = await Promise.all((branches || []).filter(branch => branch.mode === 'resume').map(async branch => {
-        const page = await this.api('GET', `/projects/${projectId}/branches/${encodeURIComponent(branch.id)}/timeline?limit=${this.conversation.limitEvents}`);
-        return page.events || [];
+        return await this.loadAllBranchTimeline(projectId, branch.id, this.conversation.limitEvents);
       }));
       return histories.flat();
+    },
+
+    async loadAllExecutionEvents(projectId, executionId, limit = 250, afterCursor = null) {
+      const events = [];
+      let cursor = afterCursor || null;
+      const pageLimit = Math.max(1, Math.min(limit || 250, 250));
+      for (let pageIndex = 0; pageIndex < 200; pageIndex++) {
+        const params = new URLSearchParams({ limit: String(pageLimit) });
+        if (cursor) params.set('after_cursor', cursor);
+        const page = await this.api('GET', `/projects/${projectId}/executions/${encodeURIComponent(executionId)}/events?${params.toString()}`);
+        const pageEvents = page.events || [];
+        events.push(...pageEvents);
+        const next = page.next_cursor || (pageEvents.length ? pageEvents[pageEvents.length - 1].cursor : cursor);
+        if (!pageEvents.length || next === cursor) break;
+        cursor = next;
+      }
+      return events;
+    },
+
+    async loadAllBranchTimeline(projectId, branchId, limit = 250, afterCursor = null) {
+      const events = [];
+      let cursor = afterCursor || null;
+      const pageLimit = Math.max(1, Math.min(limit || 250, 250));
+      for (let pageIndex = 0; pageIndex < 200; pageIndex++) {
+        const params = new URLSearchParams({ limit: String(pageLimit) });
+        if (cursor) params.set('after_cursor', cursor);
+        const page = await this.api('GET', `/projects/${projectId}/branches/${encodeURIComponent(branchId)}/timeline?${params.toString()}`);
+        const pageEvents = page.events || [];
+        events.push(...pageEvents);
+        const next = page.next_cursor || (pageEvents.length ? pageEvents[pageEvents.length - 1].cursor : cursor);
+        if (!pageEvents.length || next === cursor) break;
+        cursor = next;
+      }
+      return events;
     },
 
     executionIdForConversationAnchor(anchor) {
@@ -2739,6 +2772,7 @@ function cairnApp() {
           kind: payload.result ? 'tool_result' : 'tool_call',
           title: payload.name || 'tool',
           tool_name: payload.name || '',
+          text: this.workerToolText(payload),
           tool_args_preview: this.workerToolArgsPreview(payload.input || payload.args || {}),
           raw: payload,
           status: payload.status || 'success',
@@ -2759,8 +2793,6 @@ function cairnApp() {
       }
       if (event.event_type === 'stdout' || event.event_type === 'stderr') {
         const text = payload.text || '';
-        const parsed = event.event_type === 'stdout' ? this.workerJsonLinesToConversationEvents(event, text) : [];
-        if (parsed.length) return parsed;
         return [{ id: event.id, execution_id: event.execution_id, kind: 'raw', text, status: event.event_type === 'stderr' ? 'error' : 'success' }];
       }
       return [{ id: event.id, execution_id: event.execution_id, kind: 'raw', raw: payload, status: 'success' }];
@@ -3319,8 +3351,7 @@ function cairnApp() {
           const message = await this.api('POST', `/projects/${this.selectedProjectId}/branches/${branch.id}/messages`, { message: text });
           let nextTimeline = timeline;
           try {
-            const page = await this.api('GET', `/projects/${this.selectedProjectId}/branches/${branch.id}/timeline`);
-            nextTimeline = page.events || timeline;
+            nextTimeline = await this.loadAllBranchTimeline(this.selectedProjectId, branch.id, this.conversation.limitEvents);
           } catch {}
 	        this.question = { ...this.question, activeThread: { id: branch.id, branch, active_job: message.execution, timeline: nextTimeline }, composerText: '', loading: false, error: '' };
 	        this.pollQuestionThread(branch.id);
@@ -3333,16 +3364,19 @@ function cairnApp() {
 
 	    async pollQuestionThread(threadId) {
 	      if (!threadId || !this.selectedProjectId) return;
-	      for (let i = 0; i < 120; i++) {
+	      while (true) {
 	        const active = this.question.activeThread;
 	        if (!active || active.id !== threadId || !active.active_job) return;
 	        await new Promise(resolve => setTimeout(resolve, 1500));
 	        try {
             const shouldStickQuestion = this.shouldStickScroll(this.$refs.questionThreadScroll);
             const shouldStickConversation = this.shouldStickConversationScroll();
-            const timeline = await this.api('GET', `/projects/${this.selectedProjectId}/branches/${threadId}/timeline`);
+            const lastCursor = (active.timeline || []).length ? active.timeline[active.timeline.length - 1].cursor : null;
+            const newEvents = await this.loadAllBranchTimeline(this.selectedProjectId, threadId, this.conversation.limitEvents, lastCursor);
             const execution = await this.api('GET', `/projects/${this.selectedProjectId}/executions/${active.active_job.id}`);
-	          const nextThread = { ...active, active_job: ['pending', 'leased', 'running'].includes(execution.status) ? execution : null, timeline: timeline.events || [] };
+            const seen = new Set((active.timeline || []).map(event => event.id));
+            const timeline = [...(active.timeline || []), ...newEvents.filter(event => !seen.has(event.id))];
+	          const nextThread = { ...active, active_job: ['pending', 'leased', 'running'].includes(execution.status) ? execution : null, timeline };
 	          this.question = { ...this.question, activeThread: nextThread };
             if (nextThread.branch?.mode !== 'resume') this.scrollQuestionThreadToBottom(shouldStickQuestion);
             else this.scrollConversationToBottom(shouldStickConversation);

@@ -357,7 +357,36 @@ class AppendExecutionEventsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     dispatcher_id: str | None = None
-    events: list[ExecutionEventAppend] = Field(min_length=1)
+    events: list[ExecutionEventAppend] = Field(min_length=1, max_length=250)
+
+
+class FinishExecutionPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["succeeded", "failed", "cancelled"]
+    returncode: int | None = None
+    error_code: str | None = None
+    error_detail: str | None = None
+    remote_session_out_kind: str | None = None
+    remote_session_out_id: str | None = None
+    remote_session_out_status: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class FinishExecutionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dispatcher_id: str
+    events: list[ExecutionEventAppend] = Field(default_factory=list, max_length=250)
+    patch: FinishExecutionPatch
+
+    @field_validator("dispatcher_id")
+    @classmethod
+    def validate_dispatcher_id(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
 
 
 class ExecutionEventsResponse(BaseModel):

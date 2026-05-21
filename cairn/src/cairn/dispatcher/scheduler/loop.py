@@ -18,6 +18,7 @@ from cairn.dispatcher.runtime.environments import WorkEnvironment, build_environ
 from cairn.dispatcher.runtime.startup_healthcheck import format_failure_summary, run_startup_healthchecks
 from cairn.dispatcher.scheduler.worker_select import choose_worker
 from cairn.dispatcher.tasks.bootstrap import run_bootstrap_task
+from cairn.dispatcher.tasks.common import finish_execution_terminal
 from cairn.dispatcher.tasks.explore import run_explore_task
 from cairn.dispatcher.tasks.healthcheck import run_healthcheck_task
 from cairn.dispatcher.tasks.questions import run_question_task
@@ -25,6 +26,7 @@ from cairn.dispatcher.tasks.reason import run_reason_task
 from cairn.dispatcher.workers.registry import get_driver
 from cairn.shared.api_models import Intent, ProjectDetail, ProjectSummary
 from cairn.shared.api_models import WorkEnvironmentPublic
+from cairn.shared.worker_events import status_event
 
 LOG = logging.getLogger(__name__)
 UNHEALTHY_RETRY_AFTER_SECONDS = 5
@@ -1302,9 +1304,18 @@ class DispatcherLoop:
             environment = self.environments.get(environment_id or "")
             if worker is None or environment is None or not execution_id or not project_id:
                 if execution_id:
-                    self.client.patch_execution(
+                    finish_execution_terminal(
+                        self.client,
                         execution_id,
-                        {
+                        events=[
+                            status_event(
+                                "failed",
+                                event_key=f"{execution_id}:status:healthcheck-target-unavailable",
+                                error_code="healthcheck_target_unavailable",
+                                error_detail="worker or environment is not configured",
+                            ).to_api_payload()
+                        ],
+                        patch={
                             "status": "failed",
                             "error_code": "healthcheck_target_unavailable",
                             "error_detail": "worker or environment is not configured",
@@ -1313,9 +1324,18 @@ class DispatcherLoop:
                 continue
             resolved_worker = self._worker_with_environment_endpoint(worker, environment.id)
             if resolved_worker is None:
-                self.client.patch_execution(
+                finish_execution_terminal(
+                    self.client,
                     execution_id,
-                    {
+                    events=[
+                        status_event(
+                            "failed",
+                            event_key=f"{execution_id}:status:worker-endpoint-unavailable",
+                            error_code="worker_endpoint_unavailable",
+                            error_detail="worker endpoint unavailable",
+                        ).to_api_payload()
+                    ],
+                    patch={
                         "status": "failed",
                         "error_code": "worker_endpoint_unavailable",
                         "error_detail": "worker endpoint unavailable",
@@ -1334,9 +1354,18 @@ class DispatcherLoop:
                 )
             except Exception:
                 LOG.exception("failed to submit healthcheck execution=%s worker=%s", execution_id, worker.name)
-                self.client.patch_execution(
+                finish_execution_terminal(
+                    self.client,
                     execution_id,
-                    {
+                    events=[
+                        status_event(
+                            "failed",
+                            event_key=f"{execution_id}:status:healthcheck-submit-failed",
+                            error_code="healthcheck_submit_failed",
+                            error_detail="failed to submit healthcheck task",
+                        ).to_api_payload()
+                    ],
+                    patch={
                         "status": "failed",
                         "error_code": "healthcheck_submit_failed",
                         "error_detail": "failed to submit healthcheck task",
@@ -1372,9 +1401,18 @@ class DispatcherLoop:
         worker_name = job.get("worker_name")
         worker = next((candidate for candidate in self.config.workers if candidate.name == worker_name), None)
         if worker is None:
-            self.client.patch_execution(
+            finish_execution_terminal(
+                self.client,
                 job["id"],
-                {
+                events=[
+                    status_event(
+                        "failed",
+                        event_key=f"{job['id']}:status:worker-not-available",
+                        error_code="worker_not_available",
+                        error_detail=f"worker not configured: {worker_name}",
+                    ).to_api_payload()
+                ],
+                patch={
                     "status": "failed",
                     "error_code": "worker_not_available",
                     "error_detail": f"worker not configured: {worker_name}",
@@ -1385,9 +1423,18 @@ class DispatcherLoop:
         execution_environment_id = job.get("environment_id")
         environment = self.environments.get(execution_environment_id) if execution_environment_id else self._environment_for_project(project)
         if environment is None:
-            self.client.patch_execution(
+            finish_execution_terminal(
+                self.client,
                 job["id"],
-                {
+                events=[
+                    status_event(
+                        "failed",
+                        event_key=f"{job['id']}:status:environment-not-available",
+                        error_code="environment_not_available",
+                        error_detail="project environment is not configured",
+                    ).to_api_payload()
+                ],
+                patch={
                     "status": "failed",
                     "error_code": "environment_not_available",
                     "error_detail": "project environment is not configured",
@@ -1396,9 +1443,18 @@ class DispatcherLoop:
             return False
         worker = self._worker_with_environment_endpoint(worker, environment.id)
         if worker is None:
-            self.client.patch_execution(
+            finish_execution_terminal(
+                self.client,
                 job["id"],
-                {
+                events=[
+                    status_event(
+                        "failed",
+                        event_key=f"{job['id']}:status:worker-endpoint-unavailable",
+                        error_code="worker_not_available",
+                        error_detail="worker endpoint unavailable",
+                    ).to_api_payload()
+                ],
+                patch={
                     "status": "failed",
                     "error_code": "worker_not_available",
                     "error_detail": "worker endpoint unavailable",
@@ -1418,9 +1474,18 @@ class DispatcherLoop:
             )
         except Exception:
             LOG.exception("failed to submit question execution=%s worker=%s", job["id"], worker.name)
-            self.client.patch_execution(
+            finish_execution_terminal(
+                self.client,
                 job["id"],
-                {
+                events=[
+                    status_event(
+                        "failed",
+                        event_key=f"{job['id']}:status:question-submit-failed",
+                        error_code="worker_process_failed",
+                        error_detail="failed to submit question task",
+                    ).to_api_payload()
+                ],
+                patch={
                     "status": "failed",
                     "error_code": "worker_process_failed",
                     "error_detail": "failed to submit question task",

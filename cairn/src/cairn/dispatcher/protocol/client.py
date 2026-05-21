@@ -350,6 +350,20 @@ class CairnClient:
             json={"dispatcher_id": dispatcher_id, "events": events},
         )
 
+    def finish_execution(
+        self,
+        execution_id: str,
+        *,
+        dispatcher_id: str,
+        events: list[dict[str, Any]],
+        patch: dict[str, Any],
+    ) -> ApiResult:
+        return self._request_json(
+            "POST",
+            f"/dispatcher/executions/{execution_id}/finish",
+            json={"dispatcher_id": dispatcher_id, "events": events, "patch": patch},
+        )
+
     def upload_execution_artifact(self, execution_id: str, payload: dict[str, Any]) -> ApiResult:
         return self._request_json(
             "POST",

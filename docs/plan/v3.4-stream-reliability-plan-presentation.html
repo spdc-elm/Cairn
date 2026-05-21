@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>V3.4 Stream Reliability E2E Acceptance</title>
+  <style>
+    :root {
+      --bg: #f6f7f8;
+      --ink: #18201c;
+      --muted: #68736e;
+      --line: #d9dedb;
+      --panel: #ffffff;
+      --panel-2: #eef2f0;
+      --green: #0f6b57;
+      --green-soft: #dff2eb;
+      --blue: #255ca8;
+      --blue-soft: #e1ebf8;
+      --amber: #8a5a00;
+      --amber-soft: #fff0cf;
+      --red: #a7392f;
+      --red-soft: #ffe4df;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    main {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 292px minmax(0, 1fr);
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      border-right: 1px solid var(--line);
+      background: var(--panel-2);
+      padding: 28px 18px;
+    }
+
+    .eyebrow {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 25px;
+      line-height: 1.12;
+      font-weight: 780;
+    }
+
+    .side-copy {
+      margin: 16px 0 22px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    nav {
+      display: grid;
+      gap: 8px;
+    }
+
+    nav button {
+      border: 1px solid transparent;
+      border-radius: 7px;
+      padding: 9px 10px;
+      background: transparent;
+      color: var(--muted);
+      text-align: left;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    nav button.active {
+      border-color: #9fc8ba;
+      background: var(--green-soft);
+      color: #0d4d40;
+      font-weight: 750;
+    }
+
+    section {
+      display: none;
+      max-width: 1200px;
+      padding: 42px min(5vw, 64px);
+    }
+
+    section.active { display: block; }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 32px;
+      line-height: 1.12;
+    }
+
+    .lead {
+      max-width: 860px;
+      margin: 0 0 28px;
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.65;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 22px;
+    }
+
+    .card {
+      min-height: 126px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .card h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+    }
+
+    .card p,
+    .card li {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .card p { margin: 0; }
+
+    ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+    }
+
+    code {
+      padding: 1px 5px;
+      border: 1px solid #dde3df;
+      border-radius: 5px;
+      background: #f0f3f1;
+      color: #28342e;
+      font-size: 0.92em;
+    }
+
+    pre {
+      margin: 0;
+      padding: 14px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #111814;
+      color: #e6eee9;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      margin-bottom: 10px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 760;
+    }
+
+    .ok { color: var(--green); background: var(--green-soft); }
+    .blue { color: var(--blue); background: var(--blue-soft); }
+    .warn { color: var(--amber); background: var(--amber-soft); }
+    .fail { color: var(--red); background: var(--red-soft); }
+
+    .matrix {
+      width: 100%;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      border-collapse: separate;
+      border-spacing: 0;
+      background: var(--panel);
+    }
+
+    .matrix th,
+    .matrix td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .matrix th {
+      background: #e8eeea;
+      color: #38443e;
+      font-size: 13px;
+      font-weight: 760;
+    }
+
+    .matrix tr:last-child td { border-bottom: 0; }
+
+    .steps {
+      display: grid;
+      gap: 10px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 150px minmax(0, 1fr) 220px;
+      gap: 12px;
+    }
+
+    .step > div {
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .step .name {
+      color: #0d4d40;
+      background: var(--green-soft);
+      font-weight: 800;
+    }
+
+    .footer {
+      margin-top: 28px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; }
+      aside {
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      section { padding: 28px 18px; }
+      .summary { grid-template-columns: 1fr; }
+      .step { grid-template-columns: 1fr; }
+      h2 { font-size: 27px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <aside>
+      <div class="eyebrow">Cairn · V3.4 · 2026-05-21</div>
+      <h1>Stream Reliability E2E</h1>
+      <p class="side-copy">本页只看最终测试与验收。通过标准以用户可见效果为准：长回复不断、final 不丢、刷新可恢复、真实 Pi/SSH 通过。</p>
+      <nav aria-label="acceptance sections">
+        <button class="active" data-target="gate">总门槛</button>
+        <button data-target="browser">浏览器验收</button>
+        <button data-target="backend">后端与故障注入</button>
+        <button data-target="pi">真实 Pi/SSH</button>
+        <button data-target="commands">执行命令</button>
+        <button data-target="decision">通过判定</button>
+      </nav>
+    </aside>
+
+    <section id="gate" class="active">
+      <h2>总门槛</h2>
+      <p class="lead">V3.4 只有三种结论：通过、阻塞、失败。mock E2E 只能证明本机机制；真实 Pi/SSH 未跑时，不得写 complete。</p>
+      <div class="summary">
+        <div class="card">
+          <span class="badge ok">必须通过</span>
+          <h3>长 stream 不截断</h3>
+          <p>300+ events 后，Conversation 仍能显示 final assistant 与 terminal status；刷新后同样可见。</p>
+        </div>
+        <div class="card">
+          <span class="badge ok">必须通过</span>
+          <h3>长问题不静默停止</h3>
+          <p>运行超过 180 秒时，UI 不得清空 active job，不得伪装完成；应继续追踪或显示可恢复状态。</p>
+        </div>
+        <div class="card">
+          <span class="badge fail">硬门槛</span>
+          <h3>真实 Pi/SSH sign-off</h3>
+          <p>Pi worker fork 长回复必须完整；缺少真实环境时结论只能是 blocked，不是 passed。</p>
+        </div>
+      </div>
+      <table class="matrix">
+        <thead>
+          <tr><th>用户可见效果</th><th>验收断言</th><th>失败信号</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>聊天记录不再“收到一半就没了”</td>
+            <td>final assistant、session id、terminal status 均可从 execution events 追溯。</td>
+            <td>terminal succeeded 已显示，但 final assistant 缺失。</td>
+          </tr>
+          <tr>
+            <td>远程仍在工作时，前端不假死</td>
+            <td>超过 180 秒仍保持 running/recoverable 状态，并继续 cursor polling。</td>
+            <td>固定轮询上限后停止更新且无诊断。</td>
+          </tr>
+          <tr>
+            <td>刷新页面能恢复完整 timeline</td>
+            <td>重新打开项目/branch 后，完整 Conversation 与 Output 可恢复。</td>
+            <td>只显示头 200 条，尾部 final/status 丢失。</td>
+          </tr>
+          <tr>
+            <td>故障可见，不静默成功</td>
+            <td>append timeout、queue full、terminal barrier failed 等诊断进入日志或 execution events。</td>
+            <td>后台报 timeout，UI 显示成功且无错误细节。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="browser">
+      <h2>浏览器验收</h2>
+      <p class="lead">前端验收必须用浏览器或 JS DOM 证明最终效果，不能只靠 grep。核心是用户真的能看到完整对话。</p>
+      <div class="steps">
+        <div class="step">
+          <div class="name">B1 · 300+ events</div>
+          <div>mock worker 连续产生 300 条以上 message/tool/raw/status events，最后写 assistant final。</div>
+          <div>Conversation 中 final assistant 可见；terminal status 可见；无头页截断。</div>
+        </div>
+        <div class="step">
+          <div class="name">B2 · 超 180 秒</div>
+          <div>question execution 人为超过旧 UI 固定轮询上限。</div>
+          <div>界面仍显示 running 或 recoverable；继续追事件，不清掉 active job。</div>
+        </div>
+        <div class="step">
+          <div class="name">B3 · 刷新恢复</div>
+          <div>长 stream 完成后刷新页面，重新选择同一 execution/branch。</div>
+          <div>完整 Conversation、Output、terminal status 均恢复。</div>
+        </div>
+        <div class="step">
+          <div class="name">B4 · 切换隔离</div>
+          <div>运行中切换 selected execution/branch，再切回。</div>
+          <div>旧 timer 不得写入当前 selection；不会把别的 execution 的尾部覆盖进来。</div>
+        </div>
+        <div class="step">
+          <div class="name">B5 · Raw 分离</div>
+          <div>stdout 中放入 backend-specific JSONL。</div>
+          <div>Raw view 可见；Conversation 主视图不把 raw JSONL 二次解析成 assistant message。</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="backend">
+      <h2>后端与故障注入</h2>
+      <p class="lead">后台验收目标是：timeout 可以发生，但不会造成重复、跳读、伪成功或无诊断。</p>
+      <table class="matrix">
+        <thead>
+          <tr><th>测试域</th><th>要注入的故障</th><th>通过标准</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Event idempotency</td>
+            <td>同一 <code>event_key</code> 重放；同 key 不同 payload/type/role/ts。</td>
+            <td>相同事件幂等返回旧 row；冲突返回 409，且不消耗 cursor。</td>
+          </tr>
+          <tr>
+            <td>Cursor scope</td>
+            <td>把其他 execution/branch 的 cursor 用到当前 endpoint。</td>
+            <td>返回 400；不得返回空页，也不得跳过当前 execution 早期事件。</td>
+          </tr>
+          <tr>
+            <td>Finish barrier</td>
+            <td>terminal events 成功/失败、terminal patch 成功/失败、重复 finish。</td>
+            <td>terminal events 与 status 同事务；失败整体 rollback；重复同 payload 幂等，异 payload 409。</td>
+          </tr>
+          <tr>
+            <td>EventSink backpressure</td>
+            <td><code>/events</code> read timeout、连续失败、队列满、close 超时。</td>
+            <td>有 bounded wait、retry、fail-fast 或 diagnostic；不得静默丢 final。</td>
+          </tr>
+          <tr>
+            <td>Heartbeat isolation</td>
+            <td>event append 慢 20 秒；claim/heartbeat 与 flush 同时拥塞。</td>
+            <td>heartbeat 不因 event flush 背压误杀 worker；延迟有可见 diagnostic。</td>
+          </tr>
+          <tr>
+            <td>Question final ordering</td>
+            <td>final assistant append 失败或响应超时。</td>
+            <td>final 不绕过可靠链路；finish 前能证明 terminal events 已持久化。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="pi">
+      <h2>真实 Pi/SSH</h2>
+      <p class="lead">这是用户问题的最终复现路径。mock 通过而 Pi/SSH 未跑，只能说明局部机制可用；不能宣布 V3.4 完成。</p>
+      <div class="summary">
+        <div class="card">
+          <span class="badge blue">场景 1</span>
+          <h3>Pi fork 长回复</h3>
+          <ul>
+            <li>从 source execution fork。</li>
+            <li>生成超过 180 秒或超过 250 events 的长回复。</li>
+            <li>最终 assistant 回复完整显示。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="badge blue">场景 2</span>
+          <h3>branch_continue</h3>
+          <ul>
+            <li>第二轮继续 fork branch。</li>
+            <li>worker 使用 fork branch 最新 session。</li>
+            <li>不得误恢复 source branch session。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="badge blue">场景 3</span>
+          <h3>cancel / timeout 残留</h3>
+          <ul>
+            <li>触发 cancel 或 timeout。</li>
+            <li>检查远端 process group / state path。</li>
+            <li>残留必须有 system diagnostic。</li>
+          </ul>
+        </div>
+      </div>
+      <table class="matrix">
+        <thead>
+          <tr><th>Pi/SSH 验收项</th><th>必须看到</th><th>不能接受</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>长回复完整性</td>
+            <td>Pi worker 最终回复完整，尾部不丢。</td>
+            <td>只看 dispatcher 日志说还在跑，UI 没有 final。</td>
+          </tr>
+          <tr>
+            <td>事件可追溯</td>
+            <td>session id、assistant final、terminal status 都在 execution events。</td>
+            <td>final 只存在 raw stdout 或临时 transcript。</td>
+          </tr>
+          <tr>
+            <td>自动断言</td>
+            <td>gated pytest 对回复完整性、session 连续性、terminal 状态有断言。</td>
+            <td>人工看日志替代测试。</td>
+          </tr>
+          <tr>
+            <td>环境缺失</td>
+            <td>最终状态标记 blocked，列出缺失的 SSH/config/secret。</td>
+            <td>用 mock E2E 代替 sign-off。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="commands">
+      <h2>执行命令</h2>
+      <p class="lead">这些命令就是验收路径。实现完成后按顺序跑；任何一步红，都不能进入 complete。</p>
+      <div class="summary">
+        <div class="card">
+          <span class="badge ok">Server / Dispatcher / UI guard</span>
+          <h3>合约测试</h3>
+          <pre>PYTHONPATH=cairn/src python -m pytest \
+  cairn/tests/server/test_v34_event_idempotency.py \
+  cairn/tests/server/test_v34_event_cursor_scope.py \
+  cairn/tests/server/test_v34_execution_finish_api.py \
+  cairn/tests/server/test_v34_sqlite_write_backpressure.py \
+  cairn/tests/dispatcher/test_v34_event_sink_reliability.py \
+  cairn/tests/dispatcher/test_v34_question_event_ordering.py \
+  cairn/tests/dispatcher/test_v34_heartbeat_backpressure.py \
+  cairn/tests/server/test_v34_ui_conversation_projection_guard.py -q</pre>
+        </div>
+        <div class="card">
+          <span class="badge ok">Browser</span>
+          <h3>前端 E2E</h3>
+          <pre>npx playwright test cairn/tests/e2e/v34-stream-reliability.spec.ts</pre>
+        </div>
+        <div class="card">
+          <span class="badge ok">Mock smoke</span>
+          <h3>本地机制 E2E</h3>
+          <pre>PYTHONPATH=cairn/src python -m pytest \
+  cairn/tests/e2e/test_v34_stream_reliability_smoke.py -q</pre>
+        </div>
+        <div class="card">
+          <span class="badge fail">Real sign-off</span>
+          <h3>真实 Pi/SSH</h3>
+          <pre>CAIRN_E2E_SSH_PI=1 PYTHONPATH=cairn/src python -m pytest \
+  cairn/tests/e2e/test_v34_stream_reliability_smoke.py -q</pre>
+        </div>
+        <div class="card">
+          <span class="badge ok">Regression</span>
+          <h3>全量回归</h3>
+          <pre>PYTHONPATH=cairn/src python -m pytest cairn/tests -q</pre>
+        </div>
+        <div class="card">
+          <span class="badge blue">Manual smoke</span>
+          <h3>服务级走查</h3>
+          <pre>PYTHONPATH=cairn/src cairn serve --db-path /tmp/cairn-v34.db --port 8000
+PYTHONPATH=cairn/src cairn dispatch --config dispatch.dev.yaml</pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="decision">
+      <h2>通过判定</h2>
+      <p class="lead">最终报告只应按此判定，不按“感觉好了”判定。</p>
+      <table class="matrix">
+        <thead>
+          <tr><th>状态</th><th>条件</th><th>最终说法</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="badge ok">Passed</span></td>
+            <td>合约测试、浏览器 E2E、mock E2E、真实 Pi/SSH、全量回归全部通过；SSOT 已合并实现事实。</td>
+            <td>V3.4 stream reliability 完成。</td>
+          </tr>
+          <tr>
+            <td><span class="badge warn">Blocked</span></td>
+            <td>自动测试通过，但真实 Pi/SSH 环境、secret、dispatch config 或远端 worker 不可用。</td>
+            <td>本地机制通过；真实 sign-off 阻塞，不宣布完成。</td>
+          </tr>
+          <tr>
+            <td><span class="badge fail">Failed</span></td>
+            <td>任一 P0 验收失败：final 丢失、长轮询静默停止、cursor 跳读、terminal 伪成功、Pi 长回复截断。</td>
+            <td>继续定位，不进入收尾。</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="summary" style="margin-top: 18px;">
+        <div class="card">
+          <h3>最低可接受证据</h3>
+          <ul>
+            <li>测试命令输出。</li>
+            <li>浏览器 E2E 截图或 trace。</li>
+            <li>真实 Pi/SSH gated test 结果。</li>
+            <li>失败 diagnostic 的 execution event 示例。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>不得作为证据</h3>
+          <ul>
+            <li>只调大 timeout。</li>
+            <li>只看 mock worker 成功。</li>
+            <li>只看 dispatcher 日志没有报错。</li>
+            <li>人工观察替代自动断言。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>完成后的文档收口</h3>
+          <ul>
+            <li>SSOT 主体反映 v3.4 事实。</li>
+            <li>Pending Delta 移除。</li>
+            <li>最终回复说明 V3.3 已跳过，非前置依赖。</li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer">源计划：<code>docs/plan/v3.4-stream-reliability-execution-plan.md</code></div>
+    </section>
+  </main>
+
+  <script>
+    const buttons = [...document.querySelectorAll("nav button")];
+    const sections = [...document.querySelectorAll("section")];
+
+    buttons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const target = button.dataset.target;
+        buttons.forEach((item) => item.classList.toggle("active", item === button));
+        sections.forEach((section) => section.classList.toggle("active", section.id === target));
+      });
+    });
+  </script>
+</body>
+</html>

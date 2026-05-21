@@ -31,13 +31,12 @@ class V32ConversationUiGuardTests(unittest.TestCase):
         self.assertIn("loadConversationBranchHistory", conversation_block)
         self.assertIn("forceConversationRefresh", html)
         self.assertIn("this.loadSelectedConversation(forceConversationRefresh)", html)
-        self.assertIn("workerJsonLinesToConversationEvents", html)
-        self.assertIn("type === 'system'", html)
-        self.assertIn("type === 'assistant' || type === 'user'", html)
-        self.assertIn("type === 'result'", html)
-        self.assertIn("type === 'stream_event'", html)
-        self.assertIn("claudeStreamEventToConversationEvents", html)
-        self.assertIn("delta.type === 'text_delta'", html)
+        self.assertIn("loadAllExecutionEvents", conversation_block)
+        self.assertIn("loadAllBranchTimeline", conversation_block)
+        event_projection_start = html.index("executionEventToConversationEvents(event)")
+        event_projection_end = html.index("\n    messageStreamKey", event_projection_start)
+        event_projection_block = html[event_projection_start:event_projection_end]
+        self.assertNotIn("workerJsonLinesToConversationEvents", event_projection_block)
         self.assertIn("stream_delta", html)
         self.assertIn(":run:started", html)
         self.assertIn("running ? 'started' : 'finished'", html)
@@ -49,6 +48,10 @@ class V32ConversationUiGuardTests(unittest.TestCase):
         self.assertIn("agent_end", html)
         self.assertIn("itemType === 'toolCall' || itemType === 'tool_call' || itemType === 'tool_use'", html)
         self.assertIn("itemType === 'tool_result'", html)
+        tool_projection_start = html.index("if (event.event_type === 'tool')")
+        tool_projection_end = html.index("if (event.event_type === 'status')", tool_projection_start)
+        tool_projection_block = html[tool_projection_start:tool_projection_end]
+        self.assertIn("text: this.workerToolText(payload)", tool_projection_block)
 
         events_start = html.index("\n    conversationEvents()")
         events_end = html.index("conversationEventLabel", events_start)
@@ -64,6 +67,7 @@ class V32ConversationUiGuardTests(unittest.TestCase):
         branch_history_end = html.index("\n    executionIdForConversationAnchor", branch_history_start)
         branch_history_block = html[branch_history_start:branch_history_end]
         self.assertIn("filter(branch => branch.mode === 'resume')", branch_history_block)
+        self.assertIn("loadAllBranchTimeline", branch_history_block)
 
         question_messages_start = html.index("\n\t    questionMessages()")
         question_messages_end = html.index("questionMessageText", question_messages_start)

@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>V3.4 Stream Reliability</title>
+  <style>
+    :root {
+      --bg: #f7f8f6;
+      --ink: #18201c;
+      --muted: #68736c;
+      --line: #d9dfd9;
+      --panel: #ffffff;
+      --accent: #0f766e;
+      --accent-soft: #d9f0eb;
+      --warn: #b45309;
+      --warn-soft: #fff1d6;
+      --danger: #b42318;
+      --danger-soft: #ffe4df;
+      --code: #26312c;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    main {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+    }
+
+    aside {
+      border-right: 1px solid var(--line);
+      background: #eef2ef;
+      padding: 28px 18px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+
+    .brand {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    h1 {
+      font-size: 25px;
+      line-height: 1.1;
+      margin: 0 0 20px;
+      font-weight: 760;
+    }
+
+    nav {
+      display: grid;
+      gap: 8px;
+      margin-top: 24px;
+    }
+
+    nav button {
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      text-align: left;
+      padding: 9px 10px;
+      border-radius: 7px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    nav button.active {
+      border-color: #9cc9c1;
+      background: var(--accent-soft);
+      color: #0b4e49;
+      font-weight: 650;
+    }
+
+    section {
+      display: none;
+      padding: 42px min(5vw, 64px);
+      max-width: 1180px;
+    }
+
+    section.active { display: block; }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 32px;
+      line-height: 1.12;
+    }
+
+    .lead {
+      color: var(--muted);
+      max-width: 820px;
+      font-size: 17px;
+      line-height: 1.65;
+      margin: 0 0 28px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      min-height: 120px;
+    }
+
+    .card h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+    }
+
+    .card p, .card li {
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 14px;
+    }
+
+    .card p { margin: 0; }
+    ul { margin: 8px 0 0; padding-left: 18px; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .p0 { background: var(--danger-soft); color: var(--danger); }
+    .p1 { background: var(--warn-soft); color: var(--warn); }
+    .ok { background: var(--accent-soft); color: #0b4e49; }
+
+    .flow {
+      display: grid;
+      gap: 10px;
+      max-width: 880px;
+    }
+
+    .flow-row {
+      display: grid;
+      grid-template-columns: 190px minmax(0, 1fr);
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .flow-label {
+      background: #e5ebe6;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      font-weight: 720;
+    }
+
+    .flow-body {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    code {
+      color: var(--code);
+      background: #edf1ee;
+      border: 1px solid #dbe2dc;
+      border-radius: 5px;
+      padding: 1px 5px;
+      font-size: 0.92em;
+    }
+
+    .matrix {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .matrix th, .matrix td {
+      border-bottom: 1px solid var(--line);
+      padding: 12px 14px;
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .matrix th {
+      background: #e9eeea;
+      color: #39443e;
+      font-size: 13px;
+    }
+
+    .matrix tr:last-child td { border-bottom: 0; }
+
+    .footer {
+      margin-top: 28px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 860px) {
+      main { grid-template-columns: 1fr; }
+      aside {
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      section { padding: 28px 18px; }
+      .grid, .grid.three { grid-template-columns: 1fr; }
+      .flow-row { grid-template-columns: 1fr; }
+      h2 { font-size: 27px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <aside>
+      <div class="brand">Cairn Spec Draft · 2026-05-21</div>
+      <h1>V3.4 Stream Reliability</h1>
+      <p class="lead" style="font-size:14px;margin-bottom:0">结论先行：此回归不是 SSH 或 Pi 的孤立问题，而是可靠事件链、终态屏障、UI 分页投影共同失效。</p>
+      <nav aria-label="presentation sections">
+        <button class="active" data-target="diagnosis">病灶</button>
+        <button data-target="chain">链路</button>
+        <button data-target="priorities">优先级</button>
+        <button data-target="target">目标设计</button>
+        <button data-target="acceptance">验收</button>
+      </nav>
+    </aside>
+
+    <section id="diagnosis" class="active">
+      <h2>核心判断</h2>
+      <p class="lead">临时补丁若只调 timeout，会掩盖真实问题。当前系统需要的是一条不会静默丢 tail、final、session、terminal status 的事件提交链。</p>
+      <div class="grid">
+        <div class="card">
+          <span class="badge p0">P0</span>
+          <h3>事件尾部可丢</h3>
+          <p><code>EventSink.close()</code> 可在 drain 失败后继续 patch terminal status。UI 看到 execution terminal 后停止追事件，final assistant 可能永久缺失。</p>
+        </div>
+        <div class="card">
+          <span class="badge p0">P0</span>
+          <h3>Conversation 只读头页</h3>
+          <p>长 execution 前 200 条多为 partial/raw 时，final assistant/status 在后页，UI 初载拿不到，terminal 后也不再继续取。</p>
+        </div>
+        <div class="card">
+          <span class="badge p1">P1</span>
+          <h3>写侧背压扩散</h3>
+          <p><code>/events</code>、claim、healthcheck、heartbeat 共用 server/SQLite 写路径。一次写锁或慢事务会让 dispatcher 多类请求同时超时。</p>
+        </div>
+        <div class="card">
+          <span class="badge p1">P1</span>
+          <h3>语义来源不唯一</h3>
+          <p>dispatcher projector 已产出标准 events，UI 仍解析 raw stdout JSONL。双投影会放大 partial/final 覆盖与重复问题。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="chain">
+      <h2>失效链路</h2>
+      <p class="lead">用户日志中的 read timeout 是链路中段的可见烟雾；它能解释半截输出，也能和 UI 截断独立叠加。</p>
+      <div class="flow">
+        <div class="flow-row">
+          <div class="flow-label">1. Worker 输出</div>
+          <div class="flow-body">Pi/Claude/Codex 通过 SSH 或 Docker 产生 stdout/stderr；SSH 当前以 <code>readline()</code> 为实时边界。</div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-label">2. EventSink</div>
+          <div class="flow-body">raw stream 与 projector events 进入内存队列；flush timeout 后 batch 回队头，但无上限、无 spool、无 terminal barrier。</div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-label">3. Server 写入</div>
+          <div class="flow-body">append events 每条分配 cursor 并写 SQLite。写锁、慢事务、healthcheck/claim 并发会让 dispatcher 10 秒 read timeout。</div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-label">4. Terminal Patch</div>
+          <div class="flow-body">若 terminal patch 成功而 final events 失败，系统进入“execution 已结束、事件尾部缺失”的不一致状态。</div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-label">5. UI 投影</div>
+          <div class="flow-body">Conversation 固定头页与有限轮询会把不一致固化为用户可见的“收到半截、后面没了”。</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="priorities">
+      <h2>问题优先级</h2>
+      <p class="lead">按“会不会静默丢用户答案”和“是否破坏 SSOT”排序。</p>
+      <table class="matrix">
+        <thead>
+          <tr><th>级别</th><th>问题</th><th>必须约束</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="badge p0">P0</span></td>
+            <td>terminal status 早于 final events 持久化</td>
+            <td>新增或等价实现 <code>finish_execution(events, patch)</code> 原子语义；无 final 屏障不得 succeeded。</td>
+          </tr>
+          <tr>
+            <td><span class="badge p0">P0</span></td>
+            <td>Conversation 长输出截断</td>
+            <td>初载 exhaust cursor、tail query，或 server projection；poll 至 terminal 且 final 可见。</td>
+          </tr>
+          <tr>
+            <td><span class="badge p1">P1</span></td>
+            <td>event_key 幂等过弱</td>
+            <td>同 key 同 canonical event 才幂等；不同 payload/type/role/ts 返回 409。</td>
+          </tr>
+          <tr>
+            <td><span class="badge p1">P1</span></td>
+            <td>cursor scope 过宽</td>
+            <td>execution cursor 属于同 execution，branch cursor 属于同 branch，跨 scope 400。</td>
+          </tr>
+          <tr>
+            <td><span class="badge p1">P1</span></td>
+            <td>branch/session 语义隐晦</td>
+            <td><code>branch_continue</code> 明确定义为继续 branch 最新 successful session，不恢复 source。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="target">
+      <h2>目标设计边界</h2>
+      <p class="lead">保留 v3.2 的核心心智模型，只加可靠性边界。旧路径不复活。</p>
+      <div class="grid three">
+        <div class="card">
+          <span class="badge ok">Dispatcher</span>
+          <h3>有界背压</h3>
+          <ul>
+            <li>queue 上限与 retry 策略</li>
+            <li>close 最大等待</li>
+            <li>flush failed diagnostic</li>
+            <li>heartbeat 与 event flush 解耦预算</li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="badge ok">Server</span>
+          <h3>强幂等与原子终态</h3>
+          <ul>
+            <li>immutable <code>event_key</code></li>
+            <li>cursor scope 校验</li>
+            <li>SQLite busy timeout / retry</li>
+            <li>terminal events + patch 原子提交</li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="badge ok">UI</span>
+          <h3>完整投影</h3>
+          <ul>
+            <li>不只读头页</li>
+            <li>不固定 180 秒静默停止</li>
+            <li>final 覆盖 partial</li>
+            <li>raw JSONL 不做主语义源</li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer">Proposed Architecture Delta：给 <code>ExecutionEvent</code> 主链路增加可靠性边界，而非改变 Fact/Intent/Execution/Branch 的基本分层。</div>
+    </section>
+
+    <section id="acceptance">
+      <h2>验收口径</h2>
+      <p class="lead">只以测试和真实流程说话。代码阅读不能自证 stream 可靠。</p>
+      <div class="grid">
+        <div class="card">
+          <h3>API / Server</h3>
+          <ul>
+            <li>同 key 同事件重试不重复。</li>
+            <li>同 key 不同 payload 返回 409。</li>
+            <li>跨 execution/branch cursor 返回 400。</li>
+            <li>terminal finish 原子成功或整体失败。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Dispatcher</h3>
+          <ul>
+            <li><code>/events</code> timeout 后可重试且不丢 tail。</li>
+            <li>连续失败时 queue 不无限增长。</li>
+            <li>final assistant append 不静默失败。</li>
+            <li>慢 flush 不误杀 worker heartbeat。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>UI</h3>
+          <ul>
+            <li>250+ events 后仍显示 final。</li>
+            <li>超过 180 秒仍可恢复追踪。</li>
+            <li>partial/final 不重复、不半截。</li>
+            <li>刷新后 timeline 完整恢复。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>SSH / Pi E2E</h3>
+          <ul>
+            <li>Pi fork 长回复完整显示。</li>
+            <li>第二轮继续 fork branch session。</li>
+            <li>session id、message、terminal status 全可追溯。</li>
+            <li>cancel/timeout 后远端残留有诊断。</li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer">下一步宜进入 Planning Mode，把这些约束拆成 server、dispatcher、UI、SSH/Pi E2E 四段实施。</div>
+    </section>
+  </main>
+
+  <script>
+    const buttons = [...document.querySelectorAll("nav button")];
+    const sections = [...document.querySelectorAll("section")];
+    buttons.forEach(button => {
+      button.addEventListener("click", () => {
+        const target = button.dataset.target;
+        buttons.forEach(item => item.classList.toggle("active", item === button));
+        sections.forEach(section => section.classList.toggle("active", section.id === target));
+      });
+    });
+  </script>
+</body>
+</html>

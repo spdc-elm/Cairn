@@ -116,7 +116,7 @@ class HeartbeatLease:
             elapsed = time.monotonic() - self._last_success_at
             grace_seconds = max(float(self._interval), float(self._interval * HEARTBEAT_FAILURE_GRACE_MULTIPLIER))
             LOG.warning(
-                "heartbeat transient failure scope=%s worker=%s status=%s elapsed=%.1fs grace=%.1fs",
+                "heartbeat_delayed scope=%s worker=%s status=%s elapsed=%.1fs grace=%.1fs",
                 self._scope,
                 self._worker_name,
                 result.status_code,
@@ -131,7 +131,7 @@ class HeartbeatLease:
     def _fail(self, status_code: int | None, text: str) -> None:
         self._failure = HeartbeatFailure(status_code, text)
         LOG.warning(
-            "heartbeat failed scope=%s worker=%s status=%s",
+            "heartbeat_cancelled scope=%s worker=%s status=%s",
             self._scope,
             self._worker_name,
             status_code,

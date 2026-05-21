@@ -180,6 +180,32 @@ class V32ExecutionApiTests(unittest.TestCase):
         self.assertEqual(len(links), 2)
         self.assertEqual({link["relation"] for link in links}, {"derived_from", "supports"})
 
+    def test_explore_conclusion_report_writes_execution_scoped_primary_fact(self) -> None:
+        execution = create_project_execution(
+            self.project_id,
+            CreateExecutionRequest(intent_id=self.intent.id, task_type="explore", phase="run"),
+        )
+
+        result = dispatcher_submit_execution_conclusion_report(
+            execution.id,
+            ExecutionConclusionReportRequest(description="Explore result", title="Explore Fact"),
+        )
+
+        self.assertEqual(result.intent.to, result.fact.id)
+        with db.get_conn() as conn:
+            fact = conn.execute(
+                "SELECT produced_by_execution_id, produced_by_intent_id FROM facts WHERE project_id = ? AND id = ?",
+                (self.project_id, result.fact.id),
+            ).fetchone()
+            links = conn.execute(
+                "SELECT relation FROM evidence_links WHERE project_id = ? AND fact_id = ?",
+                (self.project_id, result.fact.id),
+            ).fetchall()
+        assert fact is not None
+        self.assertEqual(fact["produced_by_execution_id"], execution.id)
+        self.assertEqual(fact["produced_by_intent_id"], self.intent.id)
+        self.assertEqual([link["relation"] for link in links], ["derived_from"])
+
 
 if __name__ == "__main__":
     unittest.main()
