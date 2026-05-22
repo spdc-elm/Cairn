@@ -169,6 +169,98 @@ class DispatchConfigModelProfileTests(unittest.TestCase):
         self.assertEqual(env["PI_PROVIDER_API"], "openai-completions")
         self.assertEqual(env["PI_API_KEY"], "sk-test")
         self.assertEqual(env["PI_MODEL_CONTEXT_WINDOW"], "12345")
+        self.assertEqual(env["PI_REASONING"], "medium")
+
+    def test_pi_model_profile_can_override_reasoning_level(self) -> None:
+        config = DispatchConfig.model_validate(
+            {
+                **BASE_CONFIG,
+                "model_profiles": [
+                    {
+                        "id": "pi-main",
+                        "type": "pi",
+                        "model": "gpt-test",
+                        "reasoning": "off",
+                    }
+                ],
+                "workers": [
+                    {
+                        "name": "pi",
+                        "type": "pi",
+                        "model_profile": "pi-main",
+                        "endpoint": "pi-default",
+                        "task_types": ["bootstrap"],
+                        "max_running": 1,
+                        "priority": 0,
+                    }
+                ],
+            }
+        )
+
+        worker = config.workers[0]
+        profile = config.model_profile_config(worker)
+        assert profile is not None
+        endpoint = ProviderEndpointSecret(
+            id="pi-default",
+            type="pi",
+            base_url="https://example.test/v1",
+            provider_api="openai-completions",
+            has_api_key=True,
+            api_key="sk-test",
+        )
+        env = resolve_worker_env(worker, profile, endpoint)
+
+        self.assertEqual(env["PI_REASONING"], "off")
+
+    def test_reasoning_is_only_valid_for_pi_profiles(self) -> None:
+        with self.assertRaisesRegex(ValueError, "reasoning is only supported for pi"):
+            DispatchConfig.model_validate(
+                {
+                    **BASE_CONFIG,
+                    "model_profiles": [
+                        {
+                            "id": "codex-main",
+                            "type": "codex",
+                            "model": "gpt-test",
+                            "reasoning": "medium",
+                        }
+                    ],
+                    "workers": [
+                        {
+                            "name": "codex",
+                            "type": "codex",
+                            "model_profile": "codex-main",
+                            "endpoint": "codex-default",
+                            "task_types": ["bootstrap"],
+                            "max_running": 1,
+                            "priority": 0,
+                        }
+                    ],
+                }
+            )
+
+    def test_pi_reasoning_worker_env_rejects_invalid_level(self) -> None:
+        with self.assertRaisesRegex(ValueError, "PI_REASONING"):
+            DispatchConfig.model_validate(
+                {
+                    **BASE_CONFIG,
+                    "model_profiles": [
+                        {"id": "pi-main", "type": "pi", "model": "gpt-test"},
+                    ],
+                    "workers": [
+                        {
+                            "name": "pi",
+                            "type": "pi",
+                            "model_profile": "pi-main",
+                            "endpoint": "pi-default",
+                            "task_types": ["bootstrap"],
+                            "max_running": 1,
+                            "priority": 0,
+                            "env": {"PI_REASONING": "very"},
+                        }
+                    ],
+                }
+            )
 
     def test_mock_worker_can_omit_model_profile_and_endpoint(self) -> None:
         config = DispatchConfig.model_validate(

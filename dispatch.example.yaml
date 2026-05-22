@@ -48,6 +48,8 @@ container:
   #   - "NET_ADMIN"
 
 # Model profiles describe model identity and capacity only.
+# Pi profiles also accept reasoning: off|minimal|low|medium|high|xhigh.
+# When omitted, Pi reasoning defaults to medium.
 # Provider endpoint base_url/provider_api/api_key are configured per server environment.
 model_profiles:
   - id: "claudecode-example"
@@ -62,6 +64,7 @@ model_profiles:
     type: "pi"
     model: "your-model-name"
     context_window: 262144
+    reasoning: "medium"
 
 workers:
   # Worker priority is ascending: lower numbers are preferred first.

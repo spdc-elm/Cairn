@@ -107,6 +107,47 @@ class AgentContextRuntimeTests(unittest.TestCase):
         self.assertNotIn("--no-context-files", enabled)
         self.assertIn("--no-context-files", healthcheck)
 
+    def test_pi_reasoning_defaults_to_medium_and_marks_model_as_reasoning_capable(self) -> None:
+        worker = WorkerConfig(
+            name="pi-test",
+            type="pi",
+            task_types=["explore"],
+            max_running=1,
+            priority=1,
+            env={"PI_MODEL": "gpt-5.4", "PI_BASE_URL": "http://x", "PI_PROVIDER_API": "openai-responses", "PI_API_KEY": "sk"},
+        )
+        driver = PiDriver()
+
+        argv = driver.build_execute(worker, "prompt", None).argv
+        models = json.loads(PiDriver._models_json(worker))
+
+        self.assertIn("--thinking", argv)
+        self.assertIn("medium", argv)
+        self.assertTrue(models["providers"]["cairn"]["models"][0]["reasoning"])
+
+    def test_pi_reasoning_can_be_disabled_explicitly(self) -> None:
+        worker = WorkerConfig(
+            name="pi-test",
+            type="pi",
+            task_types=["explore"],
+            max_running=1,
+            priority=1,
+            env={
+                "PI_MODEL": "gpt-5.4",
+                "PI_BASE_URL": "http://x",
+                "PI_PROVIDER_API": "openai-responses",
+                "PI_API_KEY": "sk",
+                "PI_REASONING": "off",
+            },
+        )
+        driver = PiDriver()
+
+        argv = driver.build_execute(worker, "prompt", None).argv
+        models = json.loads(PiDriver._models_json(worker))
+
+        self.assertNotIn("--thinking", argv)
+        self.assertFalse(models["providers"]["cairn"]["models"][0]["reasoning"])
+
 
 if __name__ == "__main__":
     unittest.main()

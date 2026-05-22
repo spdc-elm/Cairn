@@ -21,6 +21,8 @@ CompletedAction = Literal["remove", "stop"]
 EnvironmentBackend = Literal["docker", "ssh"]
 CredentialsMode = Literal["remote", "inject", "merge"]
 TerminalMode = Literal["none", "tmux", "zellij"]
+PiReasoningLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh"]
+PI_REASONING_LEVELS = frozenset(("off", "minimal", "low", "medium", "high", "xhigh"))
 
 WORKER_ENV_KEYS: dict[WorkerType, tuple[str, ...]] = {
     "claudecode": (
@@ -38,6 +40,7 @@ WORKER_ENV_KEYS: dict[WorkerType, tuple[str, ...]] = {
         "PI_BASE_URL",
         "PI_API_KEY",
         "PI_PROVIDER_API",
+        "PI_REASONING",
     ),
     "mock": (),
 }
@@ -182,6 +185,7 @@ class ModelProfileConfig(BaseModel):
     type: WorkerType
     model: str
     context_window: int | None = Field(default=None, gt=0)
+    reasoning: PiReasoningLevel | None = None
 
     @field_validator("id", "model")
     @classmethod
@@ -190,6 +194,12 @@ class ModelProfileConfig(BaseModel):
         if not text:
             raise ValueError("must not be empty")
         return text
+
+    @model_validator(mode="after")
+    def validate_reasoning_scope(self) -> "ModelProfileConfig":
+        if self.reasoning is not None and self.type != "pi":
+            raise ValueError("reasoning is only supported for pi model profiles")
+        return self
 
 
 class DockerEnvironmentConfig(BaseModel):
@@ -306,6 +316,7 @@ class WorkerConfig(BaseModel):
     def validate_env(self) -> "WorkerConfig":
         if self.type == "pi":
             _validate_optional_positive_int_env(self.name, self.env, "PI_MODEL_CONTEXT_WINDOW")
+            _validate_optional_pi_reasoning_env(self.name, self.env)
         if self.type == "mock":
             resolve_mock_behavior(self.name, self.env)
         return self
@@ -478,6 +489,7 @@ def resolve_worker_env(
         profile_env["PI_BASE_URL"] = _normalized_endpoint_base_url(endpoint)
         profile_env["PI_PROVIDER_API"] = _required_endpoint_field(endpoint, "provider_api")
         profile_env["PI_API_KEY"] = _required_endpoint_field(endpoint, "api_key")
+        profile_env["PI_REASONING"] = profile.reasoning or "medium"
         if profile.context_window is not None:
             profile_env["PI_MODEL_CONTEXT_WINDOW"] = str(profile.context_window)
     elif profile.type == "codex":
@@ -516,6 +528,15 @@ def _validate_optional_positive_int_env(worker_name: str, env: dict[str, str], k
         raise ValueError(f"worker {worker_name} env {key} must be an integer") from exc
     if parsed <= 0:
         raise ValueError(f"worker {worker_name} env {key} must be greater than 0")
+
+
+def _validate_optional_pi_reasoning_env(worker_name: str, env: dict[str, str]) -> None:
+    value = env.get("PI_REASONING")
+    if value is None or not value.strip():
+        return
+    if value not in PI_REASONING_LEVELS:
+        allowed = ", ".join(sorted(PI_REASONING_LEVELS))
+        raise ValueError(f"worker {worker_name} env PI_REASONING must be one of: {allowed}")
 
 
 def _expand_env_vars(value: str) -> str:

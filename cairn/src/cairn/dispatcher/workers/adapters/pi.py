@@ -18,22 +18,23 @@ class PiDriver(WorkerDriver):
 
     def build_healthcheck(self, worker: WorkerConfig) -> list[str]:
         env = worker.env
+        argv = [
+            "--provider",
+            "cairn",
+            "--model",
+            env["PI_MODEL"],
+            "--mode",
+            "json",
+            "--session-dir",
+            self._session_dir(worker),
+            "--no-session",
+            "--no-tools",
+        ]
+        self._append_reasoning_args(worker, argv)
+        argv.extend(["-p", "Reply with exactly pong."])
         return self._wrap_with_models(
             worker,
-            [
-                "--provider",
-                "cairn",
-                "--model",
-                env["PI_MODEL"],
-                "--mode",
-                "json",
-                "--session-dir",
-                self._session_dir(worker),
-                "--no-session",
-                "--no-tools",
-                "-p",
-                "Reply with exactly pong.",
-            ],
+            argv,
             enable_tools=False,
         )
 
@@ -49,6 +50,7 @@ class PiDriver(WorkerDriver):
             "--session-dir",
             self._session_dir(worker),
         ]
+        self._append_reasoning_args(worker, argv)
         if session:
             argv.extend(["--session", session])
         argv.extend(["-p", prompt])
@@ -67,9 +69,9 @@ class PiDriver(WorkerDriver):
             self._session_dir(worker),
             "--session",
             session,
-            "-p",
-            prompt,
         ]
+        self._append_reasoning_args(worker, argv)
+        argv.extend(["-p", prompt])
         return self._wrap_with_models(worker, argv, runtime_context=runtime_context)
 
     def question_capability(self, worker: WorkerConfig) -> QuestionCapability:
@@ -109,9 +111,9 @@ class PiDriver(WorkerDriver):
             self._session_dir(worker),
             "--fork",
             source_session,
-            "-p",
-            prompt,
         ]
+        self._append_reasoning_args(worker, argv)
+        argv.extend(["-p", prompt])
         return DriverResult(argv=self._wrap_with_models(worker, argv, runtime_context=runtime_context), session=None)
 
     def remote_session_kind(self) -> str:
@@ -187,6 +189,8 @@ class PiDriver(WorkerDriver):
             "python3 - <<'PY' \"$agent_dir\"\n"
             "import json, os, sys\n"
             "model = {'id': os.environ['PI_MODEL'], 'name': os.environ['PI_MODEL']}\n"
+            "reasoning = os.environ.get('PI_REASONING', 'medium')\n"
+            "model['reasoning'] = reasoning != 'off'\n"
             "context = os.environ.get('PI_MODEL_CONTEXT_WINDOW')\n"
             "if context:\n"
             "    model['contextWindow'] = int(context)\n"
@@ -223,6 +227,12 @@ class PiDriver(WorkerDriver):
     @staticmethod
     def _session_dir(worker: WorkerConfig) -> str:
         return str(PurePosixPath(PiDriver._agent_dir(worker)) / "sessions")
+
+    @staticmethod
+    def _append_reasoning_args(worker: WorkerConfig, argv: list[str]) -> None:
+        reasoning = worker.env.get("PI_REASONING", "medium")
+        if reasoning != "off":
+            argv.extend(["--thinking", reasoning])
 
     @staticmethod
     def _iter_events(stdout: str) -> list[dict[str, Any]]:
@@ -264,9 +274,11 @@ class PiDriver(WorkerDriver):
     @staticmethod
     def _models_json(worker: WorkerConfig) -> str:
         env = worker.env
+        reasoning = env.get("PI_REASONING", "medium")
         model: dict[str, Any] = {
             "id": env["PI_MODEL"],
             "name": env["PI_MODEL"],
+            "reasoning": reasoning != "off",
         }
         context_window = env.get("PI_MODEL_CONTEXT_WINDOW")
         if context_window:
