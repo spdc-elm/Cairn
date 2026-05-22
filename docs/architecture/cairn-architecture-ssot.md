@@ -30,7 +30,7 @@
 
 ## 1.2 Pending Architecture Deltas
 
-暂无。
+当前无 pending architecture delta。
 
 ## 2. 产品心智模型
 
@@ -57,10 +57,11 @@ Intent / Branch
 核心约束：
 
 - `ExecutionRun` 是运行层原子，表示某个 worker 在某个 environment/profile/endpoint/workspace/session 下实际执行一次。
-- `ExecutionEvent` 是实时 Output、conversation transcript、tool/message stream、stdout/stderr 的唯一主数据源。
+- `ExecutionEvent` 是实时 Output、conversation transcript、tool/message stream、session/status 与语义事件的唯一主数据源。
+- `stdout`/`stderr` execution events 是 bounded raw preview/ref/metric，不承诺保存完整 raw stream。
 - Terminal status 必须通过 `POST /dispatcher/executions/{execution_id}/finish` 或等价持久化屏障与 terminal/final events 一起提交；dispatcher 主路径不得先丢 final events 再单独把 execution patch 成 succeeded。
 - `event_key` 是 immutable idempotency key。同 execution 同 key 同 canonical event 可重放；同 key 不同 event 必须冲突，不得静默吞掉新内容。
-- `Artifact` 保存大产物与证据，如 report、transcript、scan output、screenshot、文件。
+- `Artifact` 与 run log 文件保存大产物与证据，如 report、完整 raw stream/transcript、scan output、screenshot、文件。完整 raw stdout/stderr/worker JSONL 属于 run log/artifact 文件层，不进入主 DB。
 - `EvidenceLink` 连接 fact 与 artifact/execution，用于表达证据关系。
 - Output UI、Conversation UI、fork/resume 历史、实时状态，必须从 `execution_runs` 与 `execution_events` 投影。
 
@@ -91,6 +92,7 @@ Intent / Branch
 Server 负责：
 
 - 持久化 projects、facts、intents、executions、events、branches、artifacts、environment config。
+- 持久化 server-wide agent context templates 与 project-scoped agent context snapshots；MVP snapshot kind 为 `agents_md`。
 - 暴露 API。
 - 执行 schema/migration。
 - 不直接运行远端 worker，不解析 backend-specific transcript，不绕过 dispatcher 执行 Q&A。
@@ -100,7 +102,9 @@ Dispatcher 负责：
 - lease execution。
 - 选择 worker driver 与 environment。
 - 启动/取消/心跳/收尾 worker process。
-- 将 stdout/stderr/message/tool/session/status 等实时写入 `ExecutionEvent`。
+- 在 worker process 启动前，从 server 获取 project agent context snapshot，并在 workspace 内 materialize Cairn-managed `AGENTS.md`。
+- 将 worker stream 分发到 run log/artifact 文件、semantic projector 与 DB raw preview/ref sink。
+- 将 message/tool/session/status 等语义事件，以及 bounded stdout/stderr preview/ref/metric 写入 `ExecutionEvent`。
 - 通过 bounded EventSink 写入 events：timeout/backpressure 必须 retry、暴露 diagnostic，且队列不得无限增长。
 - 通过 finish contract 提交 terminal events、session output、returncode、error 与 terminal status。finish 失败时不得把 execution 标记为 succeeded；最后手段只能暴露 failed diagnostic。
 
@@ -108,6 +112,7 @@ Worker driver 负责：
 
 - 将具体 CLI/API 输出转成统一 execution events。
 - 实现 session resume/fork/fresh 语义。
+- 暴露 backend context-file capability 开关，例如 Pi 是否允许读取 workspace `AGENTS.md`；driver 不拥有 agent context 内容来源。
 - 上报能力与诊断信息。
 
 ## 6. Worker 能力与健康
@@ -125,7 +130,7 @@ Web UI 应只把以下内容作为 Output/Conversation 主路径：
 - branch/execution 相关 v3.2 API
 
 UI 不得调用旧 `/questions` 或 `/runs/*/transcript` 作为 Output/Conversation 主路径。
-UI Conversation 主路径不得解析 backend-specific stdout JSONL 生成语义 message/tool/session；raw stdout/stderr 只属于 Raw/Debug 呈现。
+UI Conversation 主路径不得解析 backend-specific stdout JSONL 生成语义 message/tool/session；raw stdout/stderr preview/ref 只属于 Raw/Debug 呈现，完整 raw 需通过 run log/artifact ref 定位。
 Execution events 与 branch timeline 必须使用 endpoint-scoped cursor 完整读取；跨 execution/branch cursor 必须被 server 拒绝，前端不得依赖 project cursor 混用跳读。
 
 实时展示规则：
@@ -144,6 +149,7 @@ Execution events 与 branch timeline 必须使用 endpoint-scoped cursor 完整�
 - fresh schema 只包含当前架构需要的表。
 - migration 只服务当前仍支持的升级路径和当前测试需要。
 - 不为已废弃路径新增 backfill、router guard、兼容 facade。
+- 旧 raw stdout/stderr blob 的瘦身由显式 maintenance command 执行；普通 migration 不自动裁剪历史 raw blob，也不为旧 raw blob 引入长期兼容分支。
 - 若发现旧兼容代码影响理解或可能被误用，应优先删除。
 
 明确废弃且不得复活为主路径：

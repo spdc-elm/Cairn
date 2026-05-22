@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>V3.5 Agent Context Requirements</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --ink: #172033;
+      --muted: #5c667a;
+      --line: #d9deea;
+      --accent: #256f8f;
+      --accent-2: #8a5a16;
+      --ok: #287a4b;
+      --panel: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.5;
+    }
+    header {
+      min-height: 42vh;
+      padding: 56px min(7vw, 88px) 36px;
+      display: grid;
+      align-content: end;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(120deg, rgba(37,111,143,.12), transparent 42%),
+        linear-gradient(0deg, rgba(255,255,255,.78), rgba(255,255,255,.78)),
+        repeating-linear-gradient(90deg, #eef2f7 0 1px, transparent 1px 80px);
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(36px, 6vw, 76px);
+      line-height: 1;
+      letter-spacing: 0;
+      max-width: 980px;
+    }
+    .sub {
+      margin-top: 18px;
+      max-width: 780px;
+      color: var(--muted);
+      font-size: 18px;
+    }
+    main { padding: 32px min(7vw, 88px) 72px; }
+    section {
+      max-width: 1120px;
+      margin: 0 auto 34px;
+      padding: 0;
+    }
+    h2 {
+      margin: 0 0 14px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      min-height: 150px;
+    }
+    .card b {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--accent);
+    }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .step {
+      border-top: 4px solid var(--accent);
+      background: var(--panel);
+      padding: 14px;
+      min-height: 116px;
+      border-radius: 6px;
+      border-left: 1px solid var(--line);
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+    .step small {
+      display: block;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+    .decision {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .band {
+      border-left: 4px solid var(--accent-2);
+      background: #fffaf1;
+      padding: 18px;
+      border-radius: 6px;
+    }
+    ul { margin: 8px 0 0; padding-left: 20px; }
+    li { margin: 7px 0; }
+    @media (max-width: 860px) {
+      .grid, .flow, .decision { grid-template-columns: 1fr; }
+      header { min-height: 36vh; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>V3.5 Agent Context</h1>
+    <div class="sub">用 server 级模板复用常用 AGENTS.md，用 project snapshot 固定每个项目真正执行的规则。</div>
+  </header>
+  <main>
+    <section>
+      <h2>核心判断</h2>
+      <div class="grid">
+        <div class="card"><b>模板可复用</b>常用 agent prompt 不应散落在每个 project 表单里，应成为 server DB 中可管理的 template。</div>
+        <div class="card"><b>项目要快照</b>创建 project 时复制模板并可微调；后续模板变化不影响旧 project。</div>
+        <div class="card"><b>运行时落盘</b>dispatcher 在 workspace 写 AGENTS.md；driver 只负责 Pi 是否加载 context files。</div>
+      </div>
+    </section>
+    <section>
+      <h2>数据流</h2>
+      <div class="flow">
+        <div class="step">Template<small>server-wide 常用规则库</small></div>
+        <div class="step">Project Create<small>选择模板并微调</small></div>
+        <div class="step">Snapshot<small>project-scoped 执行真相</small></div>
+        <div class="step">Materialize<small>写入 workspace/AGENTS.md</small></div>
+        <div class="step">Pi Run<small>开启 context files</small></div>
+      </div>
+    </section>
+    <section>
+      <h2>边界</h2>
+      <div class="decision">
+        <div class="band">
+          <b>做</b>
+          <ul>
+            <li>表名/API 使用 agent_context，MVP kind 只允许 agents_md。</li>
+            <li>execution metadata 记录 hash/path。</li>
+            <li>既有 AGENTS.md 冲突时拒绝静默覆盖。</li>
+          </ul>
+        </div>
+        <div class="band">
+          <b>不做</b>
+          <ul>
+            <li>不做 MCP、extensions、skills、prompt templates。</li>
+            <li>不按 model/worker/endpoint 分叉注入。</li>
+            <li>不让 driver 拥有模板来源或 DB 语义。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

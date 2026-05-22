@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from cairn.dispatcher.config import WorkerConfig, resolve_mock_behavior
-from cairn.dispatcher.workers.base import DriverResult, QuestionCapability, SeedSessionDriver
+from cairn.dispatcher.workers.base import DriverResult, QuestionCapability, SeedSessionDriver, WorkerRuntimeContext
 
 _SCRIPT = """
 import json,random,sys,time
@@ -140,10 +140,10 @@ class MockDriver(SeedSessionDriver):
     def build_healthcheck(self, worker: WorkerConfig) -> list[str]:
         return self._argv(worker, '{"phase":"healthcheck"}')
 
-    def build_execute(self, worker: WorkerConfig, prompt: str, session: str | None) -> DriverResult:
+    def build_execute(self, worker: WorkerConfig, prompt: str, session: str | None, runtime_context: WorkerRuntimeContext | None = None) -> DriverResult:
         return DriverResult(argv=self._argv(worker, prompt), session=session)
 
-    def build_conclude(self, worker: WorkerConfig, prompt: str, session: str) -> list[str]:
+    def build_conclude(self, worker: WorkerConfig, prompt: str, session: str, runtime_context: WorkerRuntimeContext | None = None) -> list[str]:
         return self._argv(worker, prompt)
 
     def question_capability(self, worker: WorkerConfig) -> QuestionCapability:
@@ -165,8 +165,9 @@ class MockDriver(SeedSessionDriver):
         mode: str,
         prompt: str,
         source_session: str | None = None,
+        runtime_context: WorkerRuntimeContext | None = None,
     ) -> DriverResult:
         if mode == "fork":
             fork_session = f"mock-fork-{source_session or self.prepare_session()}"
             return DriverResult(argv=self._argv(worker, prompt), session=fork_session)
-        return super().build_question(worker, mode=mode, prompt=prompt, source_session=source_session)
+        return super().build_question(worker, mode=mode, prompt=prompt, source_session=source_session, runtime_context=runtime_context)

@@ -22,6 +22,7 @@ from cairn.dispatcher.tasks.common import (
     cancel_reason,
     did_timeout,
     preview,
+    prepare_agent_context_for_execution,
     record_remote_session,
     run_healthcheck,
     run_worker_process,
@@ -144,8 +145,15 @@ def run_reason_task(
             },
         )
 
+        runtime_context = prepare_agent_context_for_execution(
+            client,
+            environment,
+            handle,
+            project_id=project.project.id,
+            execution_id=execution_id,
+        )
         session = driver.prepare_session()
-        command = driver.build_execute(worker, prompt, session)
+        command = driver.build_execute(worker, prompt, session, runtime_context=runtime_context)
         execute_started = time.perf_counter()
         result = run_worker_process(
             environment,

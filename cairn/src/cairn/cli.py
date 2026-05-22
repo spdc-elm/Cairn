@@ -1,11 +1,14 @@
 from pathlib import Path
 from datetime import datetime
+import json
+import shutil
 
 import click
 import uvicorn
 
 from cairn.server import db
 from cairn.server.migrations import runner
+from cairn.dispatcher.runtime.event_sink import RAW_PREVIEW_EVENT_BYTES, _sanitise_raw_preview_text, _truncate_utf8
 
 
 @click.group()
@@ -162,6 +165,58 @@ def db_reset(target: str, db_path: Path, yes: bool):
         click.echo(f"backup: {backup_path}")
 
 
+@db_group.command("prune-raw-events")
+@click.option(
+    "--db",
+    "--db-path",
+    "db_path",
+    type=click.Path(path_type=Path),
+    default=db.DEFAULT_DB,
+    show_default=True,
+    help="SQLite database path",
+)
+@click.option("--dry-run", is_flag=True, help="Report raw event size without changing the database")
+@click.option("--yes", is_flag=True, help="Apply raw event pruning")
+@click.option("--vacuum", is_flag=True, help="Run VACUUM after pruning")
+def db_prune_raw_events(db_path: Path, dry_run: bool, yes: bool, vacuum: bool):
+    """Prune legacy stdout/stderr raw blobs into bounded previews."""
+    if not dry_run and not yes:
+        raise click.ClickException("prune requires --dry-run or --yes")
+    if not db_path.exists():
+        raise click.ClickException(f"db not found: {db_path}")
+    with db.connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, event_type, payload_json
+            FROM execution_events
+            WHERE event_type IN ('stdout', 'stderr')
+            """
+        ).fetchall()
+        before = sum(len((row["payload_json"] or "").encode("utf-8")) for row in rows)
+        retained = 0
+        updates: list[tuple[str, str]] = []
+        for row in rows:
+            payload = _pruned_raw_payload(row["payload_json"])
+            encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+            retained += len(encoded.encode("utf-8"))
+            updates.append((encoded, row["id"]))
+        click.echo(f"raw events: {len(rows)}")
+        click.echo(f"raw payload bytes before: {before}")
+        click.echo(f"estimated retained bytes: {retained}")
+        if dry_run and not yes:
+            return
+        backup_path = db_path.with_name(f"{db_path.name}.bak-prune-{datetime.now().strftime('%Y%m%d%H%M%S')}")
+        shutil.copy2(db_path, backup_path)
+        for payload_json, event_id in updates:
+            conn.execute("UPDATE execution_events SET payload_json = ? WHERE id = ?", (payload_json, event_id))
+        if vacuum:
+            conn.commit()
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.execute("VACUUM")
+        click.echo(f"backup: {backup_path}")
+        click.echo(f"raw payload bytes after: {retained}")
+
+
 @db_group.command("restore")
 @click.option(
     "--db",
@@ -198,6 +253,27 @@ def db_restore(db_path: Path, backup_path: Path, yes: bool):
 def _format_versions(versions) -> str:
     values = tuple(versions)
     return ", ".join(values) if values else "none"
+
+
+def _pruned_raw_payload(payload_json: str | None) -> dict:
+    try:
+        payload = json.loads(payload_json or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    text = payload.get("text")
+    if not isinstance(text, str):
+        text = json.dumps(payload, ensure_ascii=False)
+    sanitised = _sanitise_raw_preview_text(text)
+    preview, persisted, _ = _truncate_utf8(sanitised, RAW_PREVIEW_EVENT_BYTES)
+    omitted = max(0, len(text.encode("utf-8")) - persisted)
+    return {
+        "text": preview,
+        "preview": True,
+        "truncated": omitted > 0,
+        "omitted_bytes": omitted,
+        "raw_ref": payload.get("raw_ref") or {"kind": "legacy_pruned"},
+        "sanitised": sanitised != text,
+    }
 
 
 @main.command()

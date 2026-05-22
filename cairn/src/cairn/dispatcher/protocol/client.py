@@ -9,7 +9,7 @@ from pydantic import TypeAdapter
 import requests
 from requests.adapters import HTTPAdapter
 
-from cairn.shared.api_models import Intent, ProjectDetail, ProjectSummary, ProviderEndpointSecret, Settings, WorkEnvironmentPublic
+from cairn.shared.api_models import Intent, ProjectAgentContext, ProjectDetail, ProjectSummary, ProviderEndpointSecret, Settings, WorkEnvironmentPublic
 
 LOG = logging.getLogger(__name__)
 
@@ -58,6 +58,14 @@ class CairnClient:
         response = self._session().get(self._url(f"/projects/{project_id}"), timeout=self._timeout)
         response.raise_for_status()
         return ProjectDetail.model_validate(response.json())
+
+    def get_project_agent_context(self, project_id: str) -> ProjectAgentContext | None:
+        response = self._session().get(self._url(f"/projects/{project_id}/agent-context"), timeout=self._timeout)
+        response.raise_for_status()
+        payload = response.json()
+        if payload is None:
+            return None
+        return ProjectAgentContext.model_validate(payload)
 
     def get_settings(self) -> Settings:
         response = self._session().get(self._url("/settings"), timeout=self._timeout)

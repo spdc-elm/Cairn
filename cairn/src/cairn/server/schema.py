@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS counters (
 );
 
 INSERT OR IGNORE INTO counters (name, value) VALUES ('project', 0);
+INSERT OR IGNORE INTO counters (name, value) VALUES ('agent_context_template', 0);
 
 CREATE TABLE IF NOT EXISTS scoped_counters (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -144,6 +145,30 @@ CREATE TABLE IF NOT EXISTS worker_runtime_health (
 
 CREATE INDEX IF NOT EXISTS idx_worker_runtime_health_worker
 ON worker_runtime_health (worker_name, worker_type, endpoint_id, model_profile_id);
+
+CREATE TABLE IF NOT EXISTS agent_context_templates (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    kind TEXT NOT NULL DEFAULT 'agents_md' CHECK (kind IN ('agents_md')),
+    content TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_agent_contexts (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'agents_md' CHECK (kind IN ('agents_md')),
+    enabled INTEGER NOT NULL DEFAULT 1,
+    source_template_id TEXT,
+    source_template_hash TEXT,
+    content TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, kind)
+);
 
 CREATE TABLE IF NOT EXISTS execution_runs (
     id TEXT PRIMARY KEY,

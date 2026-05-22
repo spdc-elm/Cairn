@@ -278,7 +278,7 @@
       <button @click="showLocalPrefs = true" class="h-7 max-w-40 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center shrink-0">
         <span class="truncate block" x-text="actorName()"></span>
       </button>
-      <button @click="loadSettings(); showSettings = true" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0">
+      <button @click="loadSettings(); loadAgentContextTemplates(); showSettings = true" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7 7 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a7 7 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a7 7 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a7 7 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/><path d="M15 12a3 3 0 1 1-6 0-3 3 0 0 1 6 0Z"/></svg>
       </button>
     </div>
@@ -498,7 +498,7 @@
       <button @click="showLocalPrefs = true" class="h-7 max-w-40 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center shrink-0">
         <span class="truncate block" x-text="actorName()"></span>
       </button>
-      <button @click="loadSettings(); showSettings = true" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0">
+      <button @click="loadSettings(); loadAgentContextTemplates(); showSettings = true" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7 7 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a7 7 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a7 7 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a7 7 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/><path d="M15 12a3 3 0 1 1-6 0-3 3 0 0 1 6 0Z"/></svg>
       </button>
     </div>
@@ -957,9 +957,21 @@
               </div>
             </div>
 
+            <div class="space-y-2 pt-3 border-t border-slate-100">
+              <label class="flex items-center justify-between gap-3 text-sm text-slate-700">
+                <span>Managed AGENTS.md</span>
+                <input type="checkbox" x-model="projectSettingsForm.agent_context.enabled" @change="projectSettingsDirty = true" class="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-200">
+              </label>
+              <textarea x-model="projectSettingsForm.agent_context.content" @input="projectSettingsDirty = true" rows="7" placeholder="AGENTS.md content" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition"></textarea>
+              <div class="flex items-center justify-between gap-2 text-[11px] text-slate-400">
+                <span x-text="projectSettingsForm.agent_context.content_hash ? `hash ${projectSettingsForm.agent_context.content_hash.slice(0, 12)}` : 'no snapshot'"></span>
+                <span x-show="agentContextTooLarge(projectSettingsForm.agent_context.content)" class="text-rose-500">over 128 KiB</span>
+              </div>
+            </div>
+
             <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
               <button type="button" @click="resetProjectSettingsForm()" class="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm text-slate-500 hover:bg-slate-50">Reset</button>
-              <button type="button" @click="saveProjectSettings()" :disabled="projectSettingsSaving" class="px-3 py-2 rounded-xl bg-brand-500 text-white text-sm font-medium hover:bg-brand-600 disabled:opacity-40">Save</button>
+              <button type="button" @click="saveProjectSettings()" :disabled="projectSettingsSaving || agentContextTooLarge(projectSettingsForm.agent_context.content) || (projectSettingsForm.agent_context.enabled && !projectSettingsForm.agent_context.content.trim())" class="px-3 py-2 rounded-xl bg-brand-500 text-white text-sm font-medium hover:bg-brand-600 disabled:opacity-40">Save</button>
             </div>
           </div>
         </section>
@@ -1057,10 +1069,10 @@
 <!-- ═══════════ MODALS ═══════════ -->
 
 <!-- New Project -->
-<div x-show="showNewProject" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @pointerdown.capture="modalPointerDown($event)" @mousedown.capture="modalPointerDown($event)" @click.self="closeModalFromBackdrop($event, 'showNewProject')">
-  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-4">New Project</h3>
-    <div class="space-y-3">
+<div x-show="showNewProject" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay p-4" @pointerdown.capture="modalPointerDown($event)" @mousedown.capture="modalPointerDown($event)" @click.self="closeModalFromBackdrop($event, 'showNewProject')">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[calc(100vh-2rem)] p-6 border border-slate-200/60 flex flex-col overflow-hidden" @click.stop>
+    <h3 class="text-base font-semibold text-slate-700 mb-4 shrink-0">New Project</h3>
+    <div class="space-y-3 min-h-0 overflow-y-auto pr-1 -mr-1">
       <input x-model="newProject.title" placeholder="Project title" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
       <textarea x-model="newProject.origin" placeholder="Origin — starting point" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <textarea x-model="newProject.goal" placeholder="Goal — what to achieve" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
@@ -1087,6 +1099,22 @@
           <button type="button" @click="openEnvironmentPanel()" class="font-medium underline underline-offset-2">Configure</button>
         </div>
       </template>
+      <div class="space-y-2">
+        <div class="grid grid-cols-[1fr_auto] gap-2">
+          <select x-model="newProject.agent_context.template_id" @change="applyNewProjectAgentTemplate()" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+            <option value="">No AGENTS.md template</option>
+            <template x-for="tpl in agentContextTemplates" :key="tpl.id">
+              <option :value="tpl.id" x-text="tpl.name"></option>
+            </template>
+          </select>
+          <label class="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 text-sm text-slate-600">
+            <input type="checkbox" x-model="newProject.agent_context.enabled" class="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-200">
+            <span>AGENTS</span>
+          </label>
+        </div>
+        <textarea x-model="newProject.agent_context.content" rows="4" placeholder="AGENTS.md snapshot" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition"></textarea>
+        <p x-show="agentContextTooLarge(newProject.agent_context.content)" class="text-[11px] text-rose-500">AGENTS.md content exceeds 128 KiB.</p>
+      </div>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <label class="flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-sm text-slate-600">
           <span>Auto reason</span>
@@ -1130,9 +1158,9 @@
         <p class="text-[11px] text-slate-400">Hint creator uses local actor: <span class="font-medium text-slate-600" x-text="actorName()"></span></p>
       </div>
     </div>
-    <div class="flex justify-end gap-2 mt-5">
+    <div class="flex justify-end gap-2 mt-5 pt-4 border-t border-slate-100 shrink-0">
       <button @click="showNewProject = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Cancel</button>
-      <button @click="createProject()" :disabled="!newProject.title || !newProject.origin || !newProject.goal"
+      <button @click="createProject()" :disabled="!newProject.title || !newProject.origin || !newProject.goal || agentContextTooLarge(newProject.agent_context.content) || (newProject.agent_context.enabled && !newProject.agent_context.content.trim())"
         class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">Create</button>
     </div>
   </div>
@@ -1464,7 +1492,7 @@
 
 <!-- Settings -->
 <div x-show="showSettings" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @pointerdown.capture="modalPointerDown($event)" @mousedown.capture="modalPointerDown($event)" @click.self="closeModalFromBackdrop($event, 'showSettings')">
-  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 border border-slate-200/60" @click.stop>
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6 border border-slate-200/60 max-h-[86vh] overflow-y-auto" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-4">Server Settings</h3>
     <div>
       <label class="text-[11px] text-slate-400 mb-1 block font-medium">Intent timeout (seconds)</label>
@@ -1474,6 +1502,33 @@
       <label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason timeout (seconds)</label>
       <input type="number" x-model.number="settingsForm.reason_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
       <p class="text-[11px] text-slate-400 mt-2">Shared backend configuration.</p>
+    </div>
+    <div class="mt-5 pt-5 border-t border-slate-100 space-y-3">
+      <div class="flex items-center justify-between gap-3">
+        <h4 class="text-sm font-semibold text-slate-700">Agent Context Templates</h4>
+        <button type="button" @click="resetAgentContextTemplateForm()" class="text-xs text-brand-500 hover:text-brand-600">New</button>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div class="rounded-xl border border-slate-200 bg-slate-50/60 p-2 max-h-52 overflow-y-auto">
+          <template x-if="agentContextTemplates.length === 0">
+            <p class="px-2 py-1.5 text-sm text-slate-400">No templates</p>
+          </template>
+          <template x-for="tpl in agentContextTemplates" :key="tpl.id">
+            <button type="button" @click="editAgentContextTemplate(tpl)" class="w-full text-left px-2 py-1.5 rounded-lg hover:bg-white text-sm">
+              <span class="block text-slate-700 truncate" x-text="tpl.name"></span>
+              <span class="block text-[10px] text-slate-400 font-mono truncate" x-text="tpl.content_hash"></span>
+            </button>
+          </template>
+        </div>
+        <div class="space-y-2">
+          <input x-model="agentContextTemplateForm.name" placeholder="Template name" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+          <textarea x-model="agentContextTemplateForm.content" rows="6" placeholder="AGENTS.md content" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition"></textarea>
+          <div class="flex items-center justify-between gap-2">
+            <button type="button" x-show="agentContextTemplateForm.id" @click="deleteAgentContextTemplate()" class="px-3 py-2 rounded-xl text-sm text-rose-500 hover:bg-rose-50">Delete</button>
+            <button type="button" @click="saveAgentContextTemplate()" :disabled="!agentContextTemplateForm.name || !agentContextTemplateForm.content || agentContextTooLarge(agentContextTemplateForm.content)" class="ml-auto px-3 py-2 rounded-xl bg-slate-800 text-white text-sm disabled:opacity-40">Save Template</button>
+          </div>
+        </div>
+      </div>
     </div>
     <div class="flex justify-end gap-2 mt-5">
       <button @click="showSettings = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Close</button>
@@ -1582,12 +1637,14 @@ function cairnApp() {
 
     environments: [],
     workers: [],
+    agentContextTemplates: [],
+    agentContextTemplateForm: { id: '', name: '', content: '' },
     envHealthcheckLoading: '',
     envHealthcheckPollers: {},
     environmentForm: { id: '', label: '', backend: 'ssh', ssh_command: '', workspace_root: '/home/kali/cairn-workspaces', cleanup: { completed_action: 'stop' }, terminal: { mode: 'none' } },
     endpointForm: { environment_id: '', id: '', type: 'pi', base_url: '', provider_api: 'openai-completions', api_key: '', clear_api_key: false, editing: false },
-    newProject: { title: '', origin: '', goal: '', hints: [{ content: '' }], executionMode: 'docker', environment_id: 'docker-default', auto_reason: false, allowed_auto_workers: [], default_timeout_seconds: null, default_conclude_timeout_seconds: null },
-    projectSettingsForm: { auto_reason: false, allowed_auto_workers: [], default_timeout_seconds: null, default_conclude_timeout_seconds: null },
+    newProject: { title: '', origin: '', goal: '', hints: [{ content: '' }], executionMode: 'docker', environment_id: 'docker-default', auto_reason: false, allowed_auto_workers: [], default_timeout_seconds: null, default_conclude_timeout_seconds: null, agent_context: { enabled: false, template_id: '', content: '' } },
+    projectSettingsForm: { auto_reason: false, allowed_auto_workers: [], default_timeout_seconds: null, default_conclude_timeout_seconds: null, agent_context: { enabled: false, content: '', content_hash: '' } },
     projectSettingsDirty: false,
     projectSettingsSaving: false,
     intentForm: { description: '', requested_worker: '', timeout_override_seconds: null, conclude_timeout_override_seconds: null },
@@ -1652,6 +1709,7 @@ function cairnApp() {
       this.loadLocalPrefs();
       await this.loadEnvironments();
       await this.loadWorkers();
+      await this.loadAgentContextTemplates();
       await this.loadProjects();
       await this.loadSettings();
       this.startPolling();
@@ -1875,6 +1933,59 @@ function cairnApp() {
       try { this.workers = await this.api('GET', '/workers'); } catch(e) { console.error(e); }
     },
 
+    async loadAgentContextTemplates() {
+      try { this.agentContextTemplates = await this.api('GET', '/agent-context/templates'); } catch(e) { console.error(e); }
+    },
+
+    resetAgentContextTemplateForm() {
+      this.agentContextTemplateForm = { id: '', name: '', content: '' };
+    },
+
+    editAgentContextTemplate(template) {
+      this.agentContextTemplateForm = { id: template.id, name: template.name, content: template.content || '' };
+    },
+
+    async saveAgentContextTemplate() {
+      try {
+        const body = { name: this.agentContextTemplateForm.name, content: this.agentContextTemplateForm.content };
+        if (this.agentContextTemplateForm.id) {
+          await this.api('PATCH', `/agent-context/templates/${this.agentContextTemplateForm.id}`, body);
+        } else {
+          await this.api('POST', '/agent-context/templates', body);
+        }
+        await this.loadAgentContextTemplates();
+        this.resetAgentContextTemplateForm();
+        this.showToast('Agent context template saved');
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async deleteAgentContextTemplate() {
+      if (!this.agentContextTemplateForm.id) return;
+      try {
+        await this.api('DELETE', `/agent-context/templates/${this.agentContextTemplateForm.id}`);
+        await this.loadAgentContextTemplates();
+        this.resetAgentContextTemplateForm();
+        this.showToast('Agent context template deleted');
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    applyNewProjectAgentTemplate() {
+      const tpl = this.agentContextTemplates.find(item => item.id === this.newProject.agent_context.template_id);
+      if (!tpl) return;
+      if (this.newProject.agent_context.content && this.newProject.agent_context.content !== tpl.content) {
+        if (!confirm('Replace current AGENTS.md draft with this template?')) {
+          this.newProject.agent_context.template_id = '';
+          return;
+        }
+      }
+      this.newProject.agent_context.content = tpl.content || '';
+      this.newProject.agent_context.enabled = true;
+    },
+
+    agentContextTooLarge(content) {
+      return new Blob([content || '']).size > 128 * 1024;
+    },
+
     exploreWorkers() {
       return this.workers.filter(worker => Array.isArray(worker.task_types) && worker.task_types.includes('explore'));
     },
@@ -2031,6 +2142,7 @@ function cairnApp() {
         allowed_auto_workers: Array.isArray(this.project.project.allowed_auto_workers) ? [...this.project.project.allowed_auto_workers] : [],
         default_timeout_seconds: this.project.project.default_timeout_seconds ?? null,
         default_conclude_timeout_seconds: this.project.project.default_conclude_timeout_seconds ?? null,
+        agent_context: { enabled: false, content: '', content_hash: this.project.project.agent_context_summary?.content_hash || '' },
       };
       this.projectSettingsDirty = false;
     },
@@ -2537,11 +2649,23 @@ function cairnApp() {
       try {
         this.project = await this.api('GET', `/projects/${id}/graph`);
         if (!this.projectSettingsDirty) this.resetProjectSettingsForm();
+        if (!this.projectSettingsDirty) await this.loadProjectAgentContext(id);
         const forceConversationRefresh = this.sideTab === 'conversation'
           && this.conversation?.transcript
           && ['pending', 'leased', 'running'].includes(this.conversation.transcript.execution_status);
         await this.loadSelectedConversation(forceConversationRefresh);
       } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    async loadProjectAgentContext(id) {
+      try {
+        const snapshot = await this.api('GET', `/projects/${id}/agent-context`);
+        this.projectSettingsForm.agent_context = {
+          enabled: Boolean(snapshot?.enabled),
+          content: snapshot?.content || '',
+          content_hash: snapshot?.content_hash || '',
+        };
+      } catch(e) { console.error(e); }
     },
 
 	    resetConversationState(extra = {}) {
@@ -2793,7 +2917,10 @@ function cairnApp() {
       }
       if (event.event_type === 'stdout' || event.event_type === 'stderr') {
         const text = payload.text || '';
-        return [{ id: event.id, execution_id: event.execution_id, kind: 'raw', text, status: event.event_type === 'stderr' ? 'error' : 'success' }];
+        const suffix = payload.preview
+          ? `\n\n[raw preview${payload.truncated ? `, omitted ${payload.omitted_bytes || 0} bytes` : ''}] ${this.rawRefLabel(payload.raw_ref)}`
+          : '';
+        return [{ id: event.id, execution_id: event.execution_id, kind: 'raw', text: text + suffix, raw: payload, status: event.event_type === 'stderr' ? 'error' : 'success' }];
       }
       return [{ id: event.id, execution_id: event.execution_id, kind: 'raw', raw: payload, status: 'success' }];
     },
@@ -2801,6 +2928,13 @@ function cairnApp() {
     messageStreamKey(event, payload = {}, role = 'assistant', fallback = 0) {
       const slot = payload.stream_key || payload.message_id || payload.messageId || payload.id || payload.index || payload.message_index || payload.messageIndex || payload.turn_index || payload.turnIndex || fallback;
       return `${event.execution_id}:message:${role}:${slot}`;
+    },
+
+    rawRefLabel(ref) {
+      if (!ref) return '';
+      if (ref.path) return ref.path;
+      if (ref.key) return ref.key;
+      try { return JSON.stringify(ref); } catch { return String(ref); }
     },
 
     workerJsonLinesToConversationEvents(event, text) {
@@ -5290,11 +5424,19 @@ function cairnApp() {
         body.allowed_auto_workers = body.auto_reason ? this.newProject.allowed_auto_workers : null;
         if (this.newProject.default_timeout_seconds) body.default_timeout_seconds = this.newProject.default_timeout_seconds;
         if (this.newProject.default_conclude_timeout_seconds) body.default_conclude_timeout_seconds = this.newProject.default_conclude_timeout_seconds;
+        const contextContent = this.newProject.agent_context.content || '';
+        if (contextContent.trim() || this.newProject.agent_context.template_id) {
+          body.agent_context = {
+            enabled: Boolean(this.newProject.agent_context.enabled),
+            template_id: this.newProject.agent_context.template_id || null,
+            content: contextContent,
+          };
+        }
         const hints = hintContents.map(h => ({ content: h.content.trim(), creator: actor }));
         if (hints.length > 0) body.hints = hints;
         const data = await this.api('POST', '/projects', body);
         this.showNewProject = false;
-        this.newProject = { title:'', origin:'', goal:'', hints: [{ content:'' }], executionMode: 'docker', environment_id: 'docker-default', auto_reason: false, allowed_auto_workers: [], default_timeout_seconds: null, default_conclude_timeout_seconds: null };
+        this.newProject = { title:'', origin:'', goal:'', hints: [{ content:'' }], executionMode: 'docker', environment_id: 'docker-default', auto_reason: false, allowed_auto_workers: [], default_timeout_seconds: null, default_conclude_timeout_seconds: null, agent_context: { enabled: false, template_id: '', content: '' } };
         this.syncNewProjectEnvironment();
         await this.loadProjects();
         await this.openProject(data.project.id);
@@ -5320,6 +5462,10 @@ function cairnApp() {
           default_conclude_timeout_seconds: this.normalizePositiveNumber(this.projectSettingsForm.default_conclude_timeout_seconds),
         };
         const updated = await this.api('PATCH', `/projects/${this.selectedProjectId}`, body);
+        await this.api('PUT', `/projects/${this.selectedProjectId}/agent-context`, {
+          enabled: Boolean(this.projectSettingsForm.agent_context.enabled),
+          content: this.projectSettingsForm.agent_context.content || '',
+        });
         this.project.project = { ...this.project.project, ...updated };
         this.projectSettingsDirty = false;
         this.resetProjectSettingsForm();

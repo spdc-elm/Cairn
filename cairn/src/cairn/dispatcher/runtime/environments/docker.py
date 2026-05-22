@@ -49,6 +49,11 @@ class DockerEnvironment:
             raise RuntimeError(f"refusing to read outside docker workspace: {path}")
         return self._manager.read_text_file(handle.target_name, path)
 
+    def delete_file(self, handle: EnvironmentHandle, path: str) -> None:
+        if not self.is_path_in_workspace(handle, path):
+            raise RuntimeError(f"refusing to delete outside docker workspace: {path}")
+        self._manager.delete_file(handle.target_name, path)
+
     def exists(self, handle: EnvironmentHandle, path: str) -> bool:
         if not self.is_path_in_workspace(handle, path):
             return False

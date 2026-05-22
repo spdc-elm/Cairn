@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>V3.5 Agent Context Plan</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #d8dee9;
+      --panel: #ffffff;
+      --accent: #236b8e;
+      --warn: #9a6418;
+      --ok: #2e7a51;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.5;
+    }
+    header {
+      padding: 54px min(7vw, 86px) 30px;
+      min-height: 38vh;
+      display: grid;
+      align-content: end;
+      background:
+        linear-gradient(120deg, rgba(35,107,142,.14), transparent 46%),
+        repeating-linear-gradient(0deg, #eef3f8 0 1px, transparent 1px 76px);
+      border-bottom: 1px solid var(--line);
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(36px, 6vw, 70px);
+      line-height: 1;
+      letter-spacing: 0;
+    }
+    .sub {
+      margin-top: 16px;
+      max-width: 820px;
+      color: var(--muted);
+      font-size: 18px;
+    }
+    main { padding: 34px min(7vw, 86px) 72px; }
+    section {
+      max-width: 1160px;
+      margin: 0 auto 34px;
+    }
+    h2 {
+      margin: 0 0 14px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+    .route {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .phase {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      min-height: 154px;
+    }
+    .phase b {
+      color: var(--accent);
+      display: block;
+      margin-bottom: 8px;
+    }
+    .matrix {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 14px;
+    }
+    .box {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+    }
+    .box.warn { border-left: 4px solid var(--warn); }
+    .box.ok { border-left: 4px solid var(--ok); }
+    ul { margin: 8px 0 0; padding-left: 20px; }
+    li { margin: 7px 0; }
+    .check {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .pill {
+      background: #eef7f3;
+      border: 1px solid #c7e1d5;
+      border-radius: 8px;
+      padding: 14px;
+      color: #24593d;
+    }
+    @media (max-width: 920px) {
+      .route, .matrix, .check { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>V3.5 Execution Plan</h1>
+    <div class="sub">先立 contract 与 schema，再打通 API、dispatcher materializer、Pi capability，最后用真实流程验收。</div>
+  </header>
+  <main>
+    <section>
+      <h2>实施路线</h2>
+      <div class="route">
+        <div class="phase"><b>0-1 Contract + Schema</b>定义 agent_context models、hash、migration、fresh schema。</div>
+        <div class="phase"><b>2 Server API</b>模板 CRUD、project snapshot、创建 project 时复制并微调。</div>
+        <div class="phase"><b>3-4 Runtime</b>dispatcher 用 manifest 管理 AGENTS.md；Pi 所有 run path 贯穿 context flag。</div>
+        <div class="phase"><b>5-7 UX + Validation</b>UI 主路径、E2E smoke、SSOT 合并。</div>
+      </div>
+    </section>
+    <section>
+      <h2>关键取舍</h2>
+      <div class="matrix">
+        <div class="box ok">
+          <b>稳定性优先</b>
+          <ul>
+            <li>Project 保存 snapshot，不运行时追模板。</li>
+            <li>Execution ledger metadata 记录 hash/path。</li>
+            <li>Manifest 区分 managed stale 与 unmanaged conflict。</li>
+          </ul>
+        </div>
+        <div class="box warn">
+          <b>范围约束</b>
+          <ul>
+            <li>MVP 只做 AGENTS.md。</li>
+            <li>不打开 Pi extensions/skills/prompt templates。</li>
+            <li>不把行为挂到 model_profile。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+    <section>
+      <h2>验收信号</h2>
+      <div class="check">
+        <div class="pill">模板修改不影响旧 project。</div>
+        <div class="pill">启用项目写入 workspace/AGENTS.md。</div>
+        <div class="pill">Pi execute/conclude/question/fork 均随 snapshot 生效。</div>
+        <div class="pill">冲突时 worker 不启动，execution failed 收尾。</div>
+        <div class="pill">Output/Conversation 不回归。</div>
+        <div class="pill">SSOT 实现后合并主体事实。</div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

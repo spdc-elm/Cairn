@@ -14,9 +14,11 @@ from cairn.dispatcher.runtime.cancellation import TaskCancellation
 from cairn.dispatcher.runtime.environments.base import EnvironmentHandle, WorkEnvironment
 from cairn.dispatcher.runtime.heartbeat import HeartbeatLease
 from cairn.dispatcher.runtime.event_sink import CompositeRunLogger, ExecutionEventSink
+from cairn.dispatcher.runtime.agent_context import AgentContextMaterializationError, materialize_agent_context
 from cairn.dispatcher.runtime.process import ProcessResult
 from cairn.dispatcher.runtime.run_logs import RunLogWriter
 from cairn.shared.worker_events import message_event, status_event
+from cairn.dispatcher.workers.base import WorkerRuntimeContext
 
 HEALTHCHECK_COMMUNICATE_GRACE_SECONDS = 10
 PROCESS_COMMUNICATE_GRACE_SECONDS = 15
@@ -35,6 +37,7 @@ class WorkerProcessRun:
     result: ProcessResult
     run_log_id: str | None = None
     run_log_path: str | None = None
+    run_log_ref: dict | None = None
     event_flush_failed: bool = False
     event_sink: ExecutionEventSink | None = None
 
@@ -141,6 +144,77 @@ def write_graph_snapshot_reference(
     )
 
 
+def prepare_agent_context_for_execution(
+    client: CairnClient,
+    environment: WorkEnvironment,
+    handle: EnvironmentHandle,
+    *,
+    project_id: str,
+    execution_id: str | None,
+) -> WorkerRuntimeContext:
+    if execution_id is None:
+        return WorkerRuntimeContext()
+    if not hasattr(client, "get_project_agent_context"):
+        return WorkerRuntimeContext()
+    try:
+        snapshot = client.get_project_agent_context(project_id)
+        payload = snapshot.model_dump() if snapshot is not None else None
+        materialized = materialize_agent_context(environment, handle, payload)
+    except AgentContextMaterializationError as exc:
+        metadata = exc.metadata or {"enabled": False, "status": "error"}
+        client.patch_execution(execution_id, {"dispatcher_id": "dispatcher", "metadata": {"agent_context": metadata}})
+        finish_execution_terminal(
+            client,
+            execution_id,
+            events=[
+                status_event(
+                    "failed",
+                    event_key=f"{execution_id}:status:agent-context-failed",
+                    error_code="agent_context_failed",
+                    error_detail=str(exc),
+                ).to_api_payload(),
+                message_event(
+                    "system",
+                    f"dispatcher diagnostic: agent_context_failed: {exc}",
+                    event_key=f"{execution_id}:diagnostic:agent-context-failed",
+                ).to_api_payload(),
+            ],
+            patch={
+                "status": "failed",
+                "error_code": "agent_context_failed",
+                "error_detail": str(exc),
+                "metadata": {"agent_context": metadata},
+            },
+        )
+        raise
+    except Exception as exc:
+        metadata = {"enabled": False, "status": "error"}
+        finish_execution_terminal(
+            client,
+            execution_id,
+            events=[
+                status_event(
+                    "failed",
+                    event_key=f"{execution_id}:status:agent-context-fetch-failed",
+                    error_code="agent_context_failed",
+                    error_detail=str(exc),
+                ).to_api_payload()
+            ],
+            patch={
+                "status": "failed",
+                "error_code": "agent_context_failed",
+                "error_detail": str(exc),
+                "metadata": {"agent_context": metadata},
+            },
+        )
+        raise
+    client.patch_execution(execution_id, {"dispatcher_id": "dispatcher", "metadata": {"agent_context": materialized.metadata()}})
+    return WorkerRuntimeContext(
+        agent_context_enabled=materialized.enabled and materialized.status == "materialized",
+        agent_context_kind=materialized.kind,
+    )
+
+
 def run_healthcheck(
     environment: WorkEnvironment,
     handle: EnvironmentHandle,
@@ -212,6 +286,7 @@ def run_worker_process(
             "endpoint_id": worker.endpoint,
             "timeout_seconds": timeout_seconds,
             "argv0": argv[0] if argv else None,
+            "argv": argv,
         } | (extra_metadata or {})
         jsonl_logger = RunLogWriter(
             project_id=project_id,
@@ -266,16 +341,31 @@ def run_worker_process(
                         )
                     )
                 terminal_status = "cancelled" if result.cancelled else ("succeeded" if result.returncode == 0 else "failed")
+                patch_metadata = {}
+                if jsonl_logger is not None:
+                    patch_metadata["raw_stream"] = jsonl_logger.ref()
+                    patch_metadata["raw_stream"]["project_id"] = project_id
+                    patch_metadata["raw_stream"]["execution_id"] = event_sink.execution_id
                 event_flush_failed = not event_sink.close(
                     terminal_status=terminal_status,
                     returncode=result.returncode,
                     error_code=_process_error_code(result),
                     error_detail=_process_error_detail(result),
+                    patch_fields={"metadata": patch_metadata} if patch_metadata else None,
                 )
         return WorkerProcessRun(
             result=result,
             run_log_id=jsonl_logger.run_id if jsonl_logger is not None else None,
             run_log_path=str(jsonl_logger.path) if jsonl_logger is not None else None,
+            run_log_ref=(
+                {
+                    **jsonl_logger.ref(),
+                    "project_id": project_id,
+                    "execution_id": event_sink.execution_id if event_sink is not None else None,
+                }
+                if jsonl_logger is not None
+                else None
+            ),
             event_flush_failed=event_flush_failed,
             event_sink=event_sink,
         )
@@ -472,11 +562,13 @@ def finish_deferred_worker_process(
     if execution_id is None:
         return
     if run.event_sink is not None:
+        patch_metadata = {"raw_stream": run.run_log_ref} if run.run_log_ref is not None else None
         ok = run.event_sink.close(
             terminal_status=terminal_status,
             returncode=run.returncode if returncode is None else returncode,
             error_code=error_code,
             error_detail=error_detail,
+            patch_fields={"metadata": patch_metadata} if patch_metadata else None,
         )
         run.event_flush_failed = run.event_flush_failed or not ok
         return

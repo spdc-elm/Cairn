@@ -5,6 +5,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+AGENT_CONTEXT_MAX_CONTENT_BYTES = 128 * 1024
+AgentContextKind = Literal["agents_md"]
+
+
 class Settings(BaseModel):
     intent_timeout: int = Field(ge=5)
     reason_timeout: int = Field(ge=5)
@@ -407,6 +411,134 @@ class Artifact(BaseModel):
     created_at: str
 
 
+class AgentContextSummary(BaseModel):
+    kind: AgentContextKind = "agents_md"
+    enabled: bool = False
+    source_template_id: str | None = None
+    source_template_hash: str | None = None
+    content_hash: str | None = None
+    updated_at: str | None = None
+
+
+class AgentContextTemplate(BaseModel):
+    id: str
+    name: str
+    description: str | None = None
+    kind: AgentContextKind = "agents_md"
+    content: str
+    content_hash: str
+    created_at: str
+    updated_at: str
+
+
+class AgentContextTemplateCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    description: str | None = None
+    kind: AgentContextKind = "agents_md"
+    content: str
+
+    @field_validator("name", "content")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+    @field_validator("description")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        return text or None
+
+    @field_validator("content")
+    @classmethod
+    def validate_content_size(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > AGENT_CONTEXT_MAX_CONTENT_BYTES:
+            raise ValueError("content exceeds 128 KiB")
+        return value
+
+
+class AgentContextTemplateUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    description: str | None = None
+    content: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_required_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+    @field_validator("description")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        return text or None
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        if len(text.encode("utf-8")) > AGENT_CONTEXT_MAX_CONTENT_BYTES:
+            raise ValueError("content exceeds 128 KiB")
+        return text
+
+
+class ProjectAgentContext(BaseModel):
+    project_id: str
+    kind: AgentContextKind = "agents_md"
+    enabled: bool
+    source_template_id: str | None = None
+    source_template_hash: str | None = None
+    content: str
+    content_hash: str
+    created_at: str
+    updated_at: str
+
+
+class ProjectAgentContextUpsert(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    kind: AgentContextKind = "agents_md"
+    template_id: str | None = None
+    content: str | None = None
+
+    @field_validator("template_id")
+    @classmethod
+    def validate_template_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        return text or None
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if len(value.encode("utf-8")) > AGENT_CONTEXT_MAX_CONTENT_BYTES:
+            raise ValueError("content exceeds 128 KiB")
+        return value
+
+
 class UploadExecutionArtifactRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -448,6 +580,7 @@ class ProjectMeta(BaseModel):
     allowed_auto_workers: list[str] | None = None
     default_timeout_seconds: int | None = Field(default=None, gt=0)
     default_conclude_timeout_seconds: int | None = Field(default=None, gt=0)
+    agent_context_summary: AgentContextSummary | None = None
 
 
 class ProjectSummary(ProjectMeta):
@@ -488,6 +621,7 @@ class CreateProjectRequest(BaseModel):
     allowed_auto_workers: list[str] | None = None
     default_timeout_seconds: int | None = Field(default=None, gt=0)
     default_conclude_timeout_seconds: int | None = Field(default=None, gt=0)
+    agent_context: ProjectAgentContextUpsert | None = None
 
     @field_validator("title", "origin", "goal")
     @classmethod

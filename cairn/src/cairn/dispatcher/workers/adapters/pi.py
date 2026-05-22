@@ -5,7 +5,7 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from cairn.dispatcher.config import WorkerConfig
-from cairn.dispatcher.workers.base import DriverResult, JsonLineStreamProjector, QuestionCapability, WorkerDriver
+from cairn.dispatcher.workers.base import DriverResult, JsonLineStreamProjector, QuestionCapability, WorkerDriver, WorkerRuntimeContext
 from cairn.shared.worker_events import WorkerEvent, session_event
 
 
@@ -37,7 +37,7 @@ class PiDriver(WorkerDriver):
             enable_tools=False,
         )
 
-    def build_execute(self, worker: WorkerConfig, prompt: str, session: str | None) -> DriverResult:
+    def build_execute(self, worker: WorkerConfig, prompt: str, session: str | None, runtime_context: WorkerRuntimeContext | None = None) -> DriverResult:
         env = worker.env
         argv = [
             "--provider",
@@ -52,9 +52,9 @@ class PiDriver(WorkerDriver):
         if session:
             argv.extend(["--session", session])
         argv.extend(["-p", prompt])
-        return DriverResult(argv=self._wrap_with_models(worker, argv), session=session)
+        return DriverResult(argv=self._wrap_with_models(worker, argv, runtime_context=runtime_context), session=session)
 
-    def build_conclude(self, worker: WorkerConfig, prompt: str, session: str) -> list[str]:
+    def build_conclude(self, worker: WorkerConfig, prompt: str, session: str, runtime_context: WorkerRuntimeContext | None = None) -> list[str]:
         env = worker.env
         argv = [
             "--provider",
@@ -70,7 +70,7 @@ class PiDriver(WorkerDriver):
             "-p",
             prompt,
         ]
-        return self._wrap_with_models(worker, argv)
+        return self._wrap_with_models(worker, argv, runtime_context=runtime_context)
 
     def question_capability(self, worker: WorkerConfig) -> QuestionCapability:
         return QuestionCapability(
@@ -91,9 +91,10 @@ class PiDriver(WorkerDriver):
         mode: str,
         prompt: str,
         source_session: str | None = None,
+        runtime_context: WorkerRuntimeContext | None = None,
     ) -> DriverResult:
         if mode != "fork":
-            return super().build_question(worker, mode=mode, prompt=prompt, source_session=source_session)
+            return super().build_question(worker, mode=mode, prompt=prompt, source_session=source_session, runtime_context=runtime_context)
         if not source_session:
             raise ValueError("fork question requires source_session")
         env = worker.env
@@ -111,7 +112,7 @@ class PiDriver(WorkerDriver):
             "-p",
             prompt,
         ]
-        return DriverResult(argv=self._wrap_with_models(worker, argv), session=None)
+        return DriverResult(argv=self._wrap_with_models(worker, argv, runtime_context=runtime_context), session=None)
 
     def remote_session_kind(self) -> str:
         return "pi_session"
@@ -168,7 +169,14 @@ class PiDriver(WorkerDriver):
     def stream_event_projector(self, execution_id: str) -> "PiStreamProjector":
         return PiStreamProjector(execution_id)
 
-    def _wrap_with_models(self, worker: WorkerConfig, pi_argv: list[str], *, enable_tools: bool = True) -> list[str]:
+    def _wrap_with_models(
+        self,
+        worker: WorkerConfig,
+        pi_argv: list[str],
+        *,
+        enable_tools: bool = True,
+        runtime_context: WorkerRuntimeContext | None = None,
+    ) -> list[str]:
         remote_credentials = not worker.env.get("PI_API_KEY")
         script = (
             'base_dir="${CAIRN_WORKSPACE:-/tmp}"\n'
@@ -194,8 +202,14 @@ class PiDriver(WorkerDriver):
             "--no-skills",
             "--no-prompt-templates",
             "--no-themes",
-            "--no-context-files",
         ]
+        context_enabled = (
+            runtime_context is not None
+            and runtime_context.agent_context_enabled
+            and runtime_context.agent_context_kind == "agents_md"
+        )
+        if not context_enabled:
+            argv.append("--no-context-files")
         if enable_tools:
             argv.extend(["--tools", "read,write,edit,bash,grep,find,ls"])
         wrapped_env = {"CAIRN_PI_REMOTE_CREDENTIALS": "1"} if remote_credentials else {}
@@ -273,7 +287,9 @@ class PiStreamProjector(JsonLineStreamProjector):
         super().__init__(execution_id)
         self._seq = 0
         self._saw_assistant_turn = False
-        self._pending_agent_messages: list[list[dict[str, Any]]] = []
+        self._agent_end_fallback_text: str | None = None
+        self.agent_end_messages_count = 0
+        self.agent_end_messages_omitted_bytes = 0
 
     def project_json_event(self, payload: dict[str, Any]) -> list[WorkerEvent]:
         event_type = payload.get("type")
@@ -310,7 +326,19 @@ class PiStreamProjector(JsonLineStreamProjector):
         if event_type == "agent_end":
             messages = payload.get("messages")
             if isinstance(messages, list):
-                self._pending_agent_messages.append([item for item in messages if isinstance(item, dict)])
+                self.agent_end_messages_count += len(messages)
+                self.agent_end_messages_omitted_bytes += len(json.dumps(messages, ensure_ascii=False).encode("utf-8"))
+                assistant = next(
+                    (
+                        message
+                        for message in reversed(messages)
+                        if isinstance(message, dict) and message.get("role") == "assistant"
+                    ),
+                    None,
+                )
+                text = PiDriver._message_text(assistant)
+                if text:
+                    self._agent_end_fallback_text = text
         if event_type in {"tool_execution_start", "tool_execution_update", "tool_execution_end"}:
             return [
                 WorkerEvent(
@@ -331,19 +359,15 @@ class PiStreamProjector(JsonLineStreamProjector):
         events = super().close()
         if self._saw_assistant_turn:
             return events
-        for messages in reversed(self._pending_agent_messages):
-            assistant = next((message for message in reversed(messages) if message.get("role") == "assistant"), None)
-            text = PiDriver._message_text(assistant)
-            if text:
-                events.append(
-                    WorkerEvent(
-                        event_type="message",
-                        role="assistant",
-                        payload={"text": text, "status": "success", "stream_key": f"{self.execution_id}:pi:text"},
-                        event_key=f"{self.execution_id}:assistant:final",
-                    )
+        if self._agent_end_fallback_text:
+            events.append(
+                WorkerEvent(
+                    event_type="message",
+                    role="assistant",
+                    payload={"text": self._agent_end_fallback_text, "status": "success", "stream_key": f"{self.execution_id}:pi:text"},
+                    event_key=f"{self.execution_id}:assistant:final",
                 )
-                break
+            )
         return events
 
     def _event_key(self, label: str) -> str:

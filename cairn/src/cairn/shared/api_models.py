@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from cairn.server.models import (
+    ProjectAgentContext,
     Intent,
     ProjectDetail,
     ProjectSummary,
@@ -12,6 +13,7 @@ from cairn.server.models import (
 
 __all__ = [
     "Intent",
+    "ProjectAgentContext",
     "ProjectDetail",
     "ProjectSummary",
     "ProviderEndpointPublic",

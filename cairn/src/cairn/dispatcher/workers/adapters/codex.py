@@ -10,7 +10,7 @@ from cairn.dispatcher.workers.adapters._curl import (
     expand_env,
     render_curl_command,
 )
-from cairn.dispatcher.workers.base import DriverResult, QuestionCapability, RegexSessionDriver
+from cairn.dispatcher.workers.base import DriverResult, QuestionCapability, RegexSessionDriver, WorkerRuntimeContext
 
 
 class CodexDriver(RegexSessionDriver):
@@ -49,7 +49,7 @@ class CodexDriver(RegexSessionDriver):
             required_executables=self.required_executables(),
         )
 
-    def build_execute(self, worker: WorkerConfig, prompt: str, session: str | None) -> DriverResult:
+    def build_execute(self, worker: WorkerConfig, prompt: str, session: str | None, runtime_context: WorkerRuntimeContext | None = None) -> DriverResult:
         env = worker.env
         return DriverResult(
             argv=[
@@ -76,7 +76,7 @@ class CodexDriver(RegexSessionDriver):
             ]
         )
 
-    def build_conclude(self, worker: WorkerConfig, prompt: str, session: str) -> list[str]:
+    def build_conclude(self, worker: WorkerConfig, prompt: str, session: str, runtime_context: WorkerRuntimeContext | None = None) -> list[str]:
         env = worker.env
         return [
             "codex",

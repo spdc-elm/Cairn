@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import threading
 import time
 from dataclasses import dataclass, field
@@ -11,6 +12,8 @@ from cairn.dispatcher.redaction import redact_text
 from cairn.shared.worker_events import WorkerEvent, message_event, status_event, stream_event
 
 LOG = logging.getLogger(__name__)
+RAW_PREVIEW_TOTAL_BYTES = 16 * 1024
+RAW_PREVIEW_EVENT_BYTES = 4 * 1024
 
 
 @dataclass(slots=True)
@@ -36,6 +39,7 @@ class ExecutionEventSink:
     append_retry_delays: tuple[float, ...] = (0.25, 1.0, 3.0)
     close_timeout_seconds: float = 30.0
     event_projector: Any | None = None
+    raw_ref: dict[str, Any] | None = None
     _lock: Any = field(init=False, repr=False)
     _seq: int = field(default=0, init=False, repr=False)
     _queue: list[WorkerEvent] = field(default_factory=list, init=False, repr=False)
@@ -47,9 +51,11 @@ class ExecutionEventSink:
     _last_successful_flush_at: float | None = field(default=None, init=False, repr=False)
     _oldest_queued_at: float | None = field(default=None, init=False, repr=False)
     _fatal_error: str | None = field(default=None, init=False, repr=False)
+    _raw_preview: "RawPreviewBudgeter" = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
+        self._raw_preview = RawPreviewBudgeter(self.execution_id, raw_ref=self.raw_ref)
 
     @property
     def failed_flushes(self) -> int:
@@ -74,8 +80,9 @@ class ExecutionEventSink:
         if stream not in {"stdout", "stderr"} or not text:
             return
         redacted = redact_text(text, self.secrets)
-        self.write_event(stream_event(stream, redacted, event_key=self._event_key(stream)))
         self._write_projected_stream_events(stream, redacted)
+        for payload in self._raw_preview.preview_events(stream, redacted):
+            self.write_event(WorkerEvent(event_type=stream, payload=payload, event_key=self._event_key(stream)))
 
     def write_event(self, event: WorkerEvent) -> None:
         if self._fatal_error is not None and event.event_type != "message":
@@ -199,6 +206,7 @@ class ExecutionEventSink:
         patch_fields: dict[str, Any] | None = None,
     ) -> bool:
         self.flush_projector_events()
+        self._write_projected_events(self._raw_preview.close_events())
         if terminal_status is not None:
             if self._fatal_error is not None and terminal_status == "succeeded":
                 terminal_status = "failed"
@@ -317,6 +325,124 @@ class ExecutionEventSink:
             if event.event_type == "message" and event.role == "assistant":
                 self._projected_assistant_messages += 1
             self.write_event(event)
+
+
+@dataclass(slots=True)
+class RawPreviewBudgeter:
+    execution_id: str
+    raw_ref: dict[str, Any] | None = None
+    per_stream_limit: int = RAW_PREVIEW_TOTAL_BYTES
+    per_event_limit: int = RAW_PREVIEW_EVENT_BYTES
+    _persisted: dict[str, int] = field(default_factory=lambda: {"stdout": 0, "stderr": 0})
+    _seen: dict[str, int] = field(default_factory=lambda: {"stdout": 0, "stderr": 0})
+    _omitted: dict[str, int] = field(default_factory=lambda: {"stdout": 0, "stderr": 0})
+    _events_omitted: dict[str, int] = field(default_factory=lambda: {"stdout": 0, "stderr": 0})
+    _sanitised_summary_emitted: dict[str, bool] = field(default_factory=lambda: {"stdout": False, "stderr": False})
+    _seq: int = 0
+
+    def preview_events(self, stream: str, text: str) -> list[dict[str, Any]]:
+        raw_bytes = len(text.encode("utf-8"))
+        self._seen[stream] += raw_bytes
+        sanitised_text = _sanitise_raw_preview_text(text)
+        remaining = self.per_stream_limit - self._persisted[stream]
+        if remaining <= 0:
+            self._omitted[stream] += raw_bytes
+            self._events_omitted[stream] += 1
+            summary = self._sanitised_summary_event(stream, sanitised_text)
+            if summary is not None:
+                return [summary]
+            return []
+        preview_text, preview_bytes, _omitted_preview_bytes = _truncate_utf8(sanitised_text, min(remaining, self.per_event_limit))
+        if not preview_text and raw_bytes:
+            self._omitted[stream] += raw_bytes
+            self._events_omitted[stream] += 1
+            return []
+        self._persisted[stream] += preview_bytes
+        total_omitted = max(0, raw_bytes - preview_bytes)
+        self._omitted[stream] += total_omitted
+        if total_omitted:
+            self._events_omitted[stream] += 1
+        return [
+            {
+                "text": preview_text,
+                "preview": True,
+                "truncated": total_omitted > 0 or self._seen[stream] > self._persisted[stream],
+                "omitted_bytes": self._omitted[stream],
+                "raw_ref": self.raw_ref or {"kind": "execution_metadata", "key": "raw_stream"},
+                "sanitised": preview_text != text,
+            }
+        ]
+
+    def _sanitised_summary_event(self, stream: str, sanitised_text: str) -> dict[str, Any] | None:
+        if self._sanitised_summary_emitted[stream] or "messages_omitted" not in sanitised_text:
+            return None
+        preview_text, preview_bytes, _ = _truncate_utf8(sanitised_text, self.per_event_limit)
+        self._persisted[stream] += preview_bytes
+        self._sanitised_summary_emitted[stream] = True
+        return {
+            "text": preview_text,
+            "preview": True,
+            "truncated": True,
+            "omitted_bytes": self._omitted[stream],
+            "raw_ref": self.raw_ref or {"kind": "execution_metadata", "key": "raw_stream"},
+            "sanitised": True,
+        }
+
+    def close_events(self) -> list[WorkerEvent]:
+        events: list[WorkerEvent] = []
+        for stream in ("stdout", "stderr"):
+            if self._seen[stream] == 0 or self._omitted[stream] == 0:
+                continue
+            self._seq += 1
+            events.append(
+                WorkerEvent(
+                    event_type="metric",
+                    payload={
+                        "metric": "raw_stream_storage",
+                        "stream": stream,
+                        "raw_bytes_seen": self._seen[stream],
+                        "raw_bytes_persisted_to_db": self._persisted[stream],
+                        "raw_events_omitted": self._events_omitted[stream],
+                        "raw_ref": self.raw_ref or {"kind": "execution_metadata", "key": "raw_stream"},
+                    },
+                    event_key=f"{self.execution_id}:raw-storage:{stream}:{self._seq}",
+                )
+            )
+        return events
+
+
+def _truncate_utf8(text: str, limit: int) -> tuple[str, int, int]:
+    data = text.encode("utf-8")
+    if len(data) <= limit:
+        return text, len(data), 0
+    truncated = data[:limit].decode("utf-8", errors="ignore")
+    return truncated, len(truncated.encode("utf-8")), len(data) - len(truncated.encode("utf-8"))
+
+
+def _sanitise_raw_preview_text(text: str) -> str:
+    lines: list[str] = []
+    changed = False
+    for line in text.splitlines(keepends=True):
+        suffix = ""
+        body = line
+        if line.endswith("\n"):
+            body = line[:-1]
+            suffix = "\n"
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            lines.append(line)
+            continue
+        if isinstance(payload, dict) and payload.get("type") == "agent_end" and isinstance(payload.get("messages"), list):
+            messages = payload.pop("messages")
+            encoded = json.dumps(messages, ensure_ascii=False)
+            payload["messages_omitted"] = True
+            payload["messages_count"] = len(messages)
+            payload["messages_omitted_bytes"] = len(encoded.encode("utf-8"))
+            line = json.dumps(payload, ensure_ascii=False, sort_keys=True) + suffix
+            changed = True
+        lines.append(line)
+    return "".join(lines) if changed else text
 
 
 class CompositeRunLogger:

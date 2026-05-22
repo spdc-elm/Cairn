@@ -9,7 +9,7 @@ from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.runtime.cancellation import TaskCancellation
 from cairn.dispatcher.runtime.environments.base import WorkEnvironment
 from cairn.dispatcher.runtime.event_sink import ExecutionEventSink
-from cairn.dispatcher.tasks.common import finish_execution_terminal, run_worker_process, _worker_secrets
+from cairn.dispatcher.tasks.common import finish_execution_terminal, prepare_agent_context_for_execution, run_worker_process, _worker_secrets
 from cairn.dispatcher.workers.registry import get_driver
 from cairn.shared.worker_events import message_event, status_event
 from cairn.shared.api_models import ProjectDetail
@@ -49,29 +49,6 @@ def _run_question_execution_task(
     source_session = execution.get("remote_session_in_id")
     prompt = _prompt_from_execution(execution)
     driver = get_driver(worker.type)
-    try:
-        driver_result = driver.build_question(worker, mode=mode, prompt=prompt, source_session=source_session)
-    except Exception as exc:
-        finish_execution_terminal(
-            client,
-            execution_id,
-            events=[
-                status_event(
-                    "failed",
-                    event_key=f"{execution_id}:status:worker-not-available",
-                    error_code="worker_not_available",
-                    error_detail=str(exc),
-                ).to_api_payload()
-            ],
-            patch={
-                "dispatcher_id": dispatcher_id,
-                "status": "failed",
-                "error_code": "worker_not_available",
-                "error_detail": str(exc),
-            },
-        )
-        return "rejected"
-
     sink = ExecutionEventSink(
         client,
         execution_id,
@@ -81,6 +58,20 @@ def _run_question_execution_task(
     client.patch_execution(execution_id, {"dispatcher_id": dispatcher_id, "status": "running"})
     try:
         handle = environment.prepare_project(project.project.id)
+        runtime_context = prepare_agent_context_for_execution(
+            client,
+            environment,
+            handle,
+            project_id=project.project.id,
+            execution_id=execution_id,
+        )
+        driver_result = driver.build_question(
+            worker,
+            mode=mode,
+            prompt=prompt,
+            source_session=source_session,
+            runtime_context=runtime_context,
+        )
         run = run_worker_process(
             environment,
             handle,
@@ -134,16 +125,19 @@ def _run_question_execution_task(
             )
         )
     terminal_status = "cancelled" if run.cancelled else ("succeeded" if run.returncode == 0 else "failed")
+    patch_fields = {
+        "remote_session_out_kind": session.kind,
+        "remote_session_out_id": session.id,
+        "remote_session_out_status": session.status,
+    }
+    if run.run_log_ref is not None:
+        patch_fields["metadata"] = {"raw_stream": run.run_log_ref}
     closed = sink.close(
         terminal_status=terminal_status,
         returncode=run.returncode,
         error_code="timeout" if run.timed_out else None,
         error_detail=run.cancel_reason,
-        patch_fields={
-            "remote_session_out_kind": session.kind,
-            "remote_session_out_id": session.id,
-            "remote_session_out_status": session.status,
-        },
+        patch_fields=patch_fields,
     )
     if not closed:
         return "error"

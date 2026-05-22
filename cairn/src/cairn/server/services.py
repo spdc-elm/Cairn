@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import json
+import hashlib
 from pathlib import PurePosixPath
 from datetime import datetime, timedelta, timezone
 
@@ -10,6 +11,10 @@ from fastapi import HTTPException
 from cairn.server.models import (
     AppendExecutionEventsRequest,
     Artifact,
+    AgentContextSummary,
+    AgentContextTemplate,
+    AgentContextTemplateCreate,
+    AgentContextTemplateUpdate,
     CreateExecutionRequest,
     ConcludeResponse,
     ExecutionEvent,
@@ -21,6 +26,8 @@ from cairn.server.models import (
     LeaseExecutionRequest,
     PatchExecutionRequest,
     ProjectMeta,
+    ProjectAgentContext,
+    ProjectAgentContextUpsert,
     ProjectReason,
     ProviderEndpointPublic,
     ProviderEndpointSecret,
@@ -43,6 +50,13 @@ def next_project_id(conn: sqlite3.Connection) -> str:
     conn.execute("UPDATE counters SET value = value + 1 WHERE name = 'project'")
     row = conn.execute("SELECT value FROM counters WHERE name = 'project'").fetchone()
     return f"proj_{row['value']:03d}"
+
+
+def next_agent_context_template_id(conn: sqlite3.Connection) -> str:
+    conn.execute("INSERT OR IGNORE INTO counters (name, value) VALUES ('agent_context_template', 0)")
+    conn.execute("UPDATE counters SET value = value + 1 WHERE name = 'agent_context_template'")
+    row = conn.execute("SELECT value FROM counters WHERE name = 'agent_context_template'").fetchone()
+    return f"act_{row['value']:03d}"
 
 
 def _next_scoped_id(
@@ -363,6 +377,7 @@ def project_reason_from_row(row: sqlite3.Row, conn: sqlite3.Connection | None = 
 
 
 def project_meta_from_row(row: sqlite3.Row, environment: WorkEnvironmentPublic | None = None, conn: sqlite3.Connection | None = None) -> ProjectMeta:
+    agent_context_summary = get_project_agent_context_summary(conn, row["id"]) if conn is not None else None
     return ProjectMeta(
         id=row["id"],
         title=row["title"],
@@ -376,7 +391,194 @@ def project_meta_from_row(row: sqlite3.Row, environment: WorkEnvironmentPublic |
         allowed_auto_workers=loads_json_list(row["allowed_auto_workers_json"] if "allowed_auto_workers_json" in row.keys() else None),
         default_timeout_seconds=row["default_timeout_seconds"] if "default_timeout_seconds" in row.keys() else None,
         default_conclude_timeout_seconds=row["default_conclude_timeout_seconds"] if "default_conclude_timeout_seconds" in row.keys() else None,
+        agent_context_summary=agent_context_summary,
     )
+
+
+def compute_agent_context_hash(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def agent_context_template_from_row(row: sqlite3.Row) -> AgentContextTemplate:
+    return AgentContextTemplate(
+        id=row["id"],
+        name=row["name"],
+        description=row["description"],
+        kind=row["kind"],
+        content=row["content"],
+        content_hash=row["content_hash"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def project_agent_context_from_row(row: sqlite3.Row) -> ProjectAgentContext:
+    return ProjectAgentContext(
+        project_id=row["project_id"],
+        kind=row["kind"],
+        enabled=bool(row["enabled"]),
+        source_template_id=row["source_template_id"],
+        source_template_hash=row["source_template_hash"],
+        content=row["content"],
+        content_hash=row["content_hash"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def agent_context_summary_from_row(row: sqlite3.Row) -> AgentContextSummary:
+    return AgentContextSummary(
+        kind=row["kind"],
+        enabled=bool(row["enabled"]),
+        source_template_id=row["source_template_id"],
+        source_template_hash=row["source_template_hash"],
+        content_hash=row["content_hash"],
+        updated_at=row["updated_at"],
+    )
+
+
+def list_agent_context_templates(conn: sqlite3.Connection) -> list[AgentContextTemplate]:
+    rows = conn.execute("SELECT * FROM agent_context_templates ORDER BY updated_at DESC, id").fetchall()
+    return [agent_context_template_from_row(row) for row in rows]
+
+
+def get_agent_context_template_or_404(conn: sqlite3.Connection, template_id: str) -> AgentContextTemplate:
+    row = conn.execute("SELECT * FROM agent_context_templates WHERE id = ?", (template_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "Agent context template not found")
+    return agent_context_template_from_row(row)
+
+
+def create_agent_context_template(conn: sqlite3.Connection, body: AgentContextTemplateCreate) -> AgentContextTemplate:
+    now = utcnow()
+    template_id = next_agent_context_template_id(conn)
+    content_hash = compute_agent_context_hash(body.content)
+    conn.execute(
+        """
+        INSERT INTO agent_context_templates (id, name, description, kind, content, content_hash, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (template_id, body.name, body.description, body.kind, body.content, content_hash, now, now),
+    )
+    return get_agent_context_template_or_404(conn, template_id)
+
+
+def update_agent_context_template(conn: sqlite3.Connection, template_id: str, body: AgentContextTemplateUpdate) -> AgentContextTemplate:
+    current = get_agent_context_template_or_404(conn, template_id)
+    fields = body.model_fields_set
+    updates: list[str] = []
+    params: list[object] = []
+    if "name" in fields:
+        updates.append("name = ?")
+        params.append(body.name)
+    if "description" in fields:
+        updates.append("description = ?")
+        params.append(body.description)
+    if "content" in fields:
+        content = body.content if body.content is not None else current.content
+        updates.append("content = ?")
+        params.append(content)
+        updates.append("content_hash = ?")
+        params.append(compute_agent_context_hash(content))
+    if updates:
+        updates.append("updated_at = ?")
+        params.append(utcnow())
+        params.append(template_id)
+        conn.execute(f"UPDATE agent_context_templates SET {', '.join(updates)} WHERE id = ?", tuple(params))
+    return get_agent_context_template_or_404(conn, template_id)
+
+
+def delete_agent_context_template(conn: sqlite3.Connection, template_id: str) -> None:
+    get_agent_context_template_or_404(conn, template_id)
+    conn.execute("DELETE FROM agent_context_templates WHERE id = ?", (template_id,))
+
+
+def get_project_agent_context(conn: sqlite3.Connection, project_id: str, *, kind: str = "agents_md") -> ProjectAgentContext | None:
+    get_project_or_404(conn, project_id)
+    row = conn.execute(
+        "SELECT * FROM project_agent_contexts WHERE project_id = ? AND kind = ?",
+        (project_id, kind),
+    ).fetchone()
+    return project_agent_context_from_row(row) if row is not None else None
+
+
+def get_project_agent_context_summary(conn: sqlite3.Connection | None, project_id: str) -> AgentContextSummary | None:
+    if conn is None:
+        return None
+    row = conn.execute(
+        "SELECT * FROM project_agent_contexts WHERE project_id = ? AND kind = 'agents_md'",
+        (project_id,),
+    ).fetchone()
+    return agent_context_summary_from_row(row) if row is not None else None
+
+
+def upsert_project_agent_context(conn: sqlite3.Connection, project_id: str, body: ProjectAgentContextUpsert) -> ProjectAgentContext:
+    get_project_or_404(conn, project_id)
+    template = None
+    if body.template_id:
+        template = get_agent_context_template_or_404(conn, body.template_id)
+    content = body.content
+    if content is None and template is not None:
+        content = template.content
+    content = content or ""
+    if body.enabled and not content.strip():
+        raise HTTPException(400, "Enabled agent context requires non-empty content")
+    if len(content.encode("utf-8")) > 128 * 1024:
+        raise HTTPException(400, "Agent context content exceeds 128 KiB")
+    now = utcnow()
+    content_hash = compute_agent_context_hash(content)
+    source_template_id = template.id if template is not None else None
+    source_template_hash = template.content_hash if template is not None else None
+    existing = conn.execute(
+        "SELECT * FROM project_agent_contexts WHERE project_id = ? AND kind = ?",
+        (project_id, body.kind),
+    ).fetchone()
+    if existing is None:
+        conn.execute(
+            """
+            INSERT INTO project_agent_contexts (
+                project_id, kind, enabled, source_template_id, source_template_hash,
+                content, content_hash, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                project_id,
+                body.kind,
+                1 if body.enabled else 0,
+                source_template_id,
+                source_template_hash,
+                content,
+                content_hash,
+                now,
+                now,
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE project_agent_contexts
+            SET enabled = ?,
+                source_template_id = ?,
+                source_template_hash = ?,
+                content = ?,
+                content_hash = ?,
+                updated_at = ?
+            WHERE project_id = ? AND kind = ?
+            """,
+            (
+                1 if body.enabled else 0,
+                source_template_id,
+                source_template_hash,
+                content,
+                content_hash,
+                now,
+                project_id,
+                body.kind,
+            ),
+        )
+    result = get_project_agent_context(conn, project_id, kind=body.kind)
+    assert result is not None
+    return result
 
 
 def environment_row_to_public(
@@ -973,26 +1175,28 @@ def _question_execution_claim_identity(
         environment_id = source["environment_id"] or project["environment_id"] or environment_ids[0]
         if environment_id not in environment_ids:
             return None
+        environment = get_environment_or_404(conn, environment_id) if environment_id else None
         return {
             "worker_name": worker_name,
             "worker_type": source["worker_type"],
             "environment_id": environment_id,
             "endpoint_id": source["endpoint_id"],
             "model_profile_id": source["model_profile_id"],
-            "workspace": source["workspace"],
+            "workspace": source["workspace"] or planned_workspace_for(execution["project_id"], environment),
         }
     worker_name = worker_names[0]
     worker = conn.execute("SELECT * FROM worker_inventory WHERE name = ?", (worker_name,)).fetchone()
     environment_id = project["environment_id"] or environment_ids[0]
     if environment_id not in environment_ids:
         return None
+    environment = get_environment_or_404(conn, environment_id) if environment_id else None
     return {
         "worker_name": worker_name,
         "worker_type": worker["type"] if worker is not None else None,
         "environment_id": environment_id,
         "endpoint_id": worker["endpoint"] if worker is not None else None,
         "model_profile_id": worker["model_profile"] if worker is not None else None,
-        "workspace": None,
+        "workspace": planned_workspace_for(execution["project_id"], environment),
     }
 
 
@@ -1287,7 +1491,8 @@ def patch_execution(conn: sqlite3.Connection, execution_id: str, body: PatchExec
             params.append(getattr(body, model_field))
     if "metadata" in fields:
         updates.append("metadata_json = ?")
-        params.append(dumps_json(body.metadata))
+        merged_metadata = {**(current.metadata or {}), **(body.metadata or {})}
+        params.append(dumps_json(merged_metadata))
     if not updates:
         return current
     updates.append("updated_at = ?")
@@ -1574,8 +1779,10 @@ def _ensure_duplicate_finish(conn: sqlite3.Connection, current: ExecutionRun, bo
         value = getattr(patch, field)
         if value is not None and value != current_value:
             raise HTTPException(409, "Execution already finished with different patch")
-    if patch.metadata is not None and patch.metadata != (current.metadata or {}):
-        raise HTTPException(409, "Execution already finished with different patch")
+    if patch.metadata is not None:
+        merged_metadata = {**(current.metadata or {}), **patch.metadata}
+        if merged_metadata != (current.metadata or {}):
+            raise HTTPException(409, "Execution already finished with different patch")
     for event in body.events:
         if event.event_key is None:
             raise HTTPException(409, "Duplicate finish requires event keys")

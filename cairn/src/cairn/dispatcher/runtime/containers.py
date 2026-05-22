@@ -253,6 +253,13 @@ class ContainerManager:
             output = _decode_exec_output(result.output)
             raise RuntimeError(f"failed to create container directory {path}: {output}")
 
+    def delete_file(self, container_name: str, path: str) -> None:
+        container = self._require_container(container_name)
+        result = container.exec_run(["rm", "-f", path], user="root")
+        if result.exit_code != 0:
+            output = _decode_exec_output(result.output)
+            raise RuntimeError(f"failed to delete container file {path}: {output}")
+
     def exec_chmod_tree(self, container_name: str, path: str) -> None:
         container = self._require_container(container_name)
         result = container.exec_run(["chmod", "-R", "a+rwX", path], user="root")

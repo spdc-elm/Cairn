@@ -19,6 +19,12 @@ class DriverResult:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkerRuntimeContext:
+    agent_context_enabled: bool = False
+    agent_context_kind: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RemoteSessionResult:
     id: str | None
     kind: str | None
@@ -62,11 +68,11 @@ class WorkerDriver(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def build_execute(self, worker: WorkerConfig, prompt: str, session: str | None) -> DriverResult:
+    def build_execute(self, worker: WorkerConfig, prompt: str, session: str | None, runtime_context: WorkerRuntimeContext | None = None) -> DriverResult:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def build_conclude(self, worker: WorkerConfig, prompt: str, session: str) -> list[str]:
+    def build_conclude(self, worker: WorkerConfig, prompt: str, session: str, runtime_context: WorkerRuntimeContext | None = None) -> list[str]:
         raise NotImplementedError
 
     def question_capability(self, worker: WorkerConfig) -> QuestionCapability:
@@ -88,16 +94,17 @@ class WorkerDriver(abc.ABC):
         mode: str,
         prompt: str,
         source_session: str | None = None,
+        runtime_context: WorkerRuntimeContext | None = None,
     ) -> DriverResult:
         capability = self.question_capability(worker)
         if mode not in capability.question_modes:
             raise ValueError(f"question mode not supported by {self.type_name}: {mode}")
         if mode == "fresh_context":
-            return self.build_execute(worker, prompt, self.prepare_session())
+            return self.build_execute(worker, prompt, self.prepare_session(), runtime_context=runtime_context)
         if mode == "resume":
             if not source_session:
                 raise ValueError("resume question requires source_session")
-            return DriverResult(argv=self.build_conclude(worker, prompt, source_session), session=source_session)
+            return DriverResult(argv=self.build_conclude(worker, prompt, source_session, runtime_context=runtime_context), session=source_session)
         raise ValueError(f"question mode not implemented by {self.type_name}: {mode}")
 
     def extract_session(self, session: str | None, stdout: str, stderr: str) -> str | None:

@@ -222,6 +222,11 @@ class SshEnvironment:
         result = self._remote_run(["cat", path], timeout=10, check=True)
         return result.stdout
 
+    def delete_file(self, handle: EnvironmentHandle, path: str) -> None:
+        if not self.is_path_in_workspace(handle, path):
+            raise RuntimeError(f"refusing to delete outside ssh workspace: {path}")
+        self._remote_run(["rm", "-f", path], timeout=10, check=False)
+
     def exists(self, handle: EnvironmentHandle, path: str) -> bool:
         if not self.is_path_in_workspace(handle, path):
             return False

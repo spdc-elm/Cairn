@@ -22,6 +22,7 @@ from cairn.dispatcher.tasks.common import (
     finish_deferred_worker_process,
     finish_execution_terminal,
     flush_deferred_worker_process_events,
+    prepare_agent_context_for_execution,
     project_allows_conclude_fallback,
     preview,
     record_remote_session,
@@ -187,8 +188,15 @@ def run_explore_task(
             },
         )
 
+        runtime_context = prepare_agent_context_for_execution(
+            client,
+            environment,
+            handle,
+            project_id=project.project.id,
+            execution_id=execution_id,
+        )
         session = driver.prepare_session()
-        execute = driver.build_execute(worker, prompt, session)
+        execute = driver.build_execute(worker, prompt, session, runtime_context=runtime_context)
         session = execute.session
         execute_started = time.perf_counter()
         first = _run_process(
@@ -581,7 +589,14 @@ def _try_conclude_fallback(
             "report_path": report_path,
         },
     )
-    conclude_argv = driver.build_conclude(worker, prompt, session)
+    runtime_context = prepare_agent_context_for_execution(
+        client,
+        environment,
+        handle,
+        project_id=project_id,
+        execution_id=execution_id,
+    )
+    conclude_argv = driver.build_conclude(worker, prompt, session, runtime_context=runtime_context)
     LOG.info("starting conclude fallback project=%s intent=%s worker=%s", project_id, intent.id, worker.name)
     conclude_started = time.perf_counter()
     result = _run_process(
@@ -599,6 +614,7 @@ def _try_conclude_fallback(
         lease=lease,
         cancellation=None if conclude_requested else cancellation,
         client=client,
+        execution_id=execution_id,
     )
     conclude_ms = int((time.perf_counter() - conclude_started) * 1000)
     session = record_remote_session(client, project_id, result, driver, session)

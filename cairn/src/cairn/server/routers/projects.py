@@ -13,6 +13,8 @@ from cairn.server.models import (
     PatchExecutionRequest,
     ProjectDetail,
     ProjectMeta,
+    ProjectAgentContext,
+    ProjectAgentContextUpsert,
     ProjectSummary,
     ReopenRequest,
     ReopenResponse,
@@ -48,6 +50,8 @@ from cairn.server.services import (
     patch_execution,
     SYSTEM_HEALTHCHECK_PROJECT_ID,
     utcnow,
+    get_project_agent_context as get_project_agent_context_service,
+    upsert_project_agent_context,
     validate_facts_exist,
     validate_goal_not_in_sources,
 )
@@ -159,21 +163,11 @@ def create_project(body: CreateProjectRequest):
                 )
                 hints.append(Hint(id=hid, content=h.content, creator=h.creator, created_at=now))
 
+        if body.agent_context is not None:
+            upsert_project_agent_context(conn, pid, body.agent_context)
+
         return ProjectDetail(
-            project=ProjectMeta(
-                id=pid,
-                title=body.title,
-                status="active",
-                created_at=now,
-                reason=None,
-                environment_id=environment.id,
-                environment=environment,
-                planned_workspace=planned_workspace_for(pid, environment),
-                auto_reason=body.auto_reason,
-                allowed_auto_workers=body.allowed_auto_workers,
-                default_timeout_seconds=body.default_timeout_seconds,
-                default_conclude_timeout_seconds=body.default_conclude_timeout_seconds,
-            ),
+            project=project_meta_from_row(get_project_or_404(conn, pid), environment=environment, conn=conn),
             facts=[
                 Fact(id="origin", title="Origin", description=body.origin),
                 Fact(id="goal", title="Goal", description=body.goal),
@@ -278,6 +272,18 @@ def get_project_graph(project_id: str):
                 ).fetchall()
             ],
         }
+
+
+@router.get("/projects/{project_id}/agent-context", response_model=ProjectAgentContext | None)
+def get_project_agent_context(project_id: str):
+    with get_conn() as conn:
+        return get_project_agent_context_service(conn, project_id)
+
+
+@router.put("/projects/{project_id}/agent-context", response_model=ProjectAgentContext)
+def put_project_agent_context(project_id: str, body: ProjectAgentContextUpsert):
+    with get_conn() as conn:
+        return upsert_project_agent_context(conn, project_id, body)
 
 
 def _project_environment_or_none(conn, environment_id: str | None):

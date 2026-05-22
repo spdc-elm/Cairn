@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from cairn.dispatcher.config import WorkerConfig
-from cairn.dispatcher.workers.base import DriverResult, JsonLineStreamProjector, QuestionCapability, SeedSessionDriver
+from cairn.dispatcher.workers.base import DriverResult, JsonLineStreamProjector, QuestionCapability, SeedSessionDriver, WorkerRuntimeContext
 from cairn.shared.worker_events import WorkerEvent, session_event
 
 
@@ -40,7 +40,7 @@ class ClaudeCodeDriver(SeedSessionDriver):
             "Reply exactly: OK",
         ]
 
-    def build_execute(self, worker: WorkerConfig, prompt: str, session: str | None) -> DriverResult:
+    def build_execute(self, worker: WorkerConfig, prompt: str, session: str | None, runtime_context: WorkerRuntimeContext | None = None) -> DriverResult:
         assert session is not None
         return DriverResult(
             argv=[
@@ -61,7 +61,7 @@ class ClaudeCodeDriver(SeedSessionDriver):
             session=session,
         )
 
-    def build_conclude(self, worker: WorkerConfig, prompt: str, session: str) -> list[str]:
+    def build_conclude(self, worker: WorkerConfig, prompt: str, session: str, runtime_context: WorkerRuntimeContext | None = None) -> list[str]:
         return [
             "claude",
             "--model",
@@ -97,9 +97,10 @@ class ClaudeCodeDriver(SeedSessionDriver):
         mode: str,
         prompt: str,
         source_session: str | None = None,
+        runtime_context: WorkerRuntimeContext | None = None,
     ) -> DriverResult:
         if mode != "fork":
-            return super().build_question(worker, mode=mode, prompt=prompt, source_session=source_session)
+            return super().build_question(worker, mode=mode, prompt=prompt, source_session=source_session, runtime_context=runtime_context)
         if not source_session:
             raise ValueError("fork question requires source_session")
         return DriverResult(

@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>V3.5 / V3.5.2 Final Acceptance</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #d7dde8;
+      --panel: #fff;
+      --accent: #246a73;
+      --ok: #2e7a51;
+      --warn: #9a6418;
+      --danger: #a13b3b;
+      --soft: #eef5f4;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(180deg, rgba(36,106,115,.08), transparent 280px),
+        var(--bg);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }
+    header {
+      min-height: 34vh;
+      padding: 54px min(7vw, 88px) 30px;
+      display: grid;
+      align-content: end;
+      border-bottom: 1px solid var(--line);
+      background:
+        repeating-linear-gradient(90deg, rgba(23,32,51,.045) 0 1px, transparent 1px 76px);
+    }
+    h1 {
+      margin: 0;
+      max-width: 980px;
+      font-size: clamp(34px, 6vw, 68px);
+      line-height: 1;
+      letter-spacing: 0;
+    }
+    .sub {
+      margin-top: 16px;
+      max-width: 900px;
+      color: var(--muted);
+      font-size: 18px;
+    }
+    main { padding: 32px min(7vw, 88px) 72px; }
+    section { max-width: 1180px; margin: 0 auto 30px; }
+    h2 { margin: 0 0 14px; font-size: 22px; letter-spacing: 0; }
+    h3 { margin: 0 0 10px; font-size: 17px; letter-spacing: 0; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .wide { display: grid; grid-template-columns: 1.1fr .9fr; gap: 14px; }
+    .card, .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+    }
+    .card { min-height: 164px; }
+    .card b {
+      display: block;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+    .metric {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .metric div {
+      background: var(--soft);
+      border: 1px solid #cfe0dd;
+      border-radius: 8px;
+      padding: 14px;
+      min-height: 104px;
+    }
+    .metric strong {
+      display: block;
+      font-size: 24px;
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+    .checklist {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    ul { margin: 8px 0 0; padding-left: 20px; }
+    li { margin: 7px 0; }
+    .pass { border-left: 4px solid var(--ok); }
+    .warn { border-left: 4px solid var(--warn); }
+    .fail { border-left: 4px solid var(--danger); }
+    .tag {
+      display: inline-block;
+      margin: 0 8px 8px 0;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+      background: #fff;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .94em;
+      background: #f0f3f7;
+      border-radius: 5px;
+      padding: 1px 5px;
+    }
+    @media (max-width: 920px) {
+      .grid, .wide, .metric, .checklist { grid-template-columns: 1fr; }
+      header { min-height: 28vh; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>最终只验结果</h1>
+    <div class="sub">V3.5 agent context 与 V3.5.2 raw storage 共用一轮 E2E。实现过程由工程侧自行取最优，只要达到这里的可观测效果。</div>
+  </header>
+  <main>
+    <section>
+      <h2>验收口径</h2>
+      <div class="grid">
+        <div class="card pass">
+          <b>AGENTS.md 真生效</b>
+          创建 template，创建 project 时选择并微调 snapshot。执行时远端 workspace 出现 Cairn-managed <code>AGENTS.md</code>，Pi enabled run 不带 <code>--no-context-files</code>，回答包含 context 标记。
+        </div>
+        <div class="card pass">
+          <b>Conversation 功能等价</b>
+          fresh、fork、branch continue、resume 都正常。长流式 320 行首尾可见，terminal status 可见，小 limit cursor 分页也不漏 final assistant。
+        </div>
+        <div class="card pass">
+          <b>DB 不再存 raw 仓库</b>
+          <code>execution_events</code> 只保存 semantic events 与 bounded raw preview/ref。完整 raw JSONL 在 run log/artifact，API 能定位 path/hash/size。
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>必须达到的数值</h2>
+      <div class="metric">
+        <div><strong>&lt; 48 KiB</strong>单 execution 的 DB stdout/stderr payload 总量。</div>
+        <div><strong>&lt; 0.25</strong>大 raw stream 场景下 DB raw persisted / original raw bytes。</div>
+        <div><strong>0</strong>DB 中完整 <code>agent_end.messages</code> 数组。</div>
+        <div><strong>100%</strong>message/tool/session/status semantic events 可分页读回。</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>一轮 E2E 怎么验</h2>
+      <div class="wide">
+        <div class="panel">
+          <h3>主流程</h3>
+          <span class="tag">测试 DB</span>
+          <span class="tag">高端口 server</span>
+          <span class="tag">dispatcher</span>
+          <span class="tag">pentestVM Pi</span>
+          <ul>
+            <li>创建 agent context template，内容要求输出 <code>V35-AGENT-CONTEXT-ACTIVE</code>。</li>
+            <li>创建 project，选择 template 并微调 snapshot。</li>
+            <li>跑 fresh execution，确认 session out、context metadata、远端 <code>AGENTS.md</code>。</li>
+            <li>跑 fork 长输出，要求 <code>V352-LONG-STREAM-001</code> 到 <code>V352-LONG-STREAM-320</code>。</li>
+            <li>跑 branch continue，确认使用 fork branch 最新 session。</li>
+            <li>跑 resume，确认进入 source/main Output，且 fork 内容不污染 main history。</li>
+          </ul>
+        </div>
+        <div class="panel warn">
+          <h3>必须查证据</h3>
+          <ul>
+            <li>API/DB 查 execution metadata：agent context hash/path/status 存在。</li>
+            <li>DB 查 semantic message：包含 context token 与长输出首尾。</li>
+            <li>DB 查 stdout/stderr preview：小于预算，含 omitted/ref，不含完整 messages 数组。</li>
+            <li>run log/artifact 文件存在，size/hash 与 API ref 一致。</li>
+            <li>Raw/Debug 只显示 preview/ref；Conversation 不出现 truncation/debug marker。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>旧 DB 处理</h2>
+      <div class="checklist">
+        <div class="panel pass">
+          <h3>保留什么</h3>
+          <ul>
+            <li>保留当前有价值 project，例如 <code>proj_004</code>。</li>
+            <li>保留 execution、message、tool、session、status semantic events。</li>
+            <li>保留 event id、cursor、seq、event_key，旧 Output/Conversation 还能分页。</li>
+          </ul>
+        </div>
+        <div class="panel warn">
+          <h3>清理什么</h3>
+          <ul>
+            <li>只裁剪旧 <code>stdout</code>/<code>stderr</code> raw payload。</li>
+            <li>先 dry-run，确认 raw bytes 与 top executions。</li>
+            <li>apply 后可 <code>VACUUM</code>，验证 DB file/page count 下降。</li>
+            <li>这是一次性 maintenance，不为旧 raw blob 做长期兼容分支。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>失败判定</h2>
+      <div class="checklist">
+        <div class="panel fail">
+          <h3>不能接受</h3>
+          <ul>
+            <li>回答对了，但远端没有 Cairn-managed <code>AGENTS.md</code>。</li>
+            <li>DB 仍保存完整 Pi <code>agent_end.messages</code>。</li>
+            <li>长输出在 UI 看似完整，但小页 cursor 读不到 final/status。</li>
+            <li>resume 混进 fork history，或 fork 污染 main history。</li>
+          </ul>
+        </div>
+        <div class="panel pass">
+          <h3>通过定义</h3>
+          <ul>
+            <li>一轮 E2E 覆盖 v3.5 与 v3.5.2。</li>
+            <li>功能语义等价，DB raw 增长受控。</li>
+            <li>完整 raw 仍可通过 run log/artifact 取证。</li>
+            <li>旧 DB 可瘦身且 <code>proj_004</code> 仍可用。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
