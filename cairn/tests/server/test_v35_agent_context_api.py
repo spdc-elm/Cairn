@@ -97,6 +97,17 @@ class AgentContextApiTests(unittest.TestCase):
         self.assertIn("/agent-context/templates", paths)
         self.assertIn("/projects/{project_id}/agent-context", paths)
 
+    def test_project_settings_ui_preserves_loaded_agent_context_on_save(self) -> None:
+        html = Path("cairn/src/cairn/server/static/index.html").read_text(encoding="utf-8")
+        self.assertIn("projectAgentContextSnapshot", html)
+        self.assertIn("const savedAgentContext = await this.api('PUT'", html)
+        self.assertIn("this.projectAgentContextSnapshot = {", html)
+        self.assertIn("agent_context_summary: {", html)
+        self.assertIn(
+            "if (!this.projectSettingsForm.agent_context.loaded && !this.projectSettingsForm.agent_context.content && contextSummary.content_hash)",
+            html,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

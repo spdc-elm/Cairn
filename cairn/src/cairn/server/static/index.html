@@ -1672,7 +1672,8 @@ function cairnApp() {
     environmentForm: { id: '', label: '', backend: 'ssh', ssh_command: '', workspace_root: '/home/kali/cairn-workspaces', cleanup: { completed_action: 'stop' }, terminal: { mode: 'none' } },
     endpointForm: { environment_id: '', id: '', type: 'pi', base_url: '', provider_api: 'openai-completions', api_key: '', clear_api_key: false, editing: false },
     newProject: { title: '', origin: '', goal: '', hints: [{ content: '' }], executionMode: 'docker', environment_id: 'docker-default', auto_reason: false, allowed_auto_workers: [], default_timeout_seconds: null, default_conclude_timeout_seconds: null, agent_context: { enabled: false, template_id: '', content: '' } },
-    projectSettingsForm: { auto_reason: false, allowed_auto_workers: [], default_timeout_seconds: null, default_conclude_timeout_seconds: null, agent_context: { enabled: false, content: '', content_hash: '' } },
+    projectSettingsForm: { auto_reason: false, allowed_auto_workers: [], default_timeout_seconds: null, default_conclude_timeout_seconds: null, agent_context: { project_id: '', enabled: false, content: '', content_hash: '', loaded: false } },
+    projectAgentContextSnapshot: null,
     projectSettingsDirty: false,
     projectSettingsSaving: false,
     intentForm: { description: '', requested_worker: '', timeout_override_seconds: null, conclude_timeout_override_seconds: null },
@@ -2185,12 +2186,21 @@ function cairnApp() {
 
     resetProjectSettingsForm() {
       if (!this.project?.project) return;
+      const projectId = this.project.project.id;
+      const summary = this.project.project.agent_context_summary || {};
+      const snapshot = this.projectAgentContextSnapshot?.project_id === projectId ? this.projectAgentContextSnapshot : null;
       this.projectSettingsForm = {
         auto_reason: Boolean(this.project.project.auto_reason),
         allowed_auto_workers: Array.isArray(this.project.project.allowed_auto_workers) ? [...this.project.project.allowed_auto_workers] : [],
         default_timeout_seconds: this.project.project.default_timeout_seconds ?? null,
         default_conclude_timeout_seconds: this.project.project.default_conclude_timeout_seconds ?? null,
-        agent_context: { enabled: false, content: '', content_hash: this.project.project.agent_context_summary?.content_hash || '' },
+        agent_context: {
+          project_id: projectId,
+          enabled: Boolean(snapshot ? snapshot.enabled : summary.enabled),
+          content: snapshot?.content || '',
+          content_hash: snapshot?.content_hash || summary.content_hash || '',
+          loaded: Boolean(snapshot),
+        },
       };
       this.projectSettingsDirty = false;
     },
@@ -2708,11 +2718,14 @@ function cairnApp() {
     async loadProjectAgentContext(id) {
       try {
         const snapshot = await this.api('GET', `/projects/${id}/agent-context`);
-        this.projectSettingsForm.agent_context = {
+        this.projectAgentContextSnapshot = {
+          project_id: id,
           enabled: Boolean(snapshot?.enabled),
           content: snapshot?.content || '',
           content_hash: snapshot?.content_hash || '',
+          loaded: true,
         };
+        this.projectSettingsForm.agent_context = { ...this.projectAgentContextSnapshot };
       } catch(e) { console.error(e); }
     },
 
@@ -5509,6 +5522,10 @@ function cairnApp() {
       if (!this.selectedProjectId || !this.project?.project) return;
       this.projectSettingsSaving = true;
       try {
+        const contextSummary = this.project.project.agent_context_summary || {};
+        if (!this.projectSettingsForm.agent_context.loaded && !this.projectSettingsForm.agent_context.content && contextSummary.content_hash) {
+          await this.loadProjectAgentContext(this.selectedProjectId);
+        }
         const autoReason = Boolean(this.projectSettingsForm.auto_reason);
         const body = {
           auto_reason: autoReason,
@@ -5517,11 +5534,29 @@ function cairnApp() {
           default_conclude_timeout_seconds: this.normalizePositiveNumber(this.projectSettingsForm.default_conclude_timeout_seconds),
         };
         const updated = await this.api('PATCH', `/projects/${this.selectedProjectId}`, body);
-        await this.api('PUT', `/projects/${this.selectedProjectId}/agent-context`, {
+        const savedAgentContext = await this.api('PUT', `/projects/${this.selectedProjectId}/agent-context`, {
           enabled: Boolean(this.projectSettingsForm.agent_context.enabled),
           content: this.projectSettingsForm.agent_context.content || '',
         });
-        this.project.project = { ...this.project.project, ...updated };
+        this.projectAgentContextSnapshot = {
+          project_id: savedAgentContext.project_id,
+          enabled: Boolean(savedAgentContext.enabled),
+          content: savedAgentContext.content || '',
+          content_hash: savedAgentContext.content_hash || '',
+          loaded: true,
+        };
+        this.project.project = {
+          ...this.project.project,
+          ...updated,
+          agent_context_summary: {
+            kind: savedAgentContext.kind,
+            enabled: Boolean(savedAgentContext.enabled),
+            source_template_id: savedAgentContext.source_template_id || null,
+            source_template_hash: savedAgentContext.source_template_hash || null,
+            content_hash: savedAgentContext.content_hash || '',
+            updated_at: savedAgentContext.updated_at || null,
+          },
+        };
         this.projectSettingsDirty = false;
         this.resetProjectSettingsForm();
         await this.loadProjects();
