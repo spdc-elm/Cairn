@@ -203,7 +203,6 @@ class PiDriver(WorkerDriver):
         )
         argv = [
             "--no-extensions",
-            "--no-skills",
             "--no-prompt-templates",
             "--no-themes",
         ]
@@ -300,6 +299,7 @@ class PiStreamProjector(JsonLineStreamProjector):
         self._seq = 0
         self._saw_assistant_turn = False
         self._agent_end_fallback_text: str | None = None
+        self._tool_event_signatures: dict[str, str] = {}
         self.agent_end_messages_count = 0
         self.agent_end_messages_omitted_bytes = 0
 
@@ -352,16 +352,22 @@ class PiStreamProjector(JsonLineStreamProjector):
                 if text:
                     self._agent_end_fallback_text = text
         if event_type in {"tool_execution_start", "tool_execution_update", "tool_execution_end"}:
+            stream_key = f"{self.execution_id}:tool-call:{payload.get('toolCallId') or payload.get('name') or 'tool'}"
+            tool_payload = {
+                "name": payload.get("toolName") or payload.get("name") or "tool",
+                "status": "error" if payload.get("isError") else ("success" if event_type.endswith("_end") else "running"),
+                "result": payload.get("result"),
+                "args": payload.get("args"),
+                "stream_key": stream_key,
+            }
+            signature = json.dumps(tool_payload, ensure_ascii=False, sort_keys=True, default=str)
+            if self._tool_event_signatures.get(stream_key) == signature:
+                return []
+            self._tool_event_signatures[stream_key] = signature
             return [
                 WorkerEvent(
                     event_type="tool",
-                    payload={
-                        "name": payload.get("toolName") or payload.get("name") or "tool",
-                        "status": "error" if payload.get("isError") else ("success" if event_type.endswith("_end") else "running"),
-                        "result": payload.get("result"),
-                        "args": payload.get("args"),
-                        "stream_key": f"{self.execution_id}:tool-call:{payload.get('toolCallId') or payload.get('name') or 'tool'}",
-                    },
+                    payload=tool_payload,
                     event_key=self._event_key("tool"),
                 )
             ]

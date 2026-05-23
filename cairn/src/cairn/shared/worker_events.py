@@ -21,12 +21,14 @@ class WorkerEvent:
     ts: str | None = None
 
     def to_api_payload(self) -> dict[str, Any]:
+        if self.ts is None:
+            self.ts = utcnow()
         return {
             "event_type": self.event_type,
             "role": self.role,
             "payload": self.payload,
             "event_key": self.event_key,
-            "ts": self.ts or utcnow(),
+            "ts": self.ts,
         }
 
 

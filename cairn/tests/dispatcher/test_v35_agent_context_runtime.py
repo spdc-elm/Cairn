@@ -107,6 +107,21 @@ class AgentContextRuntimeTests(unittest.TestCase):
         self.assertNotIn("--no-context-files", enabled)
         self.assertIn("--no-context-files", healthcheck)
 
+    def test_pi_execute_allows_skills(self) -> None:
+        worker = WorkerConfig(
+            name="pi-test",
+            type="pi",
+            task_types=["explore"],
+            max_running=1,
+            priority=1,
+            env={"PI_MODEL": "gpt-5.4", "PI_BASE_URL": "http://x", "PI_PROVIDER_API": "openai", "PI_API_KEY": "sk"},
+        )
+        driver = PiDriver()
+
+        argv = driver.build_execute(worker, "prompt", None).argv
+
+        self.assertNotIn("--no-skills", argv)
+
     def test_pi_reasoning_defaults_to_medium_and_marks_model_as_reasoning_capable(self) -> None:
         worker = WorkerConfig(
             name="pi-test",

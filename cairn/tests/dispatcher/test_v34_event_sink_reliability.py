@@ -56,6 +56,7 @@ class V34EventSinkReliabilityTests(unittest.TestCase):
 
         self.assertEqual(len(client.append_calls), 2)
         self.assertEqual(client.append_calls[0][0]["event_key"], client.append_calls[1][0]["event_key"])
+        self.assertEqual(client.append_calls[0][0]["ts"], client.append_calls[1][0]["ts"])
         self.assertEqual(client.patch_calls, [])
 
     def test_finish_failure_never_marks_succeeded_and_exposes_failed_patch(self) -> None:

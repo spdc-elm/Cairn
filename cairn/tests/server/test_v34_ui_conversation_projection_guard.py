@@ -45,6 +45,18 @@ class V34UiConversationProjectionGuardTests(unittest.TestCase):
         self.assertIn("events.push(...pageEvents)", helper_block)
         self.assertIn("next === cursor", helper_block)
 
+    def test_tool_lifecycle_events_are_not_compacted_as_stream_replacements(self) -> None:
+        html = HTML.read_text(encoding="utf-8")
+        compact_start = html.index("compactConversationEvents(events)")
+        compact_end = html.index("\n    conversationEventLabel", compact_start)
+        compact_block = html[compact_start:compact_end]
+
+        self.assertIn("canCompactStream", compact_block)
+        self.assertIn("event?.kind === 'message' || event?.kind === 'thinking'", compact_block)
+        self.assertIn("if (canCompactStream && event?.stream_key)", compact_block)
+        self.assertIn("toolCallSignatures", compact_block)
+        self.assertIn("event?.kind === 'tool_call' && event.stream_key", compact_block)
+
 
 if __name__ == "__main__":
     unittest.main()

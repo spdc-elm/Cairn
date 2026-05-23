@@ -3325,12 +3325,19 @@ function cairnApp() {
       const compacted = [];
       const streamIndexes = new Map();
       const messageTextIndexes = new Map();
+      const toolCallSignatures = new Set();
       const terminalStatusByExecution = new Map();
       for (const event of deduped) {
         if (event?.kind === 'run_finished' && event.execution_id && event.status && event.status !== 'running') {
           terminalStatusByExecution.set(event.execution_id, event.status);
         }
-        if (event?.stream_key) {
+        if (event?.kind === 'tool_call' && event.stream_key) {
+          const toolCallSignature = `${event.stream_key}:${event.status || ''}:${event.tool_args_preview || event.text || ''}`;
+          if (toolCallSignatures.has(toolCallSignature)) continue;
+          toolCallSignatures.add(toolCallSignature);
+        }
+        const canCompactStream = event?.kind === 'message' || event?.kind === 'thinking';
+        if (canCompactStream && event?.stream_key) {
           const existing = streamIndexes.get(event.stream_key);
           if (existing !== undefined) {
             const previous = compacted[existing] || {};

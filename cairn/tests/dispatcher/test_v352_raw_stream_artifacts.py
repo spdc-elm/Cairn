@@ -54,6 +54,28 @@ class RawStreamArtifactTests(unittest.TestCase):
         events = projector.close()
         self.assertEqual(events[-1].payload["text"], "final")
 
+    def test_pi_projector_suppresses_duplicate_tool_updates_but_keeps_result(self) -> None:
+        projector = PiStreamProjector("ex001")
+        duplicate = {
+            "type": "tool_execution_update",
+            "toolCallId": "call-1",
+            "toolName": "bash",
+            "args": {"command": "echo hi"},
+        }
+        result = {
+            "type": "tool_execution_end",
+            "toolCallId": "call-1",
+            "toolName": "bash",
+            "result": {"content": [{"type": "text", "text": "hi"}]},
+        }
+
+        events = projector.feed("stdout", "\n".join(json.dumps(item) for item in [duplicate, duplicate, duplicate, result]) + "\n")
+
+        self.assertEqual([event.event_type for event in events], ["tool", "tool"])
+        self.assertEqual(events[0].payload["status"], "running")
+        self.assertEqual(events[1].payload["status"], "success")
+        self.assertEqual(events[1].payload["result"], result["result"])
+
 
 if __name__ == "__main__":
     unittest.main()
