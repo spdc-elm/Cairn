@@ -27,6 +27,14 @@ Use this skill after a requirement spec exists or when the user asks to plan fro
    - Phase-based.
    - Each phase must include purpose, scope, steps, tests, acceptance, and review checkpoints.
    - If implementation needs credentials, images, ports, services, environment, or human decisions, list them and ask the user during planning.
+4. Run fresh-context independent review before finalizing:
+   - Classify the work before spawning reviewers: `simple` requires 2 reviewers; `cross-module-or-protocol` requires 3+; `architecture-or-runtime` requires 4+ when the change is both core-architecture-impacting and high-risk, such as schema/migration, worker/session, Output/Conversation, or runtime workflow changes.
+   - If the host exposes an explicit fresh-context subagent/task-delegation tool, spawn the required number of reviewers. Do not fork the full current context if the tool allows a fresh start; give reviewers the draft plan path, source spec path, architecture SSOT path, relevant source paths, and a focused review brief.
+   - Minimum reviewers: one maintainability/boundary reviewer, and one operability reviewer covering observability, test strategy, rollout, rollback, and failure modes.
+   - Choose extra angles freely by risk, such as sequencing risk, data/API contract, compatibility cleanup, UX, security, performance, or developer ergonomics.
+   - Ask reviewers to evaluate the plan, not rewrite it. They should identify phase-ordering risks, hidden coupling, missing instrumentation, weak tests, ambiguous acceptance, stale compatibility paths, migration gaps, and contradictions with SSOT or repo facts.
+   - Incorporate accepted findings into the Markdown and HTML. If rejecting a substantive finding, briefly record why in the plan's independent review summary.
+   - If subagents are unavailable, state that limitation in the final reply and do the same review angles yourself; do not silently skip the review.
 
 ## Outputs
 
@@ -61,6 +69,8 @@ Use this structure unless the task clearly needs less:
 
 ## Phase 1: ...
 
+## 独立审查摘要
+
 ## 风险与开放问题
 
 ## 最终验收清单
@@ -75,6 +85,7 @@ Rules:
 - Plans that touch core architecture must state whether the architecture SSOT needs updates.
 - Plans that implement a Proposed Architecture Delta must state when the delta is only planned, when it becomes current, and which SSOT sections must be edited after implementation.
 - Prefer deleting unused old compatibility code over preserving it as ambiguous fallback.
+- Include a concise independent review summary: complexity tier, required reviewer count, actual reviewers/angles, fresh-context status, strongest accepted changes, and any important rejected finding with rationale.
 
 ## HTML Presentation
 

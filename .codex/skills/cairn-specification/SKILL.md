@@ -26,6 +26,14 @@ Use this skill when shaping a Cairn requirement before implementation. The requi
    - Reference the architecture SSOT in the spec basis when the feature touches core architecture.
    - If the spec changes architecture, add a `Proposed Architecture Delta` section. Do not rewrite the SSOT main body as if the target is already implemented.
    - If the user confirms the refactor spec and future agents need to plan from it, add or request a matching `Pending Architecture Delta` marker in `docs/architecture/cairn-architecture-ssot.md`.
+4. Run fresh-context independent review before finalizing:
+   - Classify the work before spawning reviewers: `simple` requires 2 reviewers; `cross-module-or-protocol` requires 3+; `architecture-or-runtime` requires 4+ when the change is both core-architecture-impacting and high-risk, such as schema/migration, worker/session, Output/Conversation, or runtime workflow changes.
+   - If the host exposes an explicit fresh-context subagent/task-delegation tool, spawn the required number of reviewers. Do not fork the full current context if the tool allows a fresh start; give reviewers the draft spec path, architecture SSOT path, relevant source paths, and a focused review brief.
+   - Minimum reviewer angles: one maintainability/boundary reviewer, and one operability reviewer covering observability, testability, rollout, rollback/downgrade, migration/cleanup, and failure modes.
+   - Choose extra angles freely by risk, such as data model, compatibility cleanup, UX, security, performance, or product scope.
+   - Ask reviewers to evaluate the spec, not rewrite it. They should identify unclear requirements, unnecessary coupling/entities, missing observability, weak acceptance criteria, hidden migration costs, and contradictions with SSOT or repo facts.
+   - Incorporate accepted findings into the Markdown and HTML. If rejecting a substantive finding, briefly record why in the spec's independent review summary.
+   - If subagents are unavailable, state that limitation in the final reply and do the same review angles yourself; do not silently skip the review.
 
 ## Outputs
 
@@ -70,7 +78,9 @@ Use this structure unless the task clearly needs less:
 
 ## 10. 验收标准
 
-## 11. 待确认问题
+## 11. 独立审查摘要
+
+## 12. 待确认问题
 ```
 
 Rules:
@@ -83,6 +93,7 @@ Rules:
 - Do not make future architecture look current. Current facts live in the SSOT main body; planned changes live in Proposed/Pending deltas until implemented.
 - If requirements imply changing the architecture SSOT, list that as a key decision point instead of silently drifting.
 - If old compatibility code is unnecessary and likely to mislead future implementation, mention cleanup as a requirement or non-goal boundary.
+- Include a concise independent review summary: complexity tier, required reviewer count, actual reviewers/angles, fresh-context status, strongest accepted changes, and any important rejected finding with rationale.
 
 ## HTML Presentation
 
