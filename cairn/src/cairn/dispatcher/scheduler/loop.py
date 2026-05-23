@@ -378,6 +378,14 @@ class DispatcherLoop:
     def _dispatch_initial_project(self, project: ProjectDetail, environment: WorkEnvironment) -> bool:
         intent = self._get_bootstrap_intent(project)
         if intent is None:
+            if not project.project.auto_reason:
+                self._log_changed(
+                    f"project:{project.project.id}:skip:bootstrap_auto_disabled",
+                    logging.DEBUG,
+                    "skip automatic bootstrap project=%s because auto_reason is disabled",
+                    project.project.id,
+                )
+                return False
             intent = self._create_bootstrap_intent(project.project.id)
             if intent is None:
                 return False
@@ -529,7 +537,17 @@ class DispatcherLoop:
         return True
 
     def _dispatch_bootstrap(self, project: ProjectDetail, intent: Intent, environment: WorkEnvironment) -> bool:
-        selection = self._select_worker(project.project.id, "bootstrap", environment.id)
+        selection = self._select_worker(
+            project.project.id,
+            "bootstrap",
+            environment.id,
+            requested_worker=intent.requested_worker,
+            allowed_auto_workers=(
+                project.project.allowed_auto_workers
+                if project.project.auto_reason and not intent.requested_worker
+                else None
+            ),
+        )
         worker = selection.worker
         if worker is None:
             self._log_changed(

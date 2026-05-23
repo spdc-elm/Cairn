@@ -134,6 +134,104 @@ class CommandBlackboardV2SelectionTests(unittest.TestCase):
         self.assertFalse(result)
         self.assertEqual(dispatched, [])
 
+    def test_initial_project_without_auto_reason_does_not_create_bootstrap(self) -> None:
+        loop = self._loop()
+        created = []
+        dispatched = []
+        loop._create_bootstrap_intent = lambda *args: created.append(args) or None
+        loop._dispatch_bootstrap = lambda *args: dispatched.append(args) or True
+        project = SimpleNamespace(
+            project=SimpleNamespace(id="proj_001", auto_reason=False),
+            intents=[],
+        )
+
+        result = loop._dispatch_initial_project(project, SimpleNamespace())
+
+        self.assertFalse(result)
+        self.assertEqual(created, [])
+        self.assertEqual(dispatched, [])
+
+    def test_manual_bootstrap_intent_dispatches_when_auto_reason_disabled(self) -> None:
+        loop = self._loop()
+        created = []
+        dispatched = []
+        loop._create_bootstrap_intent = lambda *args: created.append(args) or None
+        loop._dispatch_bootstrap = lambda *args: dispatched.append(args) or True
+        intent = SimpleNamespace(
+            id="i001",
+            from_=["origin"],
+            to=None,
+            worker=None,
+            creator=BOOTSTRAP_INTENT_CREATOR,
+            description=BOOTSTRAP_INTENT_DESCRIPTION,
+            control_state="normal",
+            created_at="2026-05-19T00:00:00Z",
+        )
+        project = SimpleNamespace(
+            project=SimpleNamespace(id="proj_001", auto_reason=False),
+            intents=[intent],
+        )
+
+        result = loop._dispatch_initial_project(project, SimpleNamespace())
+
+        self.assertTrue(result)
+        self.assertEqual(created, [])
+        self.assertEqual(dispatched[0][1], intent)
+
+    def test_auto_bootstrap_uses_allowed_auto_workers(self) -> None:
+        loop = self._loop()
+        captured = {}
+        loop._select_worker = (
+            lambda project_id, task_type, environment_id, **kwargs: captured.update(
+                {
+                    "project_id": project_id,
+                    "task_type": task_type,
+                    "environment_id": environment_id,
+                    **kwargs,
+                }
+            )
+            or SimpleNamespace(
+                worker=None,
+                blocked_busy=[],
+                blocked_unhealthy=[],
+                blocked_rejected=[],
+            )
+        )
+        project = SimpleNamespace(
+            project=SimpleNamespace(id="proj_001", auto_reason=True, allowed_auto_workers=["beta"]),
+        )
+        intent = SimpleNamespace(id="i001", requested_worker=None)
+
+        result = loop._dispatch_bootstrap(project, intent, SimpleNamespace(id="docker-default"))
+
+        self.assertFalse(result)
+        self.assertEqual(captured["task_type"], "bootstrap")
+        self.assertEqual(captured["allowed_auto_workers"], ["beta"])
+        self.assertIsNone(captured["requested_worker"])
+
+    def test_manual_bootstrap_requested_worker_bypasses_auto_scope(self) -> None:
+        loop = self._loop()
+        captured = {}
+        loop._select_worker = (
+            lambda project_id, task_type, environment_id, **kwargs: captured.update(kwargs)
+            or SimpleNamespace(
+                worker=None,
+                blocked_busy=[],
+                blocked_unhealthy=[],
+                blocked_rejected=[],
+            )
+        )
+        project = SimpleNamespace(
+            project=SimpleNamespace(id="proj_001", auto_reason=False, allowed_auto_workers=["beta"]),
+        )
+        intent = SimpleNamespace(id="i001", requested_worker="alpha")
+
+        result = loop._dispatch_bootstrap(project, intent, SimpleNamespace(id="docker-default"))
+
+        self.assertFalse(result)
+        self.assertEqual(captured["requested_worker"], "alpha")
+        self.assertIsNone(captured["allowed_auto_workers"])
+
     def test_conclude_failure_release_preserves_control_state(self) -> None:
         calls = []
 
