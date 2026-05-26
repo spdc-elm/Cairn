@@ -60,7 +60,7 @@ class V32WorkerRuntimeHealthAvailabilityTests(unittest.TestCase):
         self.assertEqual(worker.runtime_health[0].status, "unhealthy")
         self.assertEqual(worker.runtime_health[0].detail["stderr_preview"], "connection failed")
 
-    def test_unhealthy_source_execution_disables_fork_resume(self) -> None:
+    def test_unhealthy_source_execution_warns_but_does_not_disable_fork_resume(self) -> None:
         source = self._available_source_execution()
         upsert_worker_health(
             WorkerRuntimeHealthUpsertRequest(
@@ -80,13 +80,11 @@ class V32WorkerRuntimeHealthAvailabilityTests(unittest.TestCase):
             )
         )
 
-        with self.assertRaises(HTTPException) as fork_exc:
-            create_branch(self.project_id, CreateBranchRequest(mode="fork", source_execution_id=source.id))
-        with self.assertRaises(HTTPException) as resume_exc:
-            create_branch(self.project_id, CreateBranchRequest(mode="resume", source_execution_id=source.id))
+        fork = create_branch(self.project_id, CreateBranchRequest(mode="fork", source_execution_id=source.id))
+        resume = create_branch(self.project_id, CreateBranchRequest(mode="resume", source_execution_id=source.id))
 
-        self.assertEqual(fork_exc.exception.detail, "worker_environment_unhealthy")
-        self.assertEqual(resume_exc.exception.detail, "worker_environment_unhealthy")
+        self.assertIn("worker_environment_unhealthy", fork.warnings)
+        self.assertIn("worker_environment_unhealthy", resume.warnings)
 
     def test_removed_endpoint_marks_runtime_health_unknown(self) -> None:
         upsert_worker_health(

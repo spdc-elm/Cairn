@@ -53,6 +53,7 @@ class BranchResponse(BaseModel):
     anchor_id: str | None = None
     mode: str
     status: str
+    warnings: list[str] = Field(default_factory=list)
     created_at: str
     updated_at: str
 
@@ -221,7 +222,7 @@ def _branch_row(conn, project_id: str, branch_id: str):
 
 def _branch_response(conn, project_id: str, branch_id: str) -> BranchResponse:
     row = _branch_row(conn, project_id, branch_id)
-    return BranchResponse(**dict(row))
+    return BranchResponse(**dict(row), warnings=_branch_warnings(conn, row))
 
 
 def _session_action(conn, branch) -> str:
@@ -325,12 +326,27 @@ def _check_branch_availability(conn, source, mode: str, requested_worker_name: s
         raise HTTPException(409, unavailable.get("fork") or "fork_unavailable")
     if mode == "resume" and not capability.get("can_resume_session"):
         raise HTTPException(409, unavailable.get("resume") or "resume_unavailable")
-    if _source_identity_unhealthy(conn, source):
-        raise HTTPException(409, "worker_environment_unhealthy")
+
+
+def _branch_warnings(conn, branch) -> list[str]:
+    if branch["mode"] not in {"fork", "resume"} or branch["source_execution_id"] is None:
+        return []
+    source = conn.execute(
+        "SELECT * FROM execution_runs WHERE project_id = ? AND id = ?",
+        (branch["project_id"], branch["source_execution_id"]),
+    ).fetchone()
+    if source is None:
+        return []
+    return ["worker_environment_unhealthy"] if _source_identity_unhealthy(conn, source) else []
 
 
 def _source_identity_unhealthy(conn, source) -> bool:
-    if not source.environment_id or not source.worker_name or not source.worker_type:
+    environment_id = _source_value(source, "environment_id")
+    worker_name = _source_value(source, "worker_name")
+    worker_type = _source_value(source, "worker_type")
+    endpoint_id = _source_value(source, "endpoint_id") or ""
+    model_profile_id = _source_value(source, "model_profile_id") or ""
+    if not environment_id or not worker_name or not worker_type:
         return False
     row = conn.execute(
         """
@@ -343,17 +359,23 @@ def _source_identity_unhealthy(conn, source) -> bool:
           AND model_profile_id = ?
         """,
         (
-            source.environment_id,
-            source.worker_name,
-            source.worker_type,
-            source.endpoint_id or "",
-            source.model_profile_id or "",
+            environment_id,
+            worker_name,
+            worker_type,
+            endpoint_id,
+            model_profile_id,
         ),
     ).fetchone()
     if row is None or row["status"] != "unhealthy":
         return False
     disabled_until = row["disabled_until"]
     return disabled_until is None or disabled_until > utcnow()
+
+
+def _source_value(source, key: str):
+    if hasattr(source, key):
+        return getattr(source, key)
+    return source[key]
     existing = conn.execute(
         """
         SELECT execution_id FROM execution_session_locks

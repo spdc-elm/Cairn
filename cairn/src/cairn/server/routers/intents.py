@@ -11,12 +11,15 @@ from cairn.server.models import (
     Fact,
     HeartbeatRequest,
     Intent,
+    ManualConcludePromptResponse,
+    ManualConcludeRequest,
     RequestConcludeRequest,
     UpdateIntentRequest,
 )
 from cairn.server.services import (
     check_project_active,
     check_project_intent_delete_writable,
+    default_manual_conclusion_source_execution,
     derive_fact_title,
     dumps_json,
     fact_to_model,
@@ -25,10 +28,13 @@ from cairn.server.services import (
     get_releasable_open_intent_or_404,
     intent_to_model,
     lease_execution,
+    loads_json_object,
     next_fact_id,
     next_intent_id,
     patch_execution,
+    project_meta_from_row,
     utcnow,
+    submit_manual_intent_conclusion,
     validate_facts_exist,
     validate_intent_creator_worker,
     validate_goal_not_in_sources,
@@ -207,6 +213,12 @@ def delete_open_intent(project_id: str, intent_id: str):
             raise HTTPException(409, "Only open intents can be deleted")
         if _active_intent_execution(conn, project_id, intent_id) is not None:
             raise HTTPException(409, "Running intents cannot be deleted")
+        history = conn.execute(
+            "SELECT 1 FROM execution_runs WHERE project_id = ? AND intent_id = ? LIMIT 1",
+            (project_id, intent_id),
+        ).fetchone()
+        if history is not None:
+            raise HTTPException(409, "Intent has execution history and cannot be deleted")
         conn.execute(
             "DELETE FROM intents WHERE id = ? AND project_id = ?",
             (intent_id, project_id),
@@ -241,6 +253,53 @@ def request_conclude(project_id: str, intent_id: str, body: RequestConcludeReque
             (intent_id, project_id),
         ).fetchone()
         return intent_to_model(conn, updated, project_id)
+
+
+@router.get(
+    "/projects/{project_id}/intents/{intent_id}/manual-conclude-prompt",
+    response_model=ManualConcludePromptResponse,
+)
+def manual_conclude_prompt(project_id: str, intent_id: str):
+    with get_conn() as conn:
+        check_project_active(conn, project_id)
+        intent = get_intent_or_404(conn, project_id, intent_id)
+        if intent["concluded_fact_id"] is not None:
+            raise HTTPException(409, "Intent already concluded")
+        source = default_manual_conclusion_source_execution(conn, project_id, intent_id)
+        metadata = loads_json_object(source["metadata_json"]) if source is not None else None
+        report_path = metadata.get("report_path") if isinstance(metadata, dict) else None
+        session_available = (
+            source is not None
+            and source["remote_session_out_status"] == "available"
+            and bool(source["remote_session_out_id"])
+        )
+        return ManualConcludePromptResponse(
+            intent_id=intent_id,
+            prompt=_manual_conclude_prompt_text(conn, project_id, intent, source, report_path, session_available),
+            source_execution_id=source["id"] if source is not None else None,
+            source_session_available=session_available,
+            remote_session_kind=source["remote_session_out_kind"] if source is not None else None,
+            remote_session_id=source["remote_session_out_id"] if source is not None else None,
+            remote_session_status=source["remote_session_out_status"] if source is not None else None,
+            report_path=report_path,
+        )
+
+
+@router.post(
+    "/projects/{project_id}/intents/{intent_id}/manual-conclude",
+    response_model=ConcludeResponse,
+)
+def manual_conclude(project_id: str, intent_id: str, body: ManualConcludeRequest):
+    with get_conn() as conn:
+        check_project_active(conn, project_id)
+        return submit_manual_intent_conclusion(
+            conn,
+            project_id,
+            intent_id,
+            actor=body.actor,
+            raw_json=body.raw_json,
+            source_execution_id=body.source_execution_id,
+        )
 
 
 @router.post(
@@ -303,3 +362,64 @@ def _active_intent_execution(conn, project_id: str, intent_id: str):
         """,
         (project_id, intent_id),
     ).fetchone()
+
+
+def _manual_conclude_prompt_text(conn, project_id: str, intent, source, report_path: str | None, session_available: bool) -> str:
+    project = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+    sources = conn.execute(
+        """
+        SELECT f.id, f.title, f.description
+        FROM intent_sources src
+        JOIN facts f ON f.project_id = src.project_id AND f.id = src.fact_id
+        WHERE src.project_id = ? AND src.intent_id = ?
+        ORDER BY src.rowid
+        """,
+        (project_id, intent["id"]),
+    ).fetchall()
+    source_lines = "\n".join(f"- {row['id']}: {row['title'] or row['description']}" for row in sources) or "- none"
+    if session_available:
+        session_hint = (
+            f"Resume the original remote session from execution {source['id']} "
+            f"({source['remote_session_out_kind']}:{source['remote_session_out_id']})."
+        )
+    else:
+        session_hint = "No available remote session is recorded. Use only already-known facts and return JSON if you can conclude."
+    report_rule = (
+        f"Before returning JSON, write or update the Markdown execution report at {report_path}."
+        if report_path
+        else "No report path is available in Cairn. Keep the JSON description short and factual."
+    )
+    return f"""# Manual Conclude
+
+This is a manual conclude phase for Cairn. Stop exploring immediately. Do not continue solving the goal, wait for commands, browse, install tools, or gather new information.
+
+{session_hint}
+
+{report_rule}
+
+Return only one raw JSON object. Do not wrap it in Markdown.
+
+Normal return:
+{{"accepted": true, "data": {{"title": "...", "description": "..."}}}}
+
+Reject only if you cannot honestly conclude from confirmed session facts:
+{{"accepted": false, "reason": "not_enough_confirmed_information"}}
+
+Project:
+- id: {project_id}
+- title: {project['title']}
+- status: {project['status']}
+
+Current intent:
+- id: {intent['id']}
+- description: {intent['description']}
+
+Source facts:
+{source_lines}
+
+Rules:
+- Base the JSON only on information already confirmed before this prompt.
+- `description` must be a confirmed factual conclusion, not a plan or guess.
+- Keep `title` short for graph display.
+- After outputting the JSON, stop.
+"""

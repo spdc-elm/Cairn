@@ -246,6 +246,8 @@ def get_project_graph(project_id: str):
                     "active_execution_id": active["id"] if active is not None else None,
                     "latest_execution_id": latest["id"] if latest is not None else None,
                     "runtime_status": source["status"] if source is not None else None,
+                    "active_worker_name": active["worker_name"] if active is not None else None,
+                    "latest_worker_name": latest["worker_name"] if latest is not None else None,
                     "worker_name": source["worker_name"] if source is not None else None,
                     "last_heartbeat_at": source["last_heartbeat_at"] if source is not None else None,
                 }

@@ -29,7 +29,7 @@ from cairn.server.routers.executions import (
     get_project_execution_events,
 )
 from cairn.server.routers.intents import create_intent
-from cairn.server.routers.projects import create_project
+from cairn.server.routers.projects import create_project, get_project
 
 
 class V32ExecutionApiTests(unittest.TestCase):
@@ -140,6 +140,30 @@ class V32ExecutionApiTests(unittest.TestCase):
                 ),
             )
         self.assertEqual(conflict.exception.status_code, 409)
+
+    def test_project_detail_preserves_terminal_intent_runtime_projection(self) -> None:
+        leased = dispatcher_lease_intent_execution(
+            self.intent.id,
+            LeaseExecutionRequest(
+                project_id=self.project_id,
+                dispatcher_id="disp",
+                worker_name="Human",
+                worker_type="mock",
+                task_type="explore",
+                phase="run",
+            ),
+        )
+        dispatcher_patch_execution(leased.id, PatchExecutionRequest(status="failed", error_detail="lease_expired"))
+
+        detail = get_project(self.project_id)
+        intent = next(item for item in detail.intents if item.id == self.intent.id)
+
+        self.assertIsNone(intent.active_execution_id)
+        self.assertEqual(intent.latest_execution_id, leased.id)
+        self.assertEqual(intent.runtime_status, "failed")
+        self.assertIsNone(intent.active_worker_name)
+        self.assertEqual(intent.latest_worker_name, "Human")
+        self.assertEqual(intent.worker_name, "Human")
 
     def test_conclusion_report_writes_primary_fact_provenance_in_one_transaction(self) -> None:
         execution = create_project_execution(

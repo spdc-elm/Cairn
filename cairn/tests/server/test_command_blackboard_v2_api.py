@@ -18,7 +18,7 @@ from cairn.server.models import (
     UpdateIntentRequest,
 )
 from cairn.server.routers.export import _export_yaml
-from cairn.server.routers.intents import conclude, create_intent, delete_open_intent, heartbeat, request_conclude, update_intent
+from cairn.server.routers.intents import conclude, create_intent, delete_open_intent, heartbeat, release, request_conclude, update_intent
 from cairn.server.routers.projects import create_project, update_fact, update_project
 
 
@@ -125,6 +125,19 @@ class CommandBlackboardV2ApiTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as ctx:
             delete_open_intent(self.project.project.id, intent.id)
         self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_delete_open_intent_with_terminal_execution_history_rejected(self) -> None:
+        intent = create_intent(
+            self.project.project.id,
+            CreateIntentRequest(**{"from": ["origin"], "description": "run", "creator": "human"}),
+        )
+        heartbeat(self.project.project.id, intent.id, HeartbeatRequest(worker="pi"))
+        release(self.project.project.id, intent.id, HeartbeatRequest(worker="pi"))
+
+        with self.assertRaises(HTTPException) as ctx:
+            delete_open_intent(self.project.project.id, intent.id)
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(ctx.exception.detail, "Intent has execution history and cannot be deleted")
 
     def test_request_conclude_and_fact_metadata_export(self) -> None:
         intent = create_intent(

@@ -18,6 +18,7 @@ from cairn.server.models import (
     CreateExecutionRequest,
     ConcludeResponse,
     ExecutionEvent,
+    ExecutionEventAppend,
     ExecutionConclusionReportRequest,
     ExecutionRun,
     FinishExecutionRequest,
@@ -38,6 +39,7 @@ from cairn.server.models import (
     WorkEnvironmentUpsert,
 )
 from cairn.shared.endpoints import normalize_provider_base_url
+from cairn.shared.conclusion_payloads import parse_manual_conclusion_payload
 
 SYSTEM_HEALTHCHECK_PROJECT_ID = "__system_healthchecks__"
 TERMINAL_EXECUTION_STATUSES = {"succeeded", "failed", "cancelled"}
@@ -287,6 +289,7 @@ def intent_to_model(conn: sqlite3.Connection, row: sqlite3.Row, project_id: str)
     ).fetchall()
     active = _latest_intent_execution(conn, project_id, row["id"], active_only=True)
     latest = active or _latest_intent_execution(conn, project_id, row["id"])
+    source = active or latest
     return Intent(
         id=row["id"],
         **{"from": [s["fact_id"] for s in sources]},
@@ -294,6 +297,12 @@ def intent_to_model(conn: sqlite3.Connection, row: sqlite3.Row, project_id: str)
         description=row["description"],
         creator=row["creator"],
         worker=latest["worker_name"] if latest is not None else (row["worker"] if _row_has(row, "worker") else None),
+        active_execution_id=active["id"] if active is not None else None,
+        latest_execution_id=latest["id"] if latest is not None else None,
+        runtime_status=source["status"] if source is not None else None,
+        active_worker_name=active["worker_name"] if active is not None else None,
+        latest_worker_name=latest["worker_name"] if latest is not None else None,
+        worker_name=source["worker_name"] if source is not None else None,
         requested_worker=row["requested_worker"] if _row_has(row, "requested_worker") else None,
         timeout_override_seconds=row["timeout_override_seconds"] if _row_has(row, "timeout_override_seconds") else None,
         conclude_timeout_override_seconds=row["conclude_timeout_override_seconds"] if _row_has(row, "conclude_timeout_override_seconds") else None,
@@ -301,7 +310,7 @@ def intent_to_model(conn: sqlite3.Connection, row: sqlite3.Row, project_id: str)
         control_requested_at=latest["control_requested_at"] if latest is not None else (row["control_requested_at"] if _row_has(row, "control_requested_at") else None),
         control_requested_by=None,
         control_reason=latest["control_reason"] if latest is not None else (row["control_reason"] if _row_has(row, "control_reason") else None),
-        last_heartbeat_at=latest["last_heartbeat_at"] if latest is not None else (row["last_heartbeat_at"] if _row_has(row, "last_heartbeat_at") else None),
+        last_heartbeat_at=source["last_heartbeat_at"] if source is not None else (row["last_heartbeat_at"] if _row_has(row, "last_heartbeat_at") else None),
         created_at=row["created_at"],
         concluded_at=row["concluded_at"],
     )
@@ -1592,6 +1601,215 @@ def submit_execution_conclusion_report(
         (fact_id, execution.project_id),
     ).fetchone()
     return ConcludeResponse(fact=fact_to_model(fact), intent=intent_to_model(conn, updated_intent, execution.project_id))
+
+
+def submit_manual_intent_conclusion(
+    conn: sqlite3.Connection,
+    project_id: str,
+    intent_id: str,
+    *,
+    actor: str,
+    raw_json: str,
+    source_execution_id: str | None = None,
+) -> ConcludeResponse:
+    intent = get_intent_or_404(conn, project_id, intent_id)
+    if _intent_result_fact_id(intent) is not None:
+        raise HTTPException(409, "Intent already has a primary result fact")
+    try:
+        fact_data = parse_manual_conclusion_payload(raw_json)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    source_execution = _manual_conclusion_source_execution(conn, project_id, intent_id, source_execution_id)
+    now = utcnow()
+    fact_id = next_fact_id(conn, project_id)
+    title = fact_data["title"] or derive_fact_title(fact_data["description"], fact_id)
+    metadata = {
+        "source": "manual_conclude_import",
+        "actor": actor,
+        "source_execution_id": source_execution["id"] if source_execution is not None else None,
+        "raw_json": raw_json,
+    }
+    conn.execute(
+        """
+        INSERT INTO facts (
+            id, project_id, kind, status, title, description, metadata_json,
+            produced_by_execution_id, produced_by_intent_id, created_at, updated_at
+        ) VALUES (?, ?, 'fact', 'active', ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            fact_id,
+            project_id,
+            title,
+            fact_data["description"],
+            dumps_json(metadata),
+            source_execution["id"] if source_execution is not None else None,
+            intent_id,
+            now,
+            now,
+        ),
+    )
+    result = conn.execute(
+        """
+        UPDATE intents
+        SET concluded_fact_id = ?,
+            concluded_at = ?
+        WHERE id = ?
+          AND project_id = ?
+          AND concluded_fact_id IS NULL
+        """,
+        (fact_id, now, intent_id, project_id),
+    )
+    if result.rowcount != 1:
+        raise HTTPException(409, "Intent already has a primary result fact")
+    if source_execution is not None:
+        conn.execute(
+            """
+            INSERT INTO evidence_links (
+                id, project_id, fact_id, artifact_id, execution_id, relation, created_at
+            ) VALUES (?, ?, ?, NULL, ?, 'derived_from', ?)
+            """,
+            (
+                next_evidence_link_id(conn, project_id),
+                project_id,
+                fact_id,
+                source_execution["id"],
+                now,
+            ),
+        )
+    _terminalize_active_intent_executions_after_manual_conclude(conn, project_id, intent_id, now)
+    updated_intent = conn.execute(
+        "SELECT * FROM intents WHERE id = ? AND project_id = ?",
+        (intent_id, project_id),
+    ).fetchone()
+    fact = conn.execute(
+        "SELECT * FROM facts WHERE id = ? AND project_id = ?",
+        (fact_id, project_id),
+    ).fetchone()
+    return ConcludeResponse(fact=fact_to_model(fact), intent=intent_to_model(conn, updated_intent, project_id))
+
+
+def latest_intent_execution(conn: sqlite3.Connection, project_id: str, intent_id: str) -> sqlite3.Row | None:
+    return _latest_intent_execution(conn, project_id, intent_id)
+
+
+def latest_active_intent_execution(conn: sqlite3.Connection, project_id: str, intent_id: str) -> sqlite3.Row | None:
+    return _latest_intent_execution(conn, project_id, intent_id, active_only=True)
+
+
+def default_manual_conclusion_source_execution(
+    conn: sqlite3.Connection,
+    project_id: str,
+    intent_id: str,
+) -> sqlite3.Row | None:
+    return (
+        _latest_available_intent_execution(conn, project_id, intent_id, active_only=True)
+        or _latest_available_intent_execution(conn, project_id, intent_id)
+        or _latest_intent_execution(conn, project_id, intent_id, active_only=True)
+        or _latest_intent_execution(conn, project_id, intent_id)
+    )
+
+
+def _latest_available_intent_execution(
+    conn: sqlite3.Connection,
+    project_id: str,
+    intent_id: str,
+    *,
+    active_only: bool = False,
+) -> sqlite3.Row | None:
+    status_filter = "AND status IN ('pending', 'leased', 'running')" if active_only else ""
+    return conn.execute(
+        f"""
+        SELECT *
+        FROM execution_runs
+        WHERE project_id = ?
+          AND intent_id = ?
+          AND remote_session_out_status = 'available'
+          AND remote_session_out_id IS NOT NULL
+          AND remote_session_out_id != ''
+          {status_filter}
+        ORDER BY
+          CASE status WHEN 'running' THEN 0 WHEN 'leased' THEN 1 WHEN 'pending' THEN 2 ELSE 3 END,
+          COALESCE(updated_at, created_at) DESC,
+          created_at DESC
+        LIMIT 1
+        """,
+        (project_id, intent_id),
+    ).fetchone()
+
+
+def _manual_conclusion_source_execution(
+    conn: sqlite3.Connection,
+    project_id: str,
+    intent_id: str,
+    source_execution_id: str | None,
+) -> sqlite3.Row | None:
+    if source_execution_id is not None:
+        row = conn.execute(
+            "SELECT * FROM execution_runs WHERE project_id = ? AND id = ?",
+            (project_id, source_execution_id),
+        ).fetchone()
+        if row is None:
+            any_row = conn.execute("SELECT 1 FROM execution_runs WHERE id = ? LIMIT 1", (source_execution_id,)).fetchone()
+            raise HTTPException(404, "Source execution not found" if any_row is None else "Source execution not found")
+        if row["intent_id"] != intent_id:
+            raise HTTPException(400, "Source execution does not belong to intent")
+        return row
+    return default_manual_conclusion_source_execution(conn, project_id, intent_id)
+
+
+def _terminalize_active_intent_executions_after_manual_conclude(
+    conn: sqlite3.Connection,
+    project_id: str,
+    intent_id: str,
+    now: str,
+) -> None:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM execution_runs
+        WHERE project_id = ?
+          AND intent_id = ?
+          AND status IN ('pending', 'leased', 'running')
+        ORDER BY created_at
+        """,
+        (project_id, intent_id),
+    ).fetchall()
+    for row in rows:
+        event_key = f"{row['id']}:status:manual-concluded"
+        append_execution_events(
+            conn,
+            row["id"],
+            AppendExecutionEventsRequest(
+                events=[
+                    ExecutionEventAppend(
+                        event_type="status",
+                        payload={
+                            "status": "cancelled",
+                            "reason": "manual_concluded",
+                            "message": "intent manually concluded by user import",
+                        },
+                        event_key=event_key,
+                        ts=now,
+                    )
+                ]
+            ),
+        )
+        result = conn.execute(
+            """
+            UPDATE execution_runs
+            SET status = 'cancelled',
+                finished_at = COALESCE(finished_at, ?),
+                error_code = 'manual_concluded',
+                error_detail = 'intent manually concluded by user import',
+                updated_at = ?
+            WHERE id = ?
+              AND status IN ('pending', 'leased', 'running')
+            """,
+            (now, now, row["id"]),
+        )
+        if result.rowcount == 1:
+            release_execution_session_lock(conn, row["id"])
 
 
 def upload_execution_artifact(

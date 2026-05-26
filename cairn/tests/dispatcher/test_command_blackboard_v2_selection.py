@@ -178,6 +178,66 @@ class CommandBlackboardV2SelectionTests(unittest.TestCase):
         self.assertEqual(created, [])
         self.assertEqual(dispatched[0][1], intent)
 
+    def test_terminal_bootstrap_worker_projection_does_not_block_redispatch(self) -> None:
+        loop = self._loop()
+        dispatched = []
+        loop._dispatch_bootstrap = lambda *args: dispatched.append(args) or True
+        intent = SimpleNamespace(
+            id="i001",
+            from_=["origin"],
+            to=None,
+            worker="Human",
+            active_execution_id=None,
+            latest_execution_id="ex001",
+            runtime_status="failed",
+            active_worker_name=None,
+            latest_worker_name="Human",
+            worker_name="Human",
+            creator=BOOTSTRAP_INTENT_CREATOR,
+            description=BOOTSTRAP_INTENT_DESCRIPTION,
+            control_state="normal",
+            created_at="2026-05-19T00:00:00Z",
+        )
+        project = SimpleNamespace(
+            project=SimpleNamespace(id="proj_001", auto_reason=False),
+            intents=[intent],
+        )
+
+        result = loop._dispatch_initial_project(project, SimpleNamespace())
+
+        self.assertTrue(result)
+        self.assertEqual(dispatched[0][1], intent)
+
+    def test_active_bootstrap_execution_blocks_redispatch(self) -> None:
+        loop = self._loop()
+        dispatched = []
+        loop._dispatch_bootstrap = lambda *args: dispatched.append(args) or True
+        intent = SimpleNamespace(
+            id="i001",
+            from_=["origin"],
+            to=None,
+            worker="alpha",
+            active_execution_id="ex001",
+            latest_execution_id="ex001",
+            runtime_status="leased",
+            active_worker_name="alpha",
+            latest_worker_name="alpha",
+            worker_name="alpha",
+            creator=BOOTSTRAP_INTENT_CREATOR,
+            description=BOOTSTRAP_INTENT_DESCRIPTION,
+            control_state="normal",
+            created_at="2026-05-19T00:00:00Z",
+        )
+        project = SimpleNamespace(
+            project=SimpleNamespace(id="proj_001", auto_reason=False),
+            intents=[intent],
+        )
+
+        result = loop._dispatch_initial_project(project, SimpleNamespace())
+
+        self.assertFalse(result)
+        self.assertEqual(dispatched, [])
+
     def test_auto_bootstrap_uses_allowed_auto_workers(self) -> None:
         loop = self._loop()
         captured = {}

@@ -33,6 +33,7 @@ UNHEALTHY_RETRY_AFTER_SECONDS = 5
 REJECTED_RETRY_AFTER_SECONDS = 5
 BOOTSTRAP_INTENT_DESCRIPTION = "bootstrap"
 BOOTSTRAP_INTENT_CREATOR = "dispatcher.bootstrap"
+ACTIVE_EXECUTION_STATUSES = {"pending", "leased", "running"}
 
 
 @dataclass(slots=True)
@@ -323,7 +324,7 @@ class DispatcherLoop:
             intent
             for intent in project.intents
             if intent.to is None
-            and intent.worker is None
+            and not self._intent_has_active_execution(intent)
             and intent.id not in running_intent_ids
             and intent.control_state == "normal"
             and not self._is_bootstrap_intent(intent)
@@ -397,14 +398,14 @@ class DispatcherLoop:
                 project.project.id,
             )
             return False
-        if intent.worker is not None:
+        if self._intent_has_active_execution(intent):
             self._log_changed(
                 f"project:{project.project.id}:skip:bootstrap_claimed",
                 logging.DEBUG,
-                "skip bootstrap project=%s because bootstrap intent=%s is already claimed by %s",
+                "skip bootstrap project=%s because bootstrap intent=%s has active execution worker=%s",
                 project.project.id,
                 intent.id,
-                intent.worker,
+                self._intent_active_worker_name(intent),
             )
             return False
         if intent.control_state != "normal":
@@ -952,6 +953,21 @@ class DispatcherLoop:
     def _project_open_intent_count(self, project: ProjectDetail) -> int:
         return sum(1 for intent in project.intents if intent.to is None)
 
+    def _intent_has_active_execution(self, intent: Intent) -> bool:
+        return bool(
+            getattr(intent, "active_execution_id", None)
+            and getattr(intent, "runtime_status", None) in ACTIVE_EXECUTION_STATUSES
+        )
+
+    def _intent_active_worker_name(self, intent: Intent) -> str | None:
+        if not self._intent_has_active_execution(intent):
+            return None
+        return (
+            getattr(intent, "active_worker_name", None)
+            or getattr(intent, "worker_name", None)
+            or getattr(intent, "worker", None)
+        )
+
     def _is_bootstrap_intent(self, intent: Intent) -> bool:
         return (
             intent.description == BOOTSTRAP_INTENT_DESCRIPTION
@@ -966,7 +982,7 @@ class DispatcherLoop:
             return None
         if len(intents) > 1:
             LOG.warning("project has multiple bootstrap intents project=%s intents=%s", project.project.id, [intent.id for intent in intents])
-        intents.sort(key=lambda intent: (intent.worker is not None, intent.created_at, intent.id))
+        intents.sort(key=lambda intent: (self._intent_has_active_execution(intent), intent.created_at, intent.id))
         return intents[0]
 
     def _is_initial_project(self, project: ProjectDetail) -> bool:

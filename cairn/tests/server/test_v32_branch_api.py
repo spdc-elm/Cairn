@@ -43,7 +43,7 @@ class V32BranchApiTests(unittest.TestCase):
         self.assertEqual(exc.exception.status_code, 409)
         self.assertEqual(exc.exception.detail, "codex_cli_no_headless_fork")
 
-    def test_unhealthy_source_identity_disables_fork_resume(self) -> None:
+    def test_unhealthy_source_identity_warns_without_disabling_fork_resume(self) -> None:
         source = self._source_execution(
             worker_name="pi-main",
             worker_type="pi",
@@ -72,11 +72,9 @@ class V32BranchApiTests(unittest.TestCase):
             )
         )
 
-        with self.assertRaises(HTTPException) as exc:
-            create_branch(self.project_id, CreateBranchRequest(mode="resume", source_execution_id=source.id))
+        branch = create_branch(self.project_id, CreateBranchRequest(mode="resume", source_execution_id=source.id))
 
-        self.assertEqual(exc.exception.status_code, 409)
-        self.assertEqual(exc.exception.detail, "worker_environment_unhealthy")
+        self.assertIn("worker_environment_unhealthy", branch.warnings)
 
     def test_list_branches_filters_by_anchor_for_output_history(self) -> None:
         source = self._source_execution(

@@ -63,6 +63,8 @@ Intent / Branch
 - `event_key` 是 immutable idempotency key。同 execution 同 key 同 canonical event 可重放；同 key 不同 event 必须冲突，不得静默吞掉新内容。
 - `Artifact` 与 run log 文件保存大产物与证据，如 report、完整 raw stream/transcript、scan output、screenshot、文件。完整 raw stdout/stderr/worker JSONL 属于 run log/artifact 文件层，不进入主 DB。
 - `EvidenceLink` 连接 fact 与 artifact/execution，用于表达证据关系。
+- Manual conclude import 是自动 dispatcher conclude 失效后的人工投影路径：用户把外部 resumed worker session 产出的结论 JSON 导入 server，server 校验后写入 primary fact，并用 `produced_by_execution_id`/`EvidenceLink(derived_from)` 记录来源 execution。该路径仍属于 `ExecutionRun -> Fact projection`，不得让 `Intent` 承载 live runtime state。
+- Manual conclude 成功后，仍处于 pending/leased/running 的同 intent executions 必须通过等价 terminal barrier 收尾：先写 terminal status execution event，再把 execution 条件式标记为 terminal。不得通过杀进程或恢复旧 dispatcher 路径来完成人工导入。
 - Output UI、Conversation UI、fork/resume 历史、实时状态，必须从 `execution_runs` 与 `execution_events` 投影。
 
 禁止从 `Fact`、`Intent`、run log 文件、旧 transcript parser 或旧 provenance table 反向拼出实时 Output/Conversation 主视图。
@@ -86,6 +88,8 @@ Intent / Branch
 - `branch_continue`
 
 `branch_continue` 继续该 branch 最新 successful execution 的 available session；只有没有 branch-local successful session 时才回退到 source execution session。
+
+Execution terminal status 与 remote session availability 是两个不同事实。`failed`/`cancelled` execution 只要 `remote_session_out_status='available'` 且 worker capability 支持对应模式，仍可作为 user-initiated fork/resume source。`worker_runtime_health=unhealthy` 可作为 warning/diagnostic 呈现，但不得阻止创建 fork/resume branch；后续 follow-up execution 若实际无法运行，由 dispatcher healthcheck/finish 记录失败。
 
 ## 5. Dispatcher / Server / Driver 边界
 
@@ -132,6 +136,7 @@ Web UI 应只把以下内容作为 Output/Conversation 主路径：
 UI 不得调用旧 `/questions` 或 `/runs/*/transcript` 作为 Output/Conversation 主路径。
 UI Conversation 主路径不得解析 backend-specific stdout JSONL 生成语义 message/tool/session；raw stdout/stderr preview/ref 只属于 Raw/Debug 呈现，完整 raw 需通过 run log/artifact ref 定位。
 Execution events 与 branch timeline 必须使用 endpoint-scoped cursor 完整读取；跨 execution/branch cursor 必须被 server 拒绝，前端不得依赖 project cursor 混用跳读。
+Intent active/running UI state 必须来自 active execution projection，例如 `active_execution_id` 与 `runtime_status in ('pending','leased','running')`。`Intent.worker`、`worker_name` 或 latest terminal worker 只能作为历史/显示兼容字段，不得驱动 Request Conclude、heartbeat、release 等 active-worker action。
 
 实时展示规则：
 

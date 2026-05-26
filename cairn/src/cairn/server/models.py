@@ -28,6 +28,12 @@ class Intent(BaseModel):
     description: str
     creator: str
     worker: str | None = None
+    active_execution_id: str | None = None
+    latest_execution_id: str | None = None
+    runtime_status: str | None = None
+    active_worker_name: str | None = None
+    latest_worker_name: str | None = None
+    worker_name: str | None = None
     requested_worker: str | None = None
     timeout_override_seconds: int | None = Field(default=None, gt=0)
     conclude_timeout_override_seconds: int | None = Field(default=None, gt=0)
@@ -764,6 +770,43 @@ class ConcludeRequest(BaseModel):
         if not text:
             raise ValueError("must not be empty")
         return text
+
+
+class ManualConcludePromptResponse(BaseModel):
+    intent_id: str
+    prompt: str
+    source_execution_id: str | None = None
+    source_session_available: bool = False
+    remote_session_kind: str | None = None
+    remote_session_id: str | None = None
+    remote_session_status: str | None = None
+    report_path: str | None = None
+    expected_json_shape: dict[str, Any] = Field(
+        default_factory=lambda: {"accepted": True, "data": {"title": "...", "description": "..."}}
+    )
+
+
+class ManualConcludeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor: str
+    raw_json: str
+    source_execution_id: str | None = None
+
+    @field_validator("actor", "raw_json", "source_execution_id")
+    @classmethod
+    def validate_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+
+class ManualConcludeParsedPayload(BaseModel):
+    title: str | None = None
+    description: str
 
 
 class ExecutionConclusionReportRequest(BaseModel):

@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>V3.6 Manual Intent Conclude Plan</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #d7dde8;
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --blue: #2563eb;
+      --teal: #0f766e;
+      --amber: #b45309;
+      --rose: #be123c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.55;
+    }
+    header {
+      padding: 36px 40px 24px;
+      background: #fff;
+      border-bottom: 1px solid var(--line);
+    }
+    main {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 28px 24px 56px;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 30px;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 0 0 14px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+    p { margin: 0; color: var(--muted); }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    .pill {
+      border: 1px solid var(--line);
+      background: #f9fafb;
+      padding: 5px 9px;
+      border-radius: 6px;
+      color: #344054;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 16px;
+      margin-top: 16px;
+    }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+    }
+    .span-4 { grid-column: span 4; }
+    .span-5 { grid-column: span 5; }
+    .span-6 { grid-column: span 6; }
+    .span-7 { grid-column: span 7; }
+    .span-12 { grid-column: span 12; }
+    ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+    }
+    li + li { margin-top: 7px; }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .step {
+      min-height: 86px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fbfcfe;
+    }
+    .step strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+    .step span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .tag {
+      display: inline-block;
+      margin-bottom: 8px;
+      font-size: 11px;
+      font-weight: 750;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .blue { color: var(--blue); }
+    .teal { color: var(--teal); }
+    .amber { color: var(--amber); }
+    .rose { color: var(--rose); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 10px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: #344054; background: #f8fafc; }
+    td { color: var(--muted); }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      background: #eef2f7;
+      padding: 2px 4px;
+      border-radius: 4px;
+      color: #263247;
+    }
+    @media (max-width: 860px) {
+      header { padding: 28px 20px 20px; }
+      main { padding: 20px 14px 40px; }
+      .span-4, .span-5, .span-6, .span-7 { grid-column: span 12; }
+      .flow { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>V3.6 Manual Intent Conclude</h1>
+    <p>目标：当 worker/API 卡住或 execution 已 failed 时，用户仍能保住已完成工作：手动 conclude，并继续 fork/resume 可用 session。</p>
+    <div class="meta">
+      <span class="pill">日期 2026-05-23</span>
+      <span class="pill">状态 待执行计划</span>
+      <span class="pill">范围 Server API / Web UI / Conversation policy</span>
+      <span class="pill">约束 不停止 server / dispatcher</span>
+    </div>
+  </header>
+  <main>
+    <div class="grid">
+      <section class="span-7">
+        <h2>核心路径</h2>
+        <div class="flow">
+          <div class="step"><strong>1. Stuck Intent</strong><span>active 或 latest failed execution 仍关联 intent。</span></div>
+          <div class="step"><strong>2. Copy Prompt</strong><span>UI 提供 conclude prompt，用于外部 resume。</span></div>
+          <div class="step"><strong>3. Resume Session</strong><span>AI 停止探索，产报告，返回 JSON。</span></div>
+          <div class="step"><strong>4. Paste JSON</strong><span>Server 解析 wrapped/bare JSON。</span></div>
+          <div class="step"><strong>5. Write Fact</strong><span>atomic claim，fact + evidence，terminal barrier。</span></div>
+        </div>
+      </section>
+      <section class="span-5">
+        <h2>架构边界</h2>
+        <ul>
+          <li><code>Intent</code> 不承载 live worker lease。</li>
+          <li>active state 来自 <code>execution_runs</code> 派生。</li>
+          <li>manual conclude 是用户导入 conclusion，不是 dispatcher 自动路径。</li>
+          <li>failed/cancelled execution 只要 session available，仍可作为 fork/resume source。</li>
+          <li>unhealthy runtime health 只作为 warning，不阻止 user-initiated branch。</li>
+        </ul>
+      </section>
+      <section class="span-4">
+        <span class="tag blue">Phase 0</span>
+        <h2>测试基线</h2>
+        <ul>
+          <li>manual prompt API RED</li>
+          <li>manual JSON import RED</li>
+          <li>failed execution fork/resume RED</li>
+          <li>UI button guard RED</li>
+        </ul>
+      </section>
+      <section class="span-4">
+        <span class="tag teal">Phase 1-2</span>
+        <h2>Server 与 Projection</h2>
+        <ul>
+          <li>新增 manual conclude API</li>
+          <li>shared JSON parser，不 import dispatcher internals</li>
+          <li>写 fact + EvidenceLink provenance</li>
+          <li>active/latest worker 字段拆清</li>
+        </ul>
+      </section>
+      <section class="span-4">
+        <span class="tag amber">Phase 3-4</span>
+        <h2>Conversation 与 UI</h2>
+        <ul>
+          <li>failed + session available 可 fork/resume</li>
+          <li>unhealthy health 显示 warning 但不阻断</li>
+          <li>Manual Conclude modal</li>
+          <li>Copy prompt / paste JSON / preview</li>
+          <li>成功后刷新 graph 与 output</li>
+        </ul>
+      </section>
+      <section class="span-12">
+        <h2>验收矩阵</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>场景</th>
+              <th>预期行为</th>
+              <th>验证</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>active worker 卡住</td>
+              <td>Manual Conclude 可用；JSON 导入后 intent concluded；active execution 通过 terminal event barrier 标记。</td>
+              <td><code>test_v36_manual_intent_conclude_api.py</code></td>
+            </tr>
+            <tr>
+              <td>stale worker 显示</td>
+              <td>不再显示自动 Request Conclude；显示 terminal 状态与 Manual Conclude。</td>
+              <td><code>test_v36_ui_manual_conclude_guard.py</code></td>
+            </tr>
+            <tr>
+              <td>failed execution 有 session</td>
+              <td>Conversation 可继续；fork/resume branch 可创建；unhealthy 只给 warning。</td>
+              <td><code>test_v36_failed_execution_conversation_availability.py</code></td>
+            </tr>
+            <tr>
+              <td>failed execution 无 session</td>
+              <td>fork/resume 仍被拒绝，错误指向 session unavailable。</td>
+              <td><code>test_v32_branch_api.py</code></td>
+            </tr>
+            <tr>
+              <td>真实 UI 路径</td>
+              <td>浏览器实际走 copy prompt -> paste invalid JSON -> paste valid JSON -> conclude，刷新后新 fact 可见。</td>
+              <td>in-app browser / Playwright smoke</td>
+            </tr>
+            <tr>
+              <td>长流式输出</td>
+              <td>API 分页与浏览器均看到首尾 sentinel，刷新/滚动后不丢 final message。</td>
+              <td><code>cairn/tests/e2e_test.md</code> final E2E</td>
+            </tr>
+            <tr>
+              <td>服务保护</td>
+              <td>全程只使用本轮高端口 PID，测试后关闭本轮监听，不重启用户已有 server/dispatcher。</td>
+              <td>端口/PID 前后快照</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+      <section class="span-6">
+        <span class="tag rose">风险</span>
+        <h2>需要守住的点</h2>
+        <ul>
+          <li>不要让 <code>Intent.worker</code> 重新变成 live state。</li>
+          <li>不要把 dispatcher-only conclusion API 暴露成 UI 主路径。</li>
+          <li>manual conclude 与 dispatcher late finish 可能竞争，必须测试 benign 409。</li>
+          <li>duplicate/concurrent manual submit 必须只有一个 primary fact。</li>
+          <li>source execution provenance 必须 same project + same intent。</li>
+        </ul>
+      </section>
+      <section class="span-6">
+        <span class="tag teal">完成定义</span>
+        <h2>Done</h2>
+        <ul>
+          <li>用户可从 UI 完成 copy prompt -> external resume -> paste JSON -> fact。</li>
+          <li>stale worker 不再造成 no-active-execution 的误导路径。</li>
+          <li>failed worker 的 available session 可继续 conversation/fork/resume。</li>
+          <li>完整 E2E 覆盖 API、浏览器 UI、failed conversation 与长流式输出。</li>
+          <li>测试后关闭本轮启动的监听服务，并证明未触碰已有服务。</li>
+          <li>manual fact 有 produced_by 与 evidence link。</li>
+          <li>实现后 SSOT 同步，测试通过。</li>
+        </ul>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

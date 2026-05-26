@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from cairn.dispatcher.output_parser import extract_json_object
+from cairn.shared.conclusion_payloads import extract_json_object, parse_fact_payload
 
 
 def parse_json_output(stdout: str) -> dict[str, Any]:
@@ -59,21 +59,6 @@ def _looks_like_explore_data(payload: dict[str, Any]) -> bool:
     return isinstance(payload, dict) and set(payload) in ({"description"}, {"title", "description"})
 
 
-def _parse_fact_payload(fact: Any, *, field: str = "fact") -> dict[str, str | None]:
-    if not isinstance(fact, dict):
-        raise ValueError(f"{field} is required")
-    description = fact.get("description")
-    if not isinstance(description, str) or not description.strip():
-        raise ValueError(f"{field}.description is required")
-    title = fact.get("title")
-    if title is not None and (not isinstance(title, str) or not title.strip()):
-        raise ValueError(f"{field}.title must be a non-empty string")
-    return {
-        "title": title.strip() if isinstance(title, str) else None,
-        "description": description.strip(),
-    }
-
-
 def validate_reason_payload(
     payload: dict[str, Any], open_intents_empty: bool, max_intents: int,
 ) -> tuple[str, dict[str, Any] | list[dict[str, Any]] | None]:
@@ -127,7 +112,7 @@ def validate_bootstrap_execute_payload(payload: dict[str, Any]) -> tuple[str, di
     if not isinstance(data, dict):
         raise ValueError("accepted must be true or false")
 
-    fact_data = _parse_fact_payload(data.get("fact"))
+    fact_data = parse_fact_payload(data.get("fact"))
     result = {
         "fact_title": fact_data["title"],
         "fact_description": fact_data["description"],
@@ -157,7 +142,7 @@ def validate_bootstrap_conclude_payload(payload: dict[str, Any]) -> tuple[str, d
     extra_keys = set(data) - {"fact", "complete"}
     if extra_keys:
         raise ValueError("unexpected keys in conclude payload")
-    return "fact", _parse_fact_payload(data.get("fact"))
+    return "fact", parse_fact_payload(data.get("fact"))
 
 
 def validate_explore_payload(payload: dict[str, Any]) -> tuple[str, dict[str, str | None] | None]:
@@ -170,5 +155,5 @@ def validate_explore_payload(payload: dict[str, Any]) -> tuple[str, dict[str, st
         data = payload
     if not isinstance(data, dict):
         raise ValueError("accepted must be true or false")
-    fact_data = _parse_fact_payload(data, field="data")
+    fact_data = parse_fact_payload(data, field="data")
     return "fact", fact_data

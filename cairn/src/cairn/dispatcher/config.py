@@ -15,7 +15,7 @@ from cairn.shared.api_models import ProviderEndpointPublic
 from cairn.shared.endpoints import normalize_provider_base_url
 
 
-TaskType = Literal["reason", "explore", "bootstrap"]
+TaskType = Literal["reason", "explore", "bootstrap", "question"]
 WorkerType = Literal["claudecode", "codex", "pi", "mock"]
 CompletedAction = Literal["remove", "stop"]
 EnvironmentBackend = Literal["docker", "ssh"]

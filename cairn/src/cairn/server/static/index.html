@@ -585,10 +585,10 @@
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 10V7.75A3.75 3.75 0 1 1 16.5 7"/><path d="M7.5 10.5h9A1.5 1.5 0 0 1 18 12v6A1.5 1.5 0 0 1 16.5 19.5h-9A1.5 1.5 0 0 1 6 18v-6A1.5 1.5 0 0 1 7.5 10.5Z"/><path d="M12 14.25v1.5"/></svg>
             Release
           </button>
-          <button @click="selectedConcludableOpenIntentRecord() && openConclude(selectedConcludableOpenIntentRecord())" :disabled="!selectedConcludableOpenIntentRecord()"
+          <button @click="selectedManualConcludableOpenIntentRecord() && openConclude(selectedManualConcludableOpenIntentRecord())" :disabled="!selectedManualConcludableOpenIntentRecord()"
             class="px-3 py-1.5 bg-white/90 backdrop-blur border border-teal-200 text-teal-600 rounded-lg shadow-sm text-xs font-medium hover:bg-teal-50 transition disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.25 3H7.5A2.25 2.25 0 0 0 5.25 5.25v13.5A2.25 2.25 0 0 0 7.5 21h9a2.25 2.25 0 0 0 2.25-2.25V8.25L14.25 3Z"/><path d="M14.25 3v5.25h4.5"/><path d="M9 13.5 10.875 15.375 15 11.25"/></svg>
-            Conclude
+            Manual Conclude
           </button>
         </div>
         <div class="flex gap-1.5" x-show="projectCanWriteHints()">
@@ -751,7 +751,7 @@
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">From</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedIntentRecord().from.join(', ')"></span></div>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">To</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedIntentRecord().to || '—'"></span></div>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Creator</span><span class="text-slate-600 text-right break-all" x-text="selectedIntentRecord().creator"></span></div>
-                <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Worker</span><span class="text-slate-600 text-right break-all" x-text="selectedIntentRecord().worker || '—'"></span></div>
+                <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Worker</span><span class="text-slate-600 text-right break-all" x-text="intentWorkerDisplay(selectedIntentRecord())"></span></div>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Requested</span><span class="text-slate-600 text-right break-all" x-text="selectedIntentRecord().requested_worker || '—'"></span></div>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Timeout</span><span class="text-slate-600 text-right break-all" x-text="selectedIntentRecord().timeout_override_seconds || project.project.default_timeout_seconds || '—'"></span></div>
                 <template x-if="selectedIntentRecord().control_state && selectedIntentRecord().control_state !== 'normal'">
@@ -763,9 +763,13 @@
                   <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Concluded</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedIntentRecord().concluded_at)"></span></div>
                 </template>
               </div>
-              <template x-if="selectedIntentRecord().worker && !selectedIntentRecord().to && selectedIntentRecord().control_state !== 'conclude_requested'">
+              <template x-if="selectedAutoConcludableOpenIntentRecord()">
                 <button type="button" @click="requestConcludeSelectedIntent()"
                   class="w-full px-3 py-2 rounded-xl border border-amber-200 bg-amber-50 text-sm font-medium text-amber-700 hover:bg-amber-100 transition">Request Conclude</button>
+              </template>
+              <template x-if="selectedManualConcludableOpenIntentRecord()">
+                <button type="button" @click="openConclude(selectedManualConcludableOpenIntentRecord())"
+                  class="w-full px-3 py-2 rounded-xl border border-teal-200 bg-teal-50 text-sm font-medium text-teal-700 hover:bg-teal-100 transition">Manual Conclude</button>
               </template>
               <template x-if="!selectedIntentRecord().worker && !selectedIntentRecord().to && selectedIntentRecord().control_state !== 'normal'">
                 <button type="button" @click="resumeSelectedIntentControl()"
@@ -862,6 +866,9 @@
 	                </div>
 	                <template x-if="question.error">
 	                  <div class="rounded-lg border border-rose-100 bg-rose-50 px-2 py-1.5 text-xs text-rose-600" x-text="question.error"></div>
+	                </template>
+	                <template x-if="conversation.resolution?.warnings?.length">
+	                  <div class="rounded-lg border border-amber-100 bg-amber-50 px-2 py-1.5 text-xs text-amber-700" x-text="conversation.resolution.warnings.join(' · ')"></div>
 	                </template>
 	                <template x-if="question.activeThread && question.activeThread.branch?.mode !== 'resume'">
 	                  <div x-ref="questionThreadScroll" class="max-h-80 overflow-y-auto rounded-lg border border-slate-100 bg-slate-50/60 p-2 space-y-2">
@@ -1230,20 +1237,46 @@
 
 <!-- Conclude -->
 <div x-show="showConcludeModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @pointerdown.capture="modalPointerDown($event)" @mousedown.capture="modalPointerDown($event)" @click.self="closeModalFromBackdrop($event, 'showConcludeModal')">
-  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-1">Conclude Intent</h3>
-    <p class="text-xs text-slate-400 mb-4 font-mono" x-text="concludeForm.intentId"></p>
-    <div class="space-y-3">
-      <input x-model="concludeForm.title" placeholder="Fact title (optional)" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
-      <textarea x-model="concludeForm.description" placeholder="What did you find? (new fact)" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl p-6 border border-slate-200/60" @click.stop>
+    <h3 class="text-base font-semibold text-slate-700 mb-1">Manual Conclude</h3>
+    <p class="text-xs text-slate-400 mb-4 font-mono" x-text="manualConcludeForm.intentId"></p>
+    <div class="space-y-4">
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
-        Actor: <span class="font-medium text-slate-700" x-text="actorName()"></span>
+        <div>Actor: <span class="font-medium text-slate-700" x-text="actorName()"></span></div>
+        <div class="font-mono text-xs mt-1 break-all">
+          Source:
+          <span x-text="manualConcludeForm.source_execution_id || 'none'"></span>
+          <span x-show="manualConcludeForm.source_session_available">
+            · <span x-text="manualConcludeForm.remote_session_kind"></span>:<span x-text="manualConcludeForm.remote_session_id"></span>
+          </span>
+          <span x-show="!manualConcludeForm.source_session_available">· no available remote session</span>
+        </div>
       </div>
+      <div>
+        <div class="flex items-center justify-between mb-1">
+          <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-widest">Prompt</p>
+          <button type="button" @click="copyManualConcludePrompt()" class="px-2 py-1 rounded-md border border-slate-200 text-xs text-slate-500 hover:bg-slate-50">Copy</button>
+        </div>
+        <textarea readonly x-ref="manualConcludePrompt" x-model="manualConcludeForm.prompt" rows="9" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono bg-slate-50 text-slate-600 focus:outline-none"></textarea>
+      </div>
+      <div>
+        <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-1">JSON</p>
+        <textarea x-model="manualConcludeForm.raw_json" placeholder='{"accepted": true, "data": {"title": "...", "description": "..."}}' rows="5" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      </div>
+      <template x-if="manualConcludePreview().error">
+        <div class="rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-600" x-text="manualConcludePreview().error"></div>
+      </template>
+      <template x-if="!manualConcludePreview().error && manualConcludePreview().description">
+        <div class="rounded-xl border border-teal-100 bg-teal-50 px-3 py-2 text-sm text-teal-700">
+          <div class="font-semibold" x-text="manualConcludePreview().title || 'Untitled fact'"></div>
+          <div class="mt-1 whitespace-pre-wrap break-words" x-text="manualConcludePreview().description"></div>
+        </div>
+      </template>
     </div>
     <div class="flex justify-end gap-2 mt-5">
       <button @click="showConcludeModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Cancel</button>
-      <button @click="concludeIntent()" :disabled="!concludeForm.description"
-        class="px-5 py-2 text-sm bg-teal-500 text-white rounded-xl font-medium hover:bg-teal-600 transition disabled:opacity-30 shadow-sm shadow-teal-200">Conclude</button>
+      <button @click="concludeIntent()" :disabled="manualConcludeForm.loading || !!manualConcludePreview().error || !manualConcludePreview().description"
+        class="px-5 py-2 text-sm bg-teal-500 text-white rounded-xl font-medium hover:bg-teal-600 transition disabled:opacity-30 shadow-sm shadow-teal-200">Import</button>
     </div>
   </div>
 </div>
@@ -1678,7 +1711,7 @@ function cairnApp() {
     projectSettingsSaving: false,
     intentForm: { description: '', requested_worker: '', timeout_override_seconds: null, conclude_timeout_override_seconds: null },
     bootstrapForm: { requested_worker: '' },
-    concludeForm: { title: '', description: '', intentId: '' },
+    manualConcludeForm: { intentId: '', prompt: '', raw_json: '', source_execution_id: null, source_session_available: false, remote_session_kind: null, remote_session_id: null, remote_session_status: null, loading: false },
     factForm: { id: '', title: '', description: '' },
     completeForm: { description: '' },
     hintForm: { content: '' },
@@ -1765,7 +1798,15 @@ function cairnApp() {
       if (body) opts.body = JSON.stringify(body);
       const r = await fetch(path, opts);
       if (r.status === 204) return null;
-      const data = await r.json();
+      const text = await r.text();
+      let data = {};
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = { detail: text };
+        }
+      }
       if (!r.ok) {
         let msg = `HTTP ${r.status}`;
         if (typeof data.detail === 'string') msg = data.detail;
@@ -1912,18 +1953,18 @@ function cairnApp() {
     },
 
     openIntentNodeType(intent) {
-      if (intent.control_state === 'conclude_requested') return intent.worker ? 'concluding' : 'conclude_failed';
-      if (this.isBootstrapIntent(intent)) return intent.worker ? 'bootstrap_running' : 'bootstrap_pending';
-      return intent.worker ? 'in_progress' : 'unclaimed';
+      if (intent.control_state === 'conclude_requested') return this.isIntentActive(intent) ? 'concluding' : 'conclude_failed';
+      if (this.isBootstrapIntent(intent)) return this.isIntentActive(intent) ? 'bootstrap_running' : 'bootstrap_pending';
+      return this.isIntentActive(intent) ? 'in_progress' : 'unclaimed';
     },
 
     openIntentNodeLabel(intent) {
-      if (intent.control_state === 'conclude_requested') return intent.worker ? 'Concluding' : 'Conclude Failed';
+      if (intent.control_state === 'conclude_requested') return this.isIntentActive(intent) ? 'Concluding' : 'Conclude Requested';
       return this.isBootstrapIntent(intent) ? 'Bootstrap' : '?';
     },
 
     openIntentNodeSize(intent) {
-      if (intent.control_state === 'conclude_requested') return { width: intent.worker ? 92 : 104, height: 32 };
+      if (intent.control_state === 'conclude_requested') return { width: this.isIntentActive(intent) ? 92 : 116, height: 32 };
       if (this.isBootstrapIntent(intent)) return { width: 82, height: 30 };
       return { width: 22, height: 22 };
     },
@@ -2798,6 +2839,7 @@ function cairnApp() {
             source_execution_id: executionId,
             available_modes: availability.available_modes,
             unavailable_reasons: availability.unavailable_reasons,
+            warnings: availability.warnings || [],
             provenance: this.executionProvenance(execution),
           };
         }
@@ -2897,10 +2939,12 @@ function cairnApp() {
     },
 
     questionAvailabilityForExecution(execution) {
-      const capability = this.workers.find(worker => worker.name === execution.worker_name)?.question_capability || null;
+      const worker = this.workers.find(worker => worker.name === execution.worker_name) || null;
+      const capability = worker?.question_capability || null;
       const sessionAvailable = execution.remote_session_out_status === 'available' && !!execution.remote_session_out_id;
       const available_modes = [];
       const unavailable_reasons = {};
+      const warnings = [];
       if (sessionAvailable && capability?.can_fork_session) {
         available_modes.push('fork');
       } else {
@@ -2911,7 +2955,9 @@ function cairnApp() {
       } else {
         unavailable_reasons.resume = capability?.unavailable_reasons?.resume || (!sessionAvailable ? 'source_session_unavailable' : 'resume_unavailable');
       }
-      return { available_modes, unavailable_reasons };
+      const health = worker ? this.workerHealthForEnvironment(worker, execution.environment_id || this.project?.project?.environment_id) : null;
+      if (this.workerHealthLabel(health) === 'unhealthy') warnings.push('worker_environment_unhealthy');
+      return { available_modes, unavailable_reasons, warnings };
     },
 
     executionProvenance(execution) {
@@ -5025,30 +5071,40 @@ function cairnApp() {
     selectedActionableOpenIntentRecord() {
       const intent = this.selectedOpenIntentRecord();
       if (!intent || !this.projectIsActive()) return null;
+      if (!this.actorIsWorker()) return null;
       if (intent.control_state && intent.control_state !== 'normal') return null;
-      const actor = this.actorName();
-      return !intent.worker || intent.worker === actor ? intent : null;
+      const activeWorker = this.intentActiveWorkerName(intent);
+      return !activeWorker || activeWorker === this.actorName() ? intent : null;
     },
 
-    selectedConcludableOpenIntentRecord() {
+    selectedAutoConcludableOpenIntentRecord() {
       const intent = this.selectedOpenIntentRecord();
       if (!intent || !this.projectIsActive()) return null;
-      const actor = this.actorName();
-      return !intent.worker || intent.worker === actor ? intent : null;
+      if (intent.control_state === 'conclude_requested') return null;
+      return this.isIntentActive(intent) ? intent : null;
+    },
+
+    selectedManualConcludableOpenIntentRecord() {
+      const intent = this.selectedOpenIntentRecord();
+      if (!intent || !this.projectIsActive()) return null;
+      return intent;
     },
 
     selectedReleasableOpenIntentRecord() {
       const intent = this.selectedOpenIntentRecord();
-      if (!intent?.worker || !this.projectIsActive()) return null;
-      return intent.worker === this.actorName() ? intent : null;
+      if (!intent || !this.projectIsActive() || !this.isIntentActive(intent)) return null;
+      if (!this.actorIsWorker()) return null;
+      return this.intentActiveWorkerName(intent) === this.actorName() ? intent : null;
     },
 
     selectedIntentPrimaryActionLabel() {
       const intent = this.selectedOpenIntentRecord();
       if (!intent) return 'Claim';
+      if (!this.actorIsWorker()) return 'Claim';
       if (intent.control_state && intent.control_state !== 'normal') return 'Paused';
-      if (!intent.worker) return 'Claim';
-      return intent.worker === this.actorName() ? 'Heartbeat' : 'Claimed';
+      const activeWorker = this.intentActiveWorkerName(intent);
+      if (!activeWorker) return 'Claim';
+      return activeWorker === this.actorName() ? 'Heartbeat' : 'Claimed';
     },
 
     getFactRecord(fid) {
@@ -5087,24 +5143,50 @@ function cairnApp() {
 
     intentDotClass(i) {
       if (i.to) return 'bg-teal-400';
-      if (i.control_state === 'conclude_requested') return i.worker ? 'bg-amber-500' : 'bg-rose-500';
+      if (i.control_state === 'conclude_requested') return this.isIntentActive(i) ? 'bg-amber-500' : 'bg-rose-500';
       if (i.runtime_status === 'failed') return 'bg-rose-500';
-      if (this.isBootstrapIntent(i)) return i.worker ? 'bg-orange-400' : 'bg-orange-200';
-      return i.worker ? 'bg-amber-400' : 'bg-slate-300';
+      if (i.runtime_status === 'cancelled') return 'bg-slate-400';
+      if (this.isBootstrapIntent(i)) return this.isIntentActive(i) ? 'bg-orange-400' : 'bg-orange-200';
+      return this.isIntentActive(i) ? 'bg-amber-400' : 'bg-slate-300';
     },
     intentStatusClass(i) {
       if (i.to) return 'text-teal-600';
-      if (i.control_state === 'conclude_requested') return i.worker ? 'text-amber-600' : 'text-rose-600';
+      if (i.control_state === 'conclude_requested') return this.isIntentActive(i) ? 'text-amber-600' : 'text-rose-600';
       if (i.runtime_status === 'failed') return 'text-rose-600';
-      if (this.isBootstrapIntent(i)) return i.worker ? 'text-orange-600' : 'text-orange-400';
-      return i.worker ? 'text-amber-600' : 'text-slate-400';
+      if (i.runtime_status === 'cancelled') return 'text-slate-500';
+      if (this.isBootstrapIntent(i)) return this.isIntentActive(i) ? 'text-orange-600' : 'text-orange-400';
+      return this.isIntentActive(i) ? 'text-amber-600' : 'text-slate-400';
     },
     intentStatusLabel(i) {
       if (i.to) return 'Concluded';
-      if (i.control_state === 'conclude_requested') return i.worker ? 'Concluding' : 'Conclude Failed';
+      if (i.control_state === 'conclude_requested') return this.isIntentActive(i) ? 'Concluding' : 'Conclude Requested';
       if (i.runtime_status === 'failed') return this.isBootstrapIntent(i) ? 'Bootstrap Failed' : 'Failed';
-      if (this.isBootstrapIntent(i)) return i.worker ? 'Bootstrap Running' : 'Bootstrap Pending';
-      return i.worker ? 'In Progress' : 'Unclaimed';
+      if (i.runtime_status === 'cancelled') return 'Cancelled';
+      if (this.isBootstrapIntent(i)) return this.isIntentActive(i) ? 'Bootstrap Running' : 'Bootstrap Pending';
+      return this.isIntentActive(i) ? 'In Progress' : 'Unclaimed';
+    },
+
+    isIntentActive(intent) {
+      return !!(intent?.active_execution_id && ['pending', 'leased', 'running'].includes(intent.runtime_status));
+    },
+
+    intentActiveWorkerName(intent) {
+      return this.isIntentActive(intent) ? (intent.active_worker_name || intent.worker_name || intent.worker || null) : null;
+    },
+
+    actorIsWorker() {
+      const actor = this.actorName();
+      return !!actor && (this.workers || []).some(worker => worker.name === actor);
+    },
+
+    intentWorkerDisplay(intent) {
+      if (!intent) return '—';
+      const activeWorker = this.intentActiveWorkerName(intent);
+      if (activeWorker) return activeWorker;
+      const latestWorker = intent.latest_worker_name || intent.worker_name || intent.worker;
+      if (!latestWorker) return '—';
+      const status = intent.runtime_status && !['pending', 'leased', 'running'].includes(intent.runtime_status) ? ` (${intent.runtime_status})` : '';
+      return `${latestWorker}${status}`;
     },
 
     timelineEvents() {
@@ -5622,7 +5704,7 @@ function cairnApp() {
       if (!intent) return;
       try {
         const actor = this.actorName();
-        const claiming = !intent.worker;
+        const claiming = !this.isIntentActive(intent);
         await this.api('POST', `/projects/${this.selectedProjectId}/intents/${intent.id}/heartbeat`, { worker: actor });
         await this.loadProject(this.selectedProjectId);
         this.updateGraph();
@@ -5655,8 +5737,8 @@ function cairnApp() {
     },
 
     async requestConcludeSelectedIntent() {
-      const intent = this.selectedOpenIntentRecord();
-      if (!intent?.worker) return;
+      const intent = this.selectedAutoConcludableOpenIntentRecord();
+      if (!intent) return;
       try {
         await this.api('POST', `/projects/${this.selectedProjectId}/intents/${intent.id}/request-conclude`, {
           actor: this.actorName(),
@@ -5670,7 +5752,7 @@ function cairnApp() {
 
     async resumeSelectedIntentControl() {
       const intent = this.selectedOpenIntentRecord();
-      if (!intent || intent.worker || intent.control_state === 'normal') return;
+      if (!intent || this.isIntentActive(intent) || intent.control_state === 'normal') return;
       try {
         await this.api('PATCH', `/projects/${this.selectedProjectId}/intents/${intent.id}`, {
           control_state: 'normal',
@@ -5681,16 +5763,73 @@ function cairnApp() {
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 
-    openConclude(intent) { this.concludeForm = { title: '', description:'', intentId: intent.id }; this.showConcludeModal = true; },
+    async openConclude(intent) {
+      if (!intent) return;
+      this.manualConcludeForm = { intentId: intent.id, prompt: '', raw_json: '', source_execution_id: null, source_session_available: false, remote_session_kind: null, remote_session_id: null, remote_session_status: null, loading: true };
+      this.showConcludeModal = true;
+      try {
+        const prompt = await this.api('GET', `/projects/${this.selectedProjectId}/intents/${intent.id}/manual-conclude-prompt`);
+        this.manualConcludeForm = {
+          ...this.manualConcludeForm,
+          prompt: prompt.prompt || '',
+          source_execution_id: prompt.source_execution_id || null,
+          source_session_available: Boolean(prompt.source_session_available),
+          remote_session_kind: prompt.remote_session_kind || null,
+          remote_session_id: prompt.remote_session_id || null,
+          remote_session_status: prompt.remote_session_status || null,
+          loading: false,
+        };
+      } catch(e) {
+        this.manualConcludeForm = { ...this.manualConcludeForm, loading: false };
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    manualConcludePreview() {
+      const raw = this.manualConcludeForm.raw_json?.trim();
+      if (!raw) return { title: '', description: '', error: '' };
+      try {
+        const payload = JSON.parse(raw);
+        let data = payload;
+        if (payload.accepted === false) return { title: '', description: '', error: 'accepted=false will not conclude the intent' };
+        if (payload.accepted === true) data = payload.data;
+        if (!data || typeof data !== 'object') return { title: '', description: '', error: 'data must be an object' };
+        const description = typeof data.description === 'string' ? data.description.trim() : '';
+        if (!description) return { title: '', description: '', error: 'description is required' };
+        const title = typeof data.title === 'string' ? data.title.trim() : '';
+        return { title, description, error: '' };
+      } catch(e) {
+        return { title: '', description: '', error: 'Invalid JSON' };
+      }
+    },
+
+    async copyManualConcludePrompt() {
+      try {
+        await this.copyText(this.manualConcludeForm.prompt || '');
+        this.showToast('Prompt copied');
+      } catch(e) {
+        const textarea = this.$refs.manualConcludePrompt;
+        if (textarea) {
+          textarea.focus();
+          textarea.select();
+          textarea.setSelectionRange(0, textarea.value.length);
+          this.showToast('Prompt selected');
+        } else {
+          this.showToast('Copy failed', 'error');
+        }
+      }
+    },
 
     async concludeIntent() {
       try {
-        const actor = this.actorName();
-        const body = { worker: actor, description: this.concludeForm.description };
-        if (this.concludeForm.title?.trim()) body.title = this.concludeForm.title.trim();
-        await this.api('POST', `/projects/${this.selectedProjectId}/intents/${this.concludeForm.intentId}/conclude`, body);
+        const body = {
+          actor: this.actorName(),
+          raw_json: this.manualConcludeForm.raw_json,
+          source_execution_id: this.manualConcludeForm.source_execution_id,
+        };
+        const result = await this.api('POST', `/projects/${this.selectedProjectId}/intents/${this.manualConcludeForm.intentId}/manual-conclude`, body);
         this.showConcludeModal = false;
-        this.selectedNode = null;
+        this.selectedNode = result?.fact?.id ? { type: 'fact', id: result.fact.id } : null;
         await this.loadProject(this.selectedProjectId);
         this.updateGraph();
         this.showToast('Intent concluded');
