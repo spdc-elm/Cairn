@@ -14,6 +14,7 @@ from cairn.shared.worker_events import WorkerEvent, message_event, status_event,
 LOG = logging.getLogger(__name__)
 RAW_PREVIEW_TOTAL_BYTES = 16 * 1024
 RAW_PREVIEW_EVENT_BYTES = 4 * 1024
+MAX_APPEND_EVENTS = 250
 
 
 @dataclass(slots=True)
@@ -36,6 +37,8 @@ class ExecutionEventSink:
     secrets: list[str] = field(default_factory=list)
     batch_size: int = 25
     max_queue_events: int = 1000
+    flush_interval_seconds: float = 1.0
+    live_flush: bool = True
     append_retry_delays: tuple[float, ...] = (0.25, 1.0, 3.0)
     close_timeout_seconds: float = 30.0
     event_projector: Any | None = None
@@ -75,6 +78,21 @@ class ExecutionEventSink:
 
     def write_status(self, status: str, **payload) -> None:
         self.write_event(status_event(status, event_key=self._event_key("status"), **payload))
+        if self.live_flush and status == "running":
+            patch_execution = getattr(self.client, "patch_execution", None)
+            if callable(patch_execution):
+                response = patch_execution(
+                    self.execution_id,
+                    {"dispatcher_id": self.dispatcher_id, "status": "running"},
+                )
+                if not response.ok:
+                    LOG.warning(
+                        "running status patch failed execution=%s status=%s body=%s",
+                        self.execution_id,
+                        response.status_code,
+                        response.text,
+                    )
+            self.flush()
 
     def write_stream(self, stream: str, text: str) -> None:
         if stream not in {"stdout", "stderr"} or not text:
@@ -92,7 +110,7 @@ class ExecutionEventSink:
             if not self._queue:
                 self._oldest_queued_at = time.monotonic()
             self._queue.append(event)
-            should_flush = len(self._queue) >= self.batch_size
+            should_flush = self.live_flush and (len(self._queue) >= self.batch_size or self._should_time_flush_locked())
             over_limit = len(self._queue) > self.max_queue_events
         if over_limit:
             result = self.flush()
@@ -103,16 +121,41 @@ class ExecutionEventSink:
             self.flush()
 
     def flush(self) -> FlushResult:
+        final = FlushResult(ok=True, attempts=0)
+        while True:
+            result = self._flush_one_batch()
+            final = result
+            if not result.ok:
+                return result
+            with self._lock:
+                if not self._queue:
+                    return final
+
+    def _flush_one_batch(self) -> FlushResult:
         with self._lock:
             if not self._queue:
                 return FlushResult(ok=True, attempts=0)
-            events = self._queue
-            self._queue = []
-            self._oldest_queued_at = None
+            events = self._queue[:MAX_APPEND_EVENTS]
+            self._queue = self._queue[MAX_APPEND_EVENTS:]
+            self._oldest_queued_at = time.monotonic() if self._queue else None
             batch_id = self._next_batch_id()
         result = self._append_batch(events, batch_id=batch_id)
         if result.ok:
             self._last_successful_flush_at = time.monotonic()
+            return result
+        if result.status_code == 409:
+            with self._lock:
+                self._queue = []
+                self._oldest_queued_at = None
+                self._failed_flushes += 1
+            self._mark_fatal("event_key_conflict", result)
+            LOG.warning(
+                "append_timeout execution=%s batch_id=%s status=%s body=%s",
+                self.execution_id,
+                batch_id,
+                result.status_code,
+                result.text,
+            )
             return result
         with self._lock:
             self._queue = events + self._queue
@@ -208,6 +251,10 @@ class ExecutionEventSink:
         self.flush_projector_events()
         self._write_projected_events(self._raw_preview.close_events())
         if terminal_status is not None:
+            prefix_flush = self._flush_until_terminal_batch_fits()
+            if not prefix_flush.ok:
+                self._mark_terminal_barrier_failed(prefix_flush)
+                return False
             if self._fatal_error is not None and terminal_status == "succeeded":
                 terminal_status = "failed"
                 error_code = error_code or "event_flush_failed"
@@ -237,13 +284,30 @@ class ExecutionEventSink:
             return False
         return bool(self.flush())
 
+    def _flush_until_terminal_batch_fits(self) -> FlushResult:
+        while True:
+            with self._lock:
+                if len(self._queue) < MAX_APPEND_EVENTS:
+                    return FlushResult(ok=True, attempts=0)
+            result = self._flush_one_batch()
+            if not result.ok:
+                return result
+
     def _event_key(self, prefix: str) -> str:
-        self._seq += 1
-        return f"{self.execution_id}:{prefix}:{self._seq}"
+        with self._lock:
+            self._seq += 1
+            return f"{self.execution_id}:{prefix}:{self._seq}"
 
     def _next_batch_id(self) -> str:
         self._batch_seq += 1
         return f"{self.execution_id}:batch:{self._batch_seq}"
+
+    def _should_time_flush_locked(self) -> bool:
+        if self._oldest_queued_at is None:
+            return False
+        if self._last_successful_flush_at is None:
+            return False
+        return (time.monotonic() - self._oldest_queued_at) >= self.flush_interval_seconds
 
     def _enqueue_now(self, event: WorkerEvent) -> None:
         with self._lock:
@@ -252,6 +316,8 @@ class ExecutionEventSink:
             self._queue.append(event)
 
     def _mark_fatal(self, code: str, result: FlushResult) -> None:
+        if self._fatal_error is not None:
+            return
         self._fatal_error = code
         LOG.warning("%s execution=%s batch_id=%s queue_length=%s", code, self.execution_id, result.batch_id, len(self._queue))
         self._enqueue_now(
@@ -338,6 +404,7 @@ class RawPreviewBudgeter:
     _omitted: dict[str, int] = field(default_factory=lambda: {"stdout": 0, "stderr": 0})
     _events_omitted: dict[str, int] = field(default_factory=lambda: {"stdout": 0, "stderr": 0})
     _sanitised_summary_emitted: dict[str, bool] = field(default_factory=lambda: {"stdout": False, "stderr": False})
+    _metric_omitted_emitted: dict[str, int] = field(default_factory=lambda: {"stdout": 0, "stderr": 0})
     _seq: int = 0
 
     def preview_events(self, stream: str, text: str) -> list[dict[str, Any]]:
@@ -391,9 +458,14 @@ class RawPreviewBudgeter:
     def close_events(self) -> list[WorkerEvent]:
         events: list[WorkerEvent] = []
         for stream in ("stdout", "stderr"):
-            if self._seen[stream] == 0 or self._omitted[stream] == 0:
+            if (
+                self._seen[stream] == 0
+                or self._omitted[stream] == 0
+                or self._omitted[stream] <= self._metric_omitted_emitted[stream]
+            ):
                 continue
             self._seq += 1
+            self._metric_omitted_emitted[stream] = self._omitted[stream]
             events.append(
                 WorkerEvent(
                     event_type="metric",

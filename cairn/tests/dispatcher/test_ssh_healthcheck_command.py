@@ -133,6 +133,25 @@ class SshHealthcheckCommandTests(unittest.TestCase):
         self.assertIn("missing executable: codex", worker_cli[2])
         self.assertIn("missing executable: claude", worker_cli[2])
 
+    def test_remote_run_retries_transient_connection_closed(self) -> None:
+        environment = self._environment()
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            if len(calls) == 1:
+                return subprocess.CompletedProcess(argv, 255, "", "Connection closed by 10.196.239.191 port 2222")
+            return subprocess.CompletedProcess(argv, 0, "ok", "")
+
+        with patch("cairn.dispatcher.runtime.environments.ssh.subprocess.run", side_effect=fake_run), patch(
+            "cairn.dispatcher.runtime.environments.ssh.time.sleep"
+        ):
+            result = environment._remote_run(["true"], timeout=10)
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "ok")
+        self.assertEqual(len(calls), 2)
+
     @staticmethod
     def _environment() -> SshEnvironment:
         return SshEnvironment(

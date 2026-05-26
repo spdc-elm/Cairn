@@ -54,6 +54,7 @@ def _run_question_execution_task(
         execution_id,
         secrets=_worker_secrets(worker),
         event_projector=driver.stream_event_projector(execution_id),
+        live_flush=False,
     )
     client.patch_execution(execution_id, {"dispatcher_id": dispatcher_id, "status": "running"})
     try:

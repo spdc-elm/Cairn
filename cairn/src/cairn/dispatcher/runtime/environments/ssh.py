@@ -20,6 +20,12 @@ from cairn.dispatcher.workers.registry import get_driver
 LOG = logging.getLogger(__name__)
 RUNNER_PATH = ".cairn/bin/cairn-runner"
 SSH_PREVIEW_LIMIT = 1200
+SSH_REMOTE_RUN_ATTEMPTS = 2
+SSH_TRANSIENT_MARKERS = (
+    "Connection closed by",
+    "Connection reset by peer",
+    "kex_exchange_identification",
+)
 
 
 RUNNER_SCRIPT = r'''#!/usr/bin/env python3
@@ -436,14 +442,26 @@ class SshEnvironment:
         check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         command = shlex.join(argv)
-        proc = subprocess.run(
-            [*self._ssh_argv, "-o", "BatchMode=yes", command],
-            input=input_text,
-            text=True,
-            capture_output=True,
-            timeout=timeout,
-            check=False,
-        )
+        proc: subprocess.CompletedProcess[str] | None = None
+        for attempt in range(SSH_REMOTE_RUN_ATTEMPTS):
+            proc = subprocess.run(
+                [*self._ssh_argv, "-o", "BatchMode=yes", command],
+                input=input_text,
+                text=True,
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+            )
+            if not _is_transient_ssh_failure(proc) or attempt >= SSH_REMOTE_RUN_ATTEMPTS - 1:
+                break
+            LOG.warning(
+                "retrying transient ssh command failure environment=%s attempt=%s stderr=%s",
+                self.id,
+                attempt + 1,
+                _preview(proc.stderr or proc.stdout),
+            )
+            time.sleep(0.2 * (attempt + 1))
+        assert proc is not None
         if check and proc.returncode != 0:
             raise RuntimeError(_preview(proc.stderr or proc.stdout or f"ssh command failed: {proc.returncode}"))
         return proc
@@ -595,6 +613,13 @@ def _preview(text: str) -> str:
     if len(compact) <= SSH_PREVIEW_LIMIT:
         return compact
     return compact[:SSH_PREVIEW_LIMIT] + "..."
+
+
+def _is_transient_ssh_failure(proc: subprocess.CompletedProcess[str]) -> bool:
+    if proc.returncode != 255:
+        return False
+    text = f"{proc.stderr or ''}\n{proc.stdout or ''}"
+    return any(marker in text for marker in SSH_TRANSIENT_MARKERS)
 
 
 def _skipped_check(name: str, reason: str) -> dict[str, Any]:
