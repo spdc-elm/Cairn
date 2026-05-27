@@ -17,7 +17,7 @@ class TimeoutThenOkClient:
         self.append_calls: list[list[dict]] = []
         self.patch_calls: list[dict] = []
 
-    def append_execution_events(self, execution_id: str, *, dispatcher_id: str | None = None, events: list[dict]):
+    def append_execution_events(self, execution_id: str, *, dispatcher_id: str | None = None, sink_token: str | None = None, events: list[dict]):
         self.append_calls.append(events)
         if len(self.append_calls) == 1:
             return FakeResponse(False, 0, "read timed out")
@@ -33,10 +33,10 @@ class FinishFailClient:
         self.finishes: list[dict] = []
         self.patches: list[dict] = []
 
-    def append_execution_events(self, execution_id: str, *, dispatcher_id: str | None = None, events: list[dict]):
+    def append_execution_events(self, execution_id: str, *, dispatcher_id: str | None = None, sink_token: str | None = None, events: list[dict]):
         return FakeResponse(False, 0, "down")
 
-    def finish_execution(self, execution_id: str, *, dispatcher_id: str, events: list[dict], patch: dict):
+    def finish_execution(self, execution_id: str, *, dispatcher_id: str, sink_token: str | None = None, events: list[dict], patch: dict):
         self.finishes.append({"events": events, "patch": patch})
         return FakeResponse(False, 0, "finish timed out")
 
@@ -50,7 +50,7 @@ class RecordingClient:
         self.append_calls: list[list[dict]] = []
         self.patch_calls: list[dict] = []
 
-    def append_execution_events(self, execution_id: str, *, dispatcher_id: str | None = None, events: list[dict]):
+    def append_execution_events(self, execution_id: str, *, dispatcher_id: str | None = None, sink_token: str | None = None, events: list[dict]):
         self.append_calls.append(events)
         return FakeResponse(True)
 
@@ -150,7 +150,7 @@ class V34EventSinkReliabilityTests(unittest.TestCase):
             if event["event_type"] == "status" and event["payload"].get("status") == "succeeded"
         ]
         self.assertEqual(len(raw_storage_events), 1)
-        self.assertEqual(raw_storage_events[0]["event_key"], "ex001:raw-storage:stdout:1")
+        self.assertEqual(raw_storage_events[0]["event_key"], "ex001:raw-storage:stdout:final")
         self.assertEqual(len(terminal_events), 1)
 
 

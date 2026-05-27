@@ -99,7 +99,7 @@ class FakeClient:
         self.patches.append(payload)
         return ApiResult(200, data={})
 
-    def append_execution_events(self, execution_id: str, *, dispatcher_id=None, events: list[dict]):
+    def append_execution_events(self, execution_id: str, *, dispatcher_id=None, sink_token=None, events: list[dict]):
         self.event_batches.append(events)
         return ApiResult(200, data={})
 

@@ -7,10 +7,10 @@ import unittest
 from fastapi import HTTPException
 
 from cairn.server import db
-from cairn.server.models import AppendExecutionEventsRequest, CreateExecutionRequest, CreateProjectRequest, ExecutionEventAppend, PatchExecutionRequest
+from cairn.server.models import AppendExecutionEventsRequest, CreateExecutionRequest, CreateProjectRequest, ExecutionEventAppend, LeaseExecutionRequest, PatchExecutionRequest
 from cairn.server.routers.branches import BranchMessageRequest, CreateBranchRequest, create_branch, post_branch_message
 from cairn.server.routers.branches import get_branch_timeline
-from cairn.server.routers.executions import create_project_execution, dispatcher_append_execution_events, dispatcher_patch_execution
+from cairn.server.routers.executions import create_project_execution, dispatcher_append_execution_events, dispatcher_lease_pending_execution, dispatcher_patch_execution
 from cairn.server.routers.projects import create_project
 from cairn.server.services import dumps_json
 
@@ -113,9 +113,14 @@ class V32ExecutionSessionLockTests(unittest.TestCase):
             CreateBranchRequest(mode="fork", source_execution_id=self.source.id),
         )
         first = post_branch_message(self.project_id, branch.id, BranchMessageRequest(message="remember alpha"))
+        first_leased = dispatcher_lease_pending_execution(
+            LeaseExecutionRequest(execution_id=first["execution"].id, dispatcher_id="disp", worker_name="mock", worker_type="mock")
+        )
         dispatcher_append_execution_events(
             first["execution"].id,
             AppendExecutionEventsRequest(
+                dispatcher_id="disp",
+                sink_token=first_leased.sink_token,
                 events=[
                     ExecutionEventAppend(event_type="message", role="assistant", payload={"text": "alpha stored"}),
                     ExecutionEventAppend(event_type="stdout", payload={"text": "first stdout\n"}),
@@ -125,6 +130,8 @@ class V32ExecutionSessionLockTests(unittest.TestCase):
         dispatcher_patch_execution(
             first["execution"].id,
             PatchExecutionRequest(
+                dispatcher_id="disp",
+                sink_token=first_leased.sink_token,
                 status="succeeded",
                 remote_session_out_kind="pi_session",
                 remote_session_out_id="fork-sess",
@@ -132,9 +139,14 @@ class V32ExecutionSessionLockTests(unittest.TestCase):
             ),
         )
         second = post_branch_message(self.project_id, branch.id, BranchMessageRequest(message="what did I say?"))
+        second_leased = dispatcher_lease_pending_execution(
+            LeaseExecutionRequest(execution_id=second["execution"].id, dispatcher_id="disp", worker_name="mock", worker_type="mock")
+        )
         dispatcher_append_execution_events(
             second["execution"].id,
             AppendExecutionEventsRequest(
+                dispatcher_id="disp",
+                sink_token=second_leased.sink_token,
                 events=[
                     ExecutionEventAppend(event_type="message", role="assistant", payload={"text": "you said alpha"}),
                     ExecutionEventAppend(event_type="stdout", payload={"text": "second stdout\n"}),

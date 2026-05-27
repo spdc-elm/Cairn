@@ -24,10 +24,11 @@ def run_healthcheck_task(
     worker: WorkerConfig,
     cancellation: TaskCancellation,
     execution_id: str,
+    sink_token: str | None = None,
 ) -> TaskOutcome:
     driver = get_driver(worker.type)
     secrets = _worker_secrets(worker)
-    sink = ExecutionEventSink(client, execution_id, secrets=secrets)
+    sink = ExecutionEventSink(client, execution_id, sink_token=sink_token, secrets=secrets)
     command = driver.build_healthcheck(worker)
     described_command = redact_text(shlex.join(command), secrets)
     status = "failed"
@@ -39,7 +40,14 @@ def run_healthcheck_task(
         worker_name=worker.name,
         worker_type=worker.type,
     )
-    patch = client.patch_execution(execution_id, {"status": "running", "lease_seconds": max(60, config.runtime.healthcheck_timeout + 20)})
+    running_patch = {
+        "dispatcher_id": "dispatcher",
+        "status": "running",
+        "lease_seconds": max(60, config.runtime.healthcheck_timeout + 20),
+    }
+    if sink_token is not None:
+        running_patch["sink_token"] = sink_token
+    patch = client.patch_execution(execution_id, running_patch)
     if not patch.ok:
         LOG.warning("manual healthcheck running patch failed execution=%s status=%s body=%s", execution_id, patch.status_code, patch.text)
     handle = None

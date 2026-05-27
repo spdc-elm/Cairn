@@ -501,6 +501,7 @@ class DispatcherLoop:
                 claim.status_code,
             )
             return False
+        sink_token = _sink_token_from_response(claim.data)
         try:
             future = self.executor.submit(
                 run_reason_task,
@@ -512,6 +513,7 @@ class DispatcherLoop:
                 worker,
                 cancellation := TaskCancellation(),
                 execution_id,
+                sink_token,
             )
         except Exception:
             LOG.exception("failed to submit reason task project=%s worker=%s", project.project.id, worker.name)
@@ -603,6 +605,7 @@ class DispatcherLoop:
         if execution_id is None:
             LOG.warning("bootstrap claim returned no execution id project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
             return False
+        sink_token = _sink_token_from_response(claim.data)
         try:
             future = self.executor.submit(
                 run_bootstrap_task,
@@ -614,6 +617,7 @@ class DispatcherLoop:
                 worker,
                 cancellation := TaskCancellation(),
                 execution_id,
+                sink_token,
             )
         except Exception:
             LOG.exception("failed to submit bootstrap task project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
@@ -698,6 +702,7 @@ class DispatcherLoop:
         if execution_id is None:
             LOG.warning("explore claim returned no execution id project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
             return False
+        sink_token = _sink_token_from_response(claim.data)
         try:
             future = self.executor.submit(
                 run_explore_task,
@@ -710,6 +715,7 @@ class DispatcherLoop:
                 worker,
                 cancellation := TaskCancellation(),
                 execution_id,
+                sink_token,
             )
         except Exception:
             LOG.exception("failed to submit explore task project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
@@ -1334,6 +1340,7 @@ class DispatcherLoop:
             environment_id = execution.get("environment_id") if isinstance(execution, dict) else None
             execution_id = execution.get("id") if isinstance(execution, dict) else None
             project_id = execution.get("project_id") if isinstance(execution, dict) else None
+            sink_token = execution.get("sink_token") if isinstance(execution, dict) else None
             worker = next((candidate for candidate in self.config.workers if candidate.name == worker_name), None)
             environment = self.environments.get(environment_id or "")
             if worker is None or environment is None or not execution_id or not project_id:
@@ -1341,6 +1348,7 @@ class DispatcherLoop:
                     finish_execution_terminal(
                         self.client,
                         execution_id,
+                        sink_token=sink_token,
                         events=[
                             status_event(
                                 "failed",
@@ -1361,6 +1369,7 @@ class DispatcherLoop:
                 finish_execution_terminal(
                     self.client,
                     execution_id,
+                    sink_token=sink_token,
                     events=[
                         status_event(
                             "failed",
@@ -1385,12 +1394,14 @@ class DispatcherLoop:
                     resolved_worker,
                     cancellation := TaskCancellation(),
                     execution_id,
+                    sink_token,
                 )
             except Exception:
                 LOG.exception("failed to submit healthcheck execution=%s worker=%s", execution_id, worker.name)
                 finish_execution_terminal(
                     self.client,
                     execution_id,
+                    sink_token=sink_token,
                     events=[
                         status_event(
                             "failed",
@@ -1432,12 +1443,14 @@ class DispatcherLoop:
         if not claim.ok or not isinstance(claim.data, list) or not claim.data:
             return False
         job = claim.data[0]
+        sink_token = job.get("sink_token") if isinstance(job, dict) else None
         worker_name = job.get("worker_name")
         worker = next((candidate for candidate in self.config.workers if candidate.name == worker_name), None)
         if worker is None:
             finish_execution_terminal(
                 self.client,
                 job["id"],
+                sink_token=sink_token,
                 events=[
                     status_event(
                         "failed",
@@ -1460,6 +1473,7 @@ class DispatcherLoop:
             finish_execution_terminal(
                 self.client,
                 job["id"],
+                sink_token=sink_token,
                 events=[
                     status_event(
                         "failed",
@@ -1480,6 +1494,7 @@ class DispatcherLoop:
             finish_execution_terminal(
                 self.client,
                 job["id"],
+                sink_token=sink_token,
                 events=[
                     status_event(
                         "failed",
@@ -1511,6 +1526,7 @@ class DispatcherLoop:
             finish_execution_terminal(
                 self.client,
                 job["id"],
+                sink_token=sink_token,
                 events=[
                     status_event(
                         "failed",
@@ -1669,4 +1685,11 @@ def _execution_id_from_response(data) -> str | None:
     if not isinstance(data, dict):
         return None
     value = data.get("id")
+    return value if isinstance(value, str) and value else None
+
+
+def _sink_token_from_response(data) -> str | None:
+    if not isinstance(data, dict):
+        return None
+    value = data.get("sink_token")
     return value if isinstance(value, str) and value else None

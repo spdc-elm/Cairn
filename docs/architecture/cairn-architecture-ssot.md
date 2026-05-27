@@ -32,6 +32,8 @@
 
 当前无 pending architecture delta。
 
+v3.7 执行事件流可靠性改进已合并到主体（§3, §5）。
+
 ## 2. 产品心智模型
 
 Cairn 把一次探索表达为 `Fact/Intent DAG`：
@@ -61,6 +63,9 @@ Intent / Branch
 - `stdout`/`stderr` execution events 是 bounded raw preview/ref/metric，不承诺保存完整 raw stream。
 - Terminal status 必须通过 `POST /dispatcher/executions/{execution_id}/finish` 或等价持久化屏障与 terminal/final events 一起提交；dispatcher 主路径不得先丢 final events 再单独把 execution patch 成 succeeded。
 - `event_key` 是 immutable idempotency key。同 execution 同 key 同 canonical event 可重放；同 key 不同 event 必须冲突，不得静默吞掉新内容。
+- `ExecutionRun` single-writer：leased/running execution 由一个 dispatcher-owned sink writer 写入。`leased_by` 表示 dispatcher owner，`sink_token` 表示该次 sink writer generation。dispatcher append、finish、patch 必须校验 owner + sink token（当 sink_token 由 dispatcher 提供时）。Terminal 后只允许同 key 同 canonical 的 idempotent replay，不允许追加新事件。
+- Dispatcher append guard：pending execution 拒绝 dispatcher append（必须先 lease/claim）；terminal execution 拒绝新事件；owner/sink_token mismatch 拒绝。
+- Server-internal append（branch initial user event、manual conclude terminal event）不走 dispatcher append guard，直接调用 service 层 `append_execution_events`。
 - `Artifact` 与 run log 文件保存大产物与证据，如 report、完整 raw stream/transcript、scan output、screenshot、文件。完整 raw stdout/stderr/worker JSONL 属于 run log/artifact 文件层，不进入主 DB。
 - `EvidenceLink` 连接 fact 与 artifact/execution，用于表达证据关系。
 - Manual conclude import 是自动 dispatcher conclude 失效后的人工投影路径：用户把外部 resumed worker session 产出的结论 JSON 导入 server，server 校验后写入 primary fact，并用 `produced_by_execution_id`/`EvidenceLink(derived_from)` 记录来源 execution。该路径仍属于 `ExecutionRun -> Fact projection`，不得让 `Intent` 承载 live runtime state。
@@ -78,7 +83,7 @@ Intent / Branch
 - `fork` branch 表示从源 session 派生的临时/分支对话，默认不污染主 Output；关闭后前端临时态应消失。
 - `fresh_context` 表示无源 session 的新上下文问答。
 
-多轮 fork/resume 必须在同一 branch 下追加 executions。第二轮及后续轮次使用上一轮 branch execution 的 session 输出作为下一轮输入。
+多轮 fork/resume 必须在同一 branch 下追加 executions，每轮消息创建新的 pending question execution，不复用已有 execution id。第二轮及后续轮次使用上一轮 branch execution 的 session 输出作为下一轮输入。Stale branch execution（lease expired）必须释放 session lock。
 
 `execution_runs.session_action` 是 dispatcher/driver 的明确契约：
 
@@ -109,7 +114,9 @@ Dispatcher 负责：
 - 在 worker process 启动前，从 server 获取 project agent context snapshot，并在 workspace 内 materialize Cairn-managed `AGENTS.md`。
 - 将 worker stream 分发到 run log/artifact 文件、semantic projector 与 DB raw preview/ref sink。
 - 将 message/tool/session/status 等语义事件，以及 bounded stdout/stderr preview/ref/metric 写入 `ExecutionEvent`。
-- 通过 bounded EventSink 写入 events：timeout/backpressure 必须 retry、暴露 diagnostic，且队列不得无限增长。
+- 通过 bounded EventSink 写入 events：timeout/backpressure 必须 retry、暴露 diagnostic，且队列不得无限增长。EventSink 持有 `sink_token` 用于标识单一 writer generation。
+- EventSink 失败语义：409 event_key_conflict 必须 fail-fast（清空队列、标记 fatal、不继续滚雪球）；422 too_long 由 batch slicing（<= 250）防止；queue overflow 产生有界 bounded diagnostic；每类失败使用明确 `failure_kind` 分类。
+- EventSink raw storage metric 使用 `execution_id:raw-storage:<stream>:final` 作为 idempotent key，确保每 stream 最多一个 final metric event。
 - 通过 finish contract 提交 terminal events、session output、returncode、error 与 terminal status。finish 失败时不得把 execution 标记为 succeeded；最后手段只能暴露 failed diagnostic。
 
 Worker driver 负责：

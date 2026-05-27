@@ -52,6 +52,7 @@ class V34ExecutionFinishApiTests(unittest.TestCase):
             execution.id,
             FinishExecutionRequest(
                 dispatcher_id="disp",
+                sink_token=execution.sink_token,
                 events=[
                     ExecutionEventAppend(
                         event_type="message",
@@ -87,6 +88,8 @@ class V34ExecutionFinishApiTests(unittest.TestCase):
         dispatcher_patch_execution(
             execution.id,
             PatchExecutionRequest(
+                dispatcher_id="disp",
+                sink_token=execution.sink_token,
                 remote_session_out_kind="pi_session",
                 remote_session_out_id="session-before-finish",
                 remote_session_out_status="available",
@@ -97,6 +100,7 @@ class V34ExecutionFinishApiTests(unittest.TestCase):
             execution.id,
             FinishExecutionRequest(
                 dispatcher_id="disp",
+                sink_token=execution.sink_token,
                 events=[ExecutionEventAppend(event_type="status", payload={"status": "succeeded"}, event_key="terminal", ts="t1")],
                 patch=FinishExecutionPatch(status="succeeded", returncode=0),
             ),
@@ -111,6 +115,8 @@ class V34ExecutionFinishApiTests(unittest.TestCase):
         dispatcher_append_execution_events(
             execution.id,
             AppendExecutionEventsRequest(
+                dispatcher_id="disp",
+                sink_token=execution.sink_token,
                 events=[
                     ExecutionEventAppend(
                         event_type="message",
@@ -128,6 +134,7 @@ class V34ExecutionFinishApiTests(unittest.TestCase):
                 execution.id,
                 FinishExecutionRequest(
                     dispatcher_id="disp",
+                    sink_token=execution.sink_token,
                     events=[
                         ExecutionEventAppend(
                             event_type="message",
@@ -141,7 +148,10 @@ class V34ExecutionFinishApiTests(unittest.TestCase):
                 ),
             )
 
-        current = dispatcher_patch_execution(execution.id, PatchExecutionRequest())
+        current = dispatcher_patch_execution(
+            execution.id,
+            PatchExecutionRequest(dispatcher_id="disp", sink_token=execution.sink_token),
+        )
         self.assertEqual(conflict.exception.status_code, 409)
         self.assertEqual(current.status, "leased")
 
@@ -149,6 +159,7 @@ class V34ExecutionFinishApiTests(unittest.TestCase):
         execution = self._leased_execution()
         body = FinishExecutionRequest(
             dispatcher_id="disp",
+            sink_token=execution.sink_token,
             events=[ExecutionEventAppend(event_type="status", payload={"status": "failed"}, event_key="terminal", ts="t1")],
             patch=FinishExecutionPatch(status="failed", returncode=1, error_code="worker_process_failed"),
         )
@@ -163,6 +174,7 @@ class V34ExecutionFinishApiTests(unittest.TestCase):
                 execution.id,
                 FinishExecutionRequest(
                     dispatcher_id="disp",
+                    sink_token=execution.sink_token,
                     events=[ExecutionEventAppend(event_type="status", payload={"status": "succeeded"}, event_key="terminal", ts="t1")],
                     patch=FinishExecutionPatch(status="succeeded", returncode=0),
                 ),
@@ -182,12 +194,21 @@ class V34ExecutionFinishApiTests(unittest.TestCase):
             execution.id,
             FinishExecutionRequest(
                 dispatcher_id="disp",
+                sink_token=execution.sink_token,
                 events=[ExecutionEventAppend(event_type="status", payload={"status": "cancelled"}, event_key="terminal", ts="t1")],
                 patch=FinishExecutionPatch(status="cancelled"),
             ),
         )
         with self.assertRaises(HTTPException) as heartbeat:
-            dispatcher_patch_execution(execution.id, PatchExecutionRequest(last_heartbeat_at="2026-05-21T00:00:02Z", lease_seconds=60))
+            dispatcher_patch_execution(
+                execution.id,
+                PatchExecutionRequest(
+                    dispatcher_id="disp",
+                    sink_token=execution.sink_token,
+                    last_heartbeat_at="2026-05-21T00:00:02Z",
+                    lease_seconds=60,
+                ),
+            )
         self.assertEqual(heartbeat.exception.status_code, 409)
 
 

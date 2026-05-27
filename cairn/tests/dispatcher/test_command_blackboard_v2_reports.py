@@ -125,7 +125,7 @@ class CommandBlackboardV2ReportTests(unittest.TestCase):
                 self.patches: list[dict] = []
                 self.released: list[tuple[str, str, str]] = []
 
-            def append_execution_events(self, execution_id, *, dispatcher_id=None, events=None):
+            def append_execution_events(self, execution_id, *, dispatcher_id=None, sink_token=None, events=None):
                 self.events.extend(events or [])
                 return type("Response", (), {"ok": True, "status_code": 200, "text": ""})()
 

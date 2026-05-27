@@ -9,7 +9,7 @@ from typing import Any
 
 from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.redaction import redact_text
-from cairn.shared.worker_events import WorkerEvent, message_event, status_event, stream_event
+from cairn.shared.worker_events import WorkerEvent, message_event, status_event
 
 LOG = logging.getLogger(__name__)
 RAW_PREVIEW_TOTAL_BYTES = 16 * 1024
@@ -34,6 +34,7 @@ class ExecutionEventSink:
     client: CairnClient
     execution_id: str
     dispatcher_id: str = "dispatcher"
+    sink_token: str | None = None
     secrets: list[str] = field(default_factory=list)
     batch_size: int = 25
     max_queue_events: int = 1000
@@ -44,6 +45,7 @@ class ExecutionEventSink:
     event_projector: Any | None = None
     raw_ref: dict[str, Any] | None = None
     _lock: Any = field(init=False, repr=False)
+    _sink_id: str = field(init=False, repr=False)
     _seq: int = field(default=0, init=False, repr=False)
     _queue: list[WorkerEvent] = field(default_factory=list, init=False, repr=False)
     _failed_flushes: int = field(default=0, init=False, repr=False)
@@ -54,10 +56,15 @@ class ExecutionEventSink:
     _last_successful_flush_at: float | None = field(default=None, init=False, repr=False)
     _oldest_queued_at: float | None = field(default=None, init=False, repr=False)
     _fatal_error: str | None = field(default=None, init=False, repr=False)
+    _terminal_finished: bool = field(default=False, init=False, repr=False)
+    _raw_chunk_ordinals: dict[str, int] = field(default_factory=lambda: {"stdout": 0, "stderr": 0}, init=False, repr=False)
     _raw_preview: "RawPreviewBudgeter" = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
+        import hashlib as _hashlib
+        token_hash = _hashlib.sha256((self.sink_token or "").encode()).hexdigest()[:8]
+        self._sink_id = f"{self.execution_id}:sink:{token_hash}"
         self._raw_preview = RawPreviewBudgeter(self.execution_id, raw_ref=self.raw_ref)
 
     @property
@@ -81,9 +88,12 @@ class ExecutionEventSink:
         if self.live_flush and status == "running":
             patch_execution = getattr(self.client, "patch_execution", None)
             if callable(patch_execution):
+                patch = {"dispatcher_id": self.dispatcher_id, "status": "running"}
+                if self.sink_token is not None:
+                    patch["sink_token"] = self.sink_token
                 response = patch_execution(
                     self.execution_id,
-                    {"dispatcher_id": self.dispatcher_id, "status": "running"},
+                    patch,
                 )
                 if not response.ok:
                     LOG.warning(
@@ -100,7 +110,7 @@ class ExecutionEventSink:
         redacted = redact_text(text, self.secrets)
         self._write_projected_stream_events(stream, redacted)
         for payload in self._raw_preview.preview_events(stream, redacted):
-            self.write_event(WorkerEvent(event_type=stream, payload=payload, event_key=self._event_key(stream)))
+            self.write_event(WorkerEvent(event_type=stream, payload=payload, event_key=self._raw_event_key(stream)))
 
     def write_event(self, event: WorkerEvent) -> None:
         if self._fatal_error is not None and event.event_type != "message":
@@ -143,30 +153,42 @@ class ExecutionEventSink:
         if result.ok:
             self._last_successful_flush_at = time.monotonic()
             return result
-        if result.status_code == 409:
+        if result.status_code in {409, 422}:
             with self._lock:
                 self._queue = []
                 self._oldest_queued_at = None
                 self._failed_flushes += 1
-            self._mark_fatal("event_key_conflict", result)
+            fatal_code = "event_key_conflict" if result.status_code == 409 else "validation_too_long"
+            failure_kind = "append_conflict" if result.status_code == 409 else "validation_too_long"
+            self._mark_fatal(fatal_code, result)
             LOG.warning(
-                "append_timeout execution=%s batch_id=%s status=%s body=%s",
+                "event_append_failed execution=%s sink_id=%s batch_id=%s failure_kind=%s "
+                "status=%s event_count=%d first_event_key=%s",
                 self.execution_id,
+                self._sink_id,
                 batch_id,
+                failure_kind,
                 result.status_code,
-                result.text,
+                len(events),
+                events[0].event_key if events else None,
             )
             return result
         with self._lock:
             self._queue = events + self._queue
             self._oldest_queued_at = self._oldest_queued_at or time.monotonic()
             self._failed_flushes += 1
+        failure_kind = "append_http_timeout" if result.status_code == 0 else "append_http_error"
         LOG.warning(
-            "append_timeout execution=%s batch_id=%s status=%s body=%s",
+            "event_append_failed execution=%s sink_id=%s batch_id=%s failure_kind=%s "
+            "status=%s queue_depth=%d event_count=%d attempt=%d",
             self.execution_id,
+            self._sink_id,
             batch_id,
+            failure_kind,
             result.status_code,
-            result.text,
+            len(self._queue),
+            len(events),
+            result.attempts,
         )
         return result
 
@@ -181,6 +203,7 @@ class ExecutionEventSink:
             response = self.client.append_execution_events(
                 self.execution_id,
                 dispatcher_id=self.dispatcher_id,
+                sink_token=self.sink_token,
                 events=[event.to_api_payload() for event in events],
             )
             last_response = response
@@ -208,6 +231,7 @@ class ExecutionEventSink:
             response = finish(
                 self.execution_id,
                 dispatcher_id=self.dispatcher_id,
+                sink_token=self.sink_token,
                 events=[event.to_api_payload() for event in events],
                 patch=patch,
             )
@@ -226,11 +250,15 @@ class ExecutionEventSink:
         response = self.client.append_execution_events(
             self.execution_id,
             dispatcher_id=self.dispatcher_id,
+            sink_token=self.sink_token,
             events=[event.to_api_payload() for event in events],
         )
         if not response.ok:
             return FlushResult(ok=False, status_code=response.status_code, text=response.text, attempts=1, batch_id=batch_id)
-        patch_response = self.client.patch_execution(self.execution_id, patch)
+        patch_payload = {"dispatcher_id": self.dispatcher_id, **patch}
+        if self.sink_token is not None:
+            patch_payload["sink_token"] = self.sink_token
+        patch_response = self.client.patch_execution(self.execution_id, patch_payload)
         return FlushResult(
             ok=patch_response.ok,
             status_code=patch_response.status_code,
@@ -248,6 +276,8 @@ class ExecutionEventSink:
         error_detail: str | None = None,
         patch_fields: dict[str, Any] | None = None,
     ) -> bool:
+        if terminal_status is not None and self._terminal_finished:
+            return True
         self.flush_projector_events()
         self._write_projected_events(self._raw_preview.close_events())
         if terminal_status is not None:
@@ -275,6 +305,7 @@ class ExecutionEventSink:
                 batch_id = self._next_batch_id()
             result = self._finish_batch(events, patch, batch_id=batch_id)
             if result.ok:
+                self._terminal_finished = True
                 return True
             with self._lock:
                 self._queue = events + self._queue
@@ -298,6 +329,11 @@ class ExecutionEventSink:
             self._seq += 1
             return f"{self.execution_id}:{prefix}:{self._seq}"
 
+    def _raw_event_key(self, stream: str) -> str:
+        with self._lock:
+            self._raw_chunk_ordinals[stream] += 1
+            return f"{self.execution_id}:raw:{stream}:{self._raw_chunk_ordinals[stream]}"
+
     def _next_batch_id(self) -> str:
         self._batch_seq += 1
         return f"{self.execution_id}:batch:{self._batch_seq}"
@@ -319,11 +355,25 @@ class ExecutionEventSink:
         if self._fatal_error is not None:
             return
         self._fatal_error = code
-        LOG.warning("%s execution=%s batch_id=%s queue_length=%s", code, self.execution_id, result.batch_id, len(self._queue))
+        LOG.warning(
+            "event_sink_fatal execution=%s sink_id=%s batch_id=%s failure_kind=%s queue_length=%s",
+            self.execution_id,
+            self._sink_id,
+            result.batch_id,
+            code,
+            len(self._queue),
+        )
         self._enqueue_now(
-            message_event(
-                "system",
-                f"dispatcher diagnostic: {code}",
+            WorkerEvent(
+                event_type="metric",
+                payload={
+                    "metric": "event_sink_diagnostic",
+                    "diagnostic": True,
+                    "failure_kind": code,
+                    "status_code": result.status_code,
+                    "batch_id": result.batch_id,
+                    "detail": result.text[:2000],
+                },
                 event_key=self._event_key(f"diagnostic-{code}"),
             )
         )
@@ -342,6 +392,8 @@ class ExecutionEventSink:
             "error_code": "event_flush_failed",
             "error_detail": result.text or f"terminal barrier failed status={result.status_code}",
         }
+        if self.sink_token is not None:
+            patch["sink_token"] = self.sink_token
         response = self.client.patch_execution(self.execution_id, patch)
         if not response.ok:
             LOG.warning(
@@ -464,7 +516,6 @@ class RawPreviewBudgeter:
                 or self._omitted[stream] <= self._metric_omitted_emitted[stream]
             ):
                 continue
-            self._seq += 1
             self._metric_omitted_emitted[stream] = self._omitted[stream]
             events.append(
                 WorkerEvent(
@@ -477,7 +528,7 @@ class RawPreviewBudgeter:
                         "raw_events_omitted": self._events_omitted[stream],
                         "raw_ref": self.raw_ref or {"kind": "execution_metadata", "key": "raw_stream"},
                     },
-                    event_key=f"{self.execution_id}:raw-storage:{stream}:{self._seq}",
+                    event_key=f"{self.execution_id}:raw-storage:{stream}:final",
                 )
             )
         return events

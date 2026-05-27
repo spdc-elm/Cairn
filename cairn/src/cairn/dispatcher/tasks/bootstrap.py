@@ -53,12 +53,13 @@ def run_bootstrap_task(
     worker: WorkerConfig,
     cancellation: TaskCancellation,
     execution_id: str | None = None,
+    sink_token: str | None = None,
 ) -> str:
     driver = get_driver(worker.type)
     task_started = time.perf_counter()
     healthcheck_timeout = config.runtime.healthcheck_timeout
     lease = (
-        HeartbeatLease.for_execution(client, execution_id, worker.name, config.runtime.interval)
+        HeartbeatLease.for_execution(client, execution_id, worker.name, config.runtime.interval, sink_token=sink_token)
         if execution_id is not None
         else HeartbeatLease.for_intent(client, project.project.id, intent.id, worker.name, config.runtime.interval)
     )
@@ -146,6 +147,7 @@ def run_bootstrap_task(
             handle,
             project_id=project.project.id,
             execution_id=execution_id,
+            sink_token=sink_token,
         )
         session = driver.prepare_session()
         execute = driver.build_execute(worker, prompt, session, runtime_context=runtime_context)
@@ -167,6 +169,7 @@ def run_bootstrap_task(
                 ExecutionEventSink(
                     client,
                     execution_id,
+                    sink_token=sink_token,
                     secrets=_worker_secrets(worker),
                     event_projector=driver.stream_event_projector(execution_id),
                 )
@@ -177,7 +180,15 @@ def run_bootstrap_task(
         )
         flush_deferred_worker_process_events(first)
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
-        session = record_remote_session(client, project.project.id, first, driver, session, execution_id=execution_id)
+        session = record_remote_session(
+            client,
+            project.project.id,
+            first,
+            driver,
+            session,
+            execution_id=execution_id,
+            sink_token=sink_token,
+        )
         cancelled = cancel_reason(first, cancellation)
         if cancelled is not None:
             if cancelled == "conclude_requested":
@@ -201,6 +212,7 @@ def run_bootstrap_task(
                     lease,
                     cancellation,
                     execution_id=execution_id,
+                    sink_token=sink_token,
                 )
                 _finish_after_bootstrap_fallback(client, execution_id, first, outcome)
                 return outcome
@@ -271,6 +283,7 @@ def run_bootstrap_task(
                     lease,
                     cancellation,
                     execution_id=execution_id,
+                    sink_token=sink_token,
                 )
                 if outcome == "success":
                     finish_deferred_worker_process(client, execution_id, first, "succeeded", returncode=first.returncode)
@@ -321,7 +334,13 @@ def run_bootstrap_task(
             if outcome == "success":
                 finish_deferred_worker_process(client, execution_id, first, "succeeded", returncode=first.returncode)
             else:
-                _mark_execution_postprocess_failed(client, execution_id, "bootstrap_write_failed", "bootstrap fact write failed")
+                _mark_execution_postprocess_failed(
+                    client,
+                    execution_id,
+                    "bootstrap_write_failed",
+                    "bootstrap fact write failed",
+                    sink_token=sink_token,
+                )
             return outcome
         if did_timeout(first):
             LOG.warning(
@@ -347,6 +366,7 @@ def run_bootstrap_task(
                 lease,
                 cancellation,
                 execution_id=execution_id,
+                sink_token=sink_token,
             )
             if outcome == "success":
                 finish_deferred_worker_process(client, execution_id, first, "succeeded", returncode=first.returncode)
@@ -402,6 +422,7 @@ def _try_conclude_fallback(
     lease: HeartbeatLease,
     cancellation: TaskCancellation,
     execution_id: str | None = None,
+    sink_token: str | None = None,
 ) -> str:
     if not driver.supports_conclude() or not session:
         LOG.info(
@@ -417,6 +438,7 @@ def _try_conclude_fallback(
             execution_id,
             "bootstrap_conclude_unavailable",
             "conclude fallback unavailable before a usable bootstrap result was produced",
+            sink_token=sink_token,
         )
         best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
@@ -427,7 +449,13 @@ def _try_conclude_fallback(
             intent.id,
             worker.name,
         )
-        _mark_execution_postprocess_failed(client, execution_id, "heartbeat_lost", "heartbeat lost before bootstrap conclude fallback")
+        _mark_execution_postprocess_failed(
+            client,
+            execution_id,
+            "heartbeat_lost",
+            "heartbeat lost before bootstrap conclude fallback",
+            sink_token=sink_token,
+        )
         best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
     if cancellation.is_cancelled and cancellation.reason != "conclude_requested":
@@ -447,7 +475,13 @@ def _try_conclude_fallback(
         worker_name=worker.name,
         intent_id=intent.id,
     ):
-        _mark_execution_postprocess_failed(client, execution_id, "project_not_active", "project became inactive before bootstrap conclude fallback")
+        _mark_execution_postprocess_failed(
+            client,
+            execution_id,
+            "project_not_active",
+            "project became inactive before bootstrap conclude fallback",
+            sink_token=sink_token,
+        )
         best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
 
@@ -463,6 +497,7 @@ def _try_conclude_fallback(
         handle,
         project_id=project.project.id,
         execution_id=execution_id,
+        sink_token=sink_token,
     )
     conclude_argv = driver.build_conclude(worker, prompt, session, runtime_context=runtime_context)
     LOG.info("starting bootstrap conclude fallback project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
@@ -496,7 +531,13 @@ def _try_conclude_fallback(
         best_effort_release(client, project.project.id, intent.id, worker.name)
         return "cancelled"
     if lease.failure is not None:
-        _mark_execution_postprocess_failed(client, execution_id, "heartbeat_lost", "heartbeat lost during bootstrap conclude fallback")
+        _mark_execution_postprocess_failed(
+            client,
+            execution_id,
+            "heartbeat_lost",
+            "heartbeat lost during bootstrap conclude fallback",
+            sink_token=sink_token,
+        )
         best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
     if result.timed_out or result.returncode != 0:
@@ -516,6 +557,7 @@ def _try_conclude_fallback(
             execution_id,
             "bootstrap_conclude_process_failed",
             preview(result.stderr) or preview(result.stdout) or "bootstrap conclude process failed",
+            sink_token=sink_token,
         )
         best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
@@ -543,7 +585,13 @@ def _try_conclude_fallback(
             preview(result.stdout),
             preview(result.stderr),
         )
-        _mark_execution_postprocess_failed(client, execution_id, "bootstrap_conclude_parse_failed", str(exc))
+        _mark_execution_postprocess_failed(
+            client,
+            execution_id,
+            "bootstrap_conclude_parse_failed",
+            str(exc),
+            sink_token=sink_token,
+        )
         best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "failed"
     if kind == "rejected":
@@ -555,7 +603,13 @@ def _try_conclude_fallback(
             conclude_ms,
             preview(result.stdout),
         )
-        _mark_execution_postprocess_failed(client, execution_id, "bootstrap_conclude_rejected", "bootstrap conclude returned rejected")
+        _mark_execution_postprocess_failed(
+            client,
+            execution_id,
+            "bootstrap_conclude_rejected",
+            "bootstrap conclude returned rejected",
+            sink_token=sink_token,
+        )
         best_effort_release_after_conclude_failure(client, project.project.id, intent.id, worker.name)
         return "rejected"
     outcome = write_conclude_result(
@@ -571,16 +625,29 @@ def _try_conclude_fallback(
         execution_id=execution_id,
     )
     if outcome != "success":
-        _mark_execution_postprocess_failed(client, execution_id, "bootstrap_conclude_write_failed", "bootstrap conclude fact write failed")
+        _mark_execution_postprocess_failed(
+            client,
+            execution_id,
+            "bootstrap_conclude_write_failed",
+            "bootstrap conclude fact write failed",
+            sink_token=sink_token,
+        )
     return outcome
 
 
-def _append_execution_diagnostic(client: CairnClient, execution_id: str | None, message: str) -> None:
+def _append_execution_diagnostic(
+    client: CairnClient,
+    execution_id: str | None,
+    message: str,
+    *,
+    sink_token: str | None = None,
+) -> None:
     if not execution_id:
         return
     response = client.append_execution_events(
         execution_id,
         dispatcher_id="dispatcher",
+        sink_token=sink_token,
         events=[
             message_event(
                 "system",
@@ -603,13 +670,21 @@ def _mark_execution_postprocess_failed(
     execution_id: str | None,
     error_code: str,
     error_detail: str,
+    *,
+    sink_token: str | None = None,
 ) -> None:
     if not execution_id:
         return
-    _append_execution_diagnostic(client, execution_id, f"dispatcher postprocess failed: {error_code}: {error_detail}")
+    _append_execution_diagnostic(
+        client,
+        execution_id,
+        f"dispatcher postprocess failed: {error_code}: {error_detail}",
+        sink_token=sink_token,
+    )
     response = finish_execution_terminal(
         client,
         execution_id,
+        sink_token=sink_token,
         events=[
             status_event(
                 "failed",

@@ -12,7 +12,7 @@ class FakeClient:
         self.order: list[str] = []
         self.patches: list[dict] = []
 
-    def append_execution_events(self, execution_id: str, *, dispatcher_id: str | None = None, events: list[dict]):
+    def append_execution_events(self, execution_id: str, *, dispatcher_id: str | None = None, sink_token: str | None = None, events: list[dict]):
         self.order.append("append")
         self.calls.append(events)
         ok = not self.fail

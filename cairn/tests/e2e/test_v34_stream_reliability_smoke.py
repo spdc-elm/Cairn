@@ -47,12 +47,20 @@ class V34StreamReliabilitySmokeTests(unittest.TestCase):
             for index in range(300)
         ]
         for offset in range(0, len(events), 100):
-            dispatcher_append_execution_events(leased.id, AppendExecutionEventsRequest(dispatcher_id="disp", events=events[offset : offset + 100]))
+            dispatcher_append_execution_events(
+                leased.id,
+                AppendExecutionEventsRequest(
+                    dispatcher_id="disp",
+                    sink_token=leased.sink_token,
+                    events=events[offset : offset + 100],
+                ),
+            )
 
         dispatcher_finish_execution(
             leased.id,
             FinishExecutionRequest(
                 dispatcher_id="disp",
+                sink_token=leased.sink_token,
                 events=[
                     ExecutionEventAppend(event_type="message", role="assistant", payload={"text": "complete final"}, event_key="assistant-final", ts="t301"),
                     ExecutionEventAppend(event_type="status", payload={"status": "succeeded"}, event_key="terminal", ts="t302"),

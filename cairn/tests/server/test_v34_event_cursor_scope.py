@@ -7,9 +7,9 @@ import unittest
 from fastapi import HTTPException
 
 from cairn.server import db
-from cairn.server.models import AppendExecutionEventsRequest, CreateExecutionRequest, CreateProjectRequest, ExecutionEventAppend
+from cairn.server.models import AppendExecutionEventsRequest, CreateExecutionRequest, CreateProjectRequest, ExecutionEventAppend, LeaseExecutionRequest
 from cairn.server.routers.branches import BranchMessageRequest, CreateBranchRequest, create_branch, get_branch_timeline, post_branch_message
-from cairn.server.routers.executions import create_project_execution, dispatcher_append_execution_events, get_project_execution_events
+from cairn.server.routers.executions import create_project_execution, dispatcher_append_execution_events, dispatcher_lease_pending_execution, get_project_execution_events
 from cairn.server.routers.projects import create_project
 
 
@@ -26,10 +26,17 @@ class V34EventCursorScopeTests(unittest.TestCase):
 
     def test_execution_events_reject_other_execution_cursor_in_same_project(self) -> None:
         one = create_project_execution(self.project_id, CreateExecutionRequest(task_type="explore", phase="bootstrap"))
+        one = dispatcher_lease_pending_execution(
+            LeaseExecutionRequest(execution_id=one.id, dispatcher_id="disp", worker_name="mock", worker_type="mock")
+        )
         two = create_project_execution(self.project_id, CreateExecutionRequest(task_type="explore", phase="bootstrap"))
         first = dispatcher_append_execution_events(
             one.id,
-            AppendExecutionEventsRequest(events=[ExecutionEventAppend(event_type="stdout", payload={"text": "one"}, event_key="one")]),
+            AppendExecutionEventsRequest(
+                dispatcher_id="disp",
+                sink_token=one.sink_token,
+                events=[ExecutionEventAppend(event_type="stdout", payload={"text": "one"}, event_key="one")],
+            ),
         )[0]
 
         with self.assertRaises(HTTPException) as conflict:

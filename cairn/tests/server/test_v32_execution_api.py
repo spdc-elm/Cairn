@@ -71,7 +71,7 @@ class V32ExecutionApiTests(unittest.TestCase):
 
         running = dispatcher_patch_execution(
             leased.id,
-            PatchExecutionRequest(status="running", lease_seconds=30),
+            PatchExecutionRequest(dispatcher_id="disp", sink_token=leased.sink_token, status="running", lease_seconds=30),
         )
         self.assertEqual(running.status, "running")
         self.assertIsNotNone(running.started_at)
@@ -79,6 +79,8 @@ class V32ExecutionApiTests(unittest.TestCase):
         events = dispatcher_append_execution_events(
             leased.id,
             AppendExecutionEventsRequest(
+                dispatcher_id="disp",
+                sink_token=leased.sink_token,
                 events=[
                     ExecutionEventAppend(event_type="stdout", payload={"text": "hi"}, event_key="chunk-1"),
                     ExecutionEventAppend(event_type="message", role="assistant", payload={"text": "answer"}, event_key="msg-1"),
@@ -98,7 +100,12 @@ class V32ExecutionApiTests(unittest.TestCase):
             self.project_id,
             CreateExecutionRequest(intent_id=self.intent.id, task_type="explore", phase="run"),
         )
+        execution = dispatcher_lease_pending_execution(
+            LeaseExecutionRequest(execution_id=execution.id, dispatcher_id="disp", worker_name="mock", worker_type="mock")
+        )
         body = AppendExecutionEventsRequest(
+            dispatcher_id="disp",
+            sink_token=execution.sink_token,
             events=[ExecutionEventAppend(event_type="stdout", payload={"text": "once"}, event_key="same")]
         )
         first = dispatcher_append_execution_events(execution.id, body)[0]
@@ -106,6 +113,8 @@ class V32ExecutionApiTests(unittest.TestCase):
         third = dispatcher_append_execution_events(
             execution.id,
             AppendExecutionEventsRequest(
+                dispatcher_id="disp",
+                sink_token=execution.sink_token,
                 events=[ExecutionEventAppend(event_type="stderr", payload={"text": "next"}, event_key="next")]
             ),
         )[0]
@@ -153,7 +162,15 @@ class V32ExecutionApiTests(unittest.TestCase):
                 phase="run",
             ),
         )
-        dispatcher_patch_execution(leased.id, PatchExecutionRequest(status="failed", error_detail="lease_expired"))
+        dispatcher_patch_execution(
+            leased.id,
+            PatchExecutionRequest(
+                dispatcher_id="disp",
+                sink_token=leased.sink_token,
+                status="failed",
+                error_detail="lease_expired",
+            ),
+        )
 
         detail = get_project(self.project_id)
         intent = next(item for item in detail.intents if item.id == self.intent.id)

@@ -9,6 +9,7 @@ from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.runtime.cancellation import TaskCancellation
 from cairn.dispatcher.runtime.environments.base import WorkEnvironment
 from cairn.dispatcher.runtime.event_sink import ExecutionEventSink
+from cairn.dispatcher.runtime.heartbeat import HeartbeatLease
 from cairn.dispatcher.tasks.common import finish_execution_terminal, prepare_agent_context_for_execution, run_worker_process, _worker_secrets
 from cairn.dispatcher.workers.registry import get_driver
 from cairn.shared.worker_events import message_event, status_event
@@ -44,6 +45,7 @@ def _run_question_execution_task(
 ) -> str:
     dispatcher_id = "dispatcher"
     execution_id = execution["id"]
+    sink_token = execution.get("sink_token")
     session_action = execution.get("session_action") or "fresh_context"
     mode = _mode_from_session_action(session_action)
     source_session = execution.get("remote_session_in_id")
@@ -52,11 +54,17 @@ def _run_question_execution_task(
     sink = ExecutionEventSink(
         client,
         execution_id,
+        sink_token=sink_token,
         secrets=_worker_secrets(worker),
         event_projector=driver.stream_event_projector(execution_id),
         live_flush=False,
     )
-    client.patch_execution(execution_id, {"dispatcher_id": dispatcher_id, "status": "running"})
+    lease = HeartbeatLease.for_execution(client, execution_id, worker.name, config.runtime.interval, sink_token=sink_token)
+    lease.start()
+    running_patch = {"dispatcher_id": dispatcher_id, "status": "running"}
+    if sink_token is not None:
+        running_patch["sink_token"] = sink_token
+    client.patch_execution(execution_id, running_patch)
     try:
         handle = environment.prepare_project(project.project.id)
         runtime_context = prepare_agent_context_for_execution(
@@ -65,6 +73,7 @@ def _run_question_execution_task(
             handle,
             project_id=project.project.id,
             execution_id=execution_id,
+            sink_token=sink_token,
         )
         driver_result = driver.build_question(
             worker,
@@ -83,6 +92,7 @@ def _run_question_execution_task(
             project_id=project.project.id,
             task_type="question",
             intent_id=None,
+            lease=lease,
             cancellation=cancellation,
             event_sink=sink,
             close_event_sink_on_finish=False,
@@ -97,6 +107,7 @@ def _run_question_execution_task(
         finish_execution_terminal(
             client,
             execution_id,
+            sink_token=sink_token,
             events=[
                 status_event(
                     "failed",
@@ -113,6 +124,8 @@ def _run_question_execution_task(
             },
         )
         return "error"
+    finally:
+        lease.stop()
 
     sink.flush_projector_events()
     session = driver.extract_session_provenance(driver_result.session, run.stdout, run.stderr)
@@ -133,6 +146,14 @@ def _run_question_execution_task(
     }
     if run.run_log_ref is not None:
         patch_fields["metadata"] = {"raw_stream": run.run_log_ref}
+    if lease.failure is not None:
+        sink.write_event(
+            message_event(
+                "system",
+                f"dispatcher diagnostic: heartbeat_cancelled status={lease.failure.status_code} detail={lease.failure.text}",
+                event_key=f"{execution_id}:diagnostic:heartbeat-cancelled",
+            )
+        )
     closed = sink.close(
         terminal_status=terminal_status,
         returncode=run.returncode,

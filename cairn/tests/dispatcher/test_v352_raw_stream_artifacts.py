@@ -17,7 +17,7 @@ class FakeClient:
     def __init__(self):
         self.events = []
 
-    def append_execution_events(self, execution_id, *, dispatcher_id=None, events=None):
+    def append_execution_events(self, execution_id, *, dispatcher_id=None, sink_token=None, events=None):
         self.events.extend(events or [])
         return FakeResponse()
 

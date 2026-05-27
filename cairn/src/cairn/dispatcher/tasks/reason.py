@@ -45,12 +45,13 @@ def run_reason_task(
     worker: WorkerConfig,
     cancellation: TaskCancellation,
     execution_id: str | None = None,
+    sink_token: str | None = None,
 ) -> str:
     driver = get_driver(worker.type)
     task_started = time.perf_counter()
     healthcheck_timeout = config.runtime.healthcheck_timeout
     lease = (
-        HeartbeatLease.for_execution(client, execution_id, worker.name, config.runtime.interval)
+        HeartbeatLease.for_execution(client, execution_id, worker.name, config.runtime.interval, sink_token=sink_token)
         if execution_id is not None
         else HeartbeatLease.for_reason(client, project.project.id, worker.name, config.runtime.interval)
     )
@@ -151,6 +152,7 @@ def run_reason_task(
             handle,
             project_id=project.project.id,
             execution_id=execution_id,
+            sink_token=sink_token,
         )
         session = driver.prepare_session()
         command = driver.build_execute(worker, prompt, session, runtime_context=runtime_context)
@@ -171,6 +173,7 @@ def run_reason_task(
                 ExecutionEventSink(
                     client,
                     execution_id,
+                    sink_token=sink_token,
                     secrets=_worker_secrets(worker),
                     event_projector=driver.stream_event_projector(execution_id),
                 )
@@ -180,7 +183,15 @@ def run_reason_task(
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
         total_ms = int((time.perf_counter() - task_started) * 1000)
-        session = record_remote_session(client, project.project.id, result, driver, session, execution_id=execution_id)
+        session = record_remote_session(
+            client,
+            project.project.id,
+            result,
+            driver,
+            session,
+            execution_id=execution_id,
+            sink_token=sink_token,
+        )
         cancelled = cancel_reason(result, cancellation)
         if cancelled is not None:
             LOG.info(

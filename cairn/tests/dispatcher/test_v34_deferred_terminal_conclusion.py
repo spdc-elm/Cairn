@@ -28,12 +28,12 @@ class RecordingClient:
         self.conclude_calls: list[dict] = []
         self.release_calls: list[dict] = []
 
-    def append_execution_events(self, execution_id: str, *, dispatcher_id: str | None = None, events: list[dict]):
+    def append_execution_events(self, execution_id: str, *, dispatcher_id: str | None = None, sink_token: str | None = None, events: list[dict]):
         self.calls.append("append")
         self.append_batches.append(events)
         return FakeResponse(True)
 
-    def finish_execution(self, execution_id: str, *, dispatcher_id: str, events: list[dict], patch: dict):
+    def finish_execution(self, execution_id: str, *, dispatcher_id: str, sink_token: str | None = None, events: list[dict], patch: dict):
         self.calls.append("finish")
         self.finish_calls.append({"events": events, "patch": patch})
         return FakeResponse(True)

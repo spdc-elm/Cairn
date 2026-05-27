@@ -7,8 +7,8 @@ import unittest
 from fastapi import HTTPException
 
 from cairn.server import db
-from cairn.server.models import AppendExecutionEventsRequest, CreateExecutionRequest, CreateProjectRequest, ExecutionEventAppend
-from cairn.server.routers.executions import create_project_execution, dispatcher_append_execution_events, get_project_execution_events
+from cairn.server.models import AppendExecutionEventsRequest, CreateExecutionRequest, CreateProjectRequest, ExecutionEventAppend, LeaseExecutionRequest
+from cairn.server.routers.executions import create_project_execution, dispatcher_append_execution_events, dispatcher_lease_pending_execution, get_project_execution_events
 from cairn.server.routers.projects import create_project
 
 
@@ -29,20 +29,30 @@ class V32EventCursorConcurrencyTests(unittest.TestCase):
             self.project_id,
             CreateExecutionRequest(task_type="explore", phase="bootstrap"),
         )
+        first = dispatcher_lease_pending_execution(
+            LeaseExecutionRequest(execution_id=first.id, dispatcher_id="disp", worker_name="mock", worker_type="mock")
+        )
         second = create_project_execution(
             self.project_id,
             CreateExecutionRequest(task_type="explore", phase="bootstrap"),
+        )
+        second = dispatcher_lease_pending_execution(
+            LeaseExecutionRequest(execution_id=second.id, dispatcher_id="disp", worker_name="mock", worker_type="mock")
         )
 
         first_event = dispatcher_append_execution_events(
             first.id,
             AppendExecutionEventsRequest(
+                dispatcher_id="disp",
+                sink_token=first.sink_token,
                 events=[ExecutionEventAppend(event_type="stdout", payload={"text": "first"}, event_key="a")]
             ),
         )[0]
         second_event = dispatcher_append_execution_events(
             second.id,
             AppendExecutionEventsRequest(
+                dispatcher_id="disp",
+                sink_token=second.sink_token,
                 events=[ExecutionEventAppend(event_type="stdout", payload={"text": "second"}, event_key="b")]
             ),
         )[0]
@@ -56,9 +66,14 @@ class V32EventCursorConcurrencyTests(unittest.TestCase):
             self.project_id,
             CreateExecutionRequest(task_type="reason", phase="run"),
         )
+        execution = dispatcher_lease_pending_execution(
+            LeaseExecutionRequest(execution_id=execution.id, dispatcher_id="disp", worker_name="mock", worker_type="mock")
+        )
         event = dispatcher_append_execution_events(
             execution.id,
             AppendExecutionEventsRequest(
+                dispatcher_id="disp",
+                sink_token=execution.sink_token,
                 events=[ExecutionEventAppend(event_type="stdout", payload={"text": "first"}, event_key="a")]
             ),
         )[0]

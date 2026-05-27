@@ -151,6 +151,7 @@ def prepare_agent_context_for_execution(
     *,
     project_id: str,
     execution_id: str | None,
+    sink_token: str | None = None,
 ) -> WorkerRuntimeContext:
     if execution_id is None:
         return WorkerRuntimeContext()
@@ -162,10 +163,14 @@ def prepare_agent_context_for_execution(
         materialized = materialize_agent_context(environment, handle, payload)
     except AgentContextMaterializationError as exc:
         metadata = exc.metadata or {"enabled": False, "status": "error"}
-        client.patch_execution(execution_id, {"dispatcher_id": "dispatcher", "metadata": {"agent_context": metadata}})
+        patch_payload = {"dispatcher_id": "dispatcher", "metadata": {"agent_context": metadata}}
+        if sink_token is not None:
+            patch_payload["sink_token"] = sink_token
+        client.patch_execution(execution_id, patch_payload)
         finish_execution_terminal(
             client,
             execution_id,
+            sink_token=sink_token,
             events=[
                 status_event(
                     "failed",
@@ -192,6 +197,7 @@ def prepare_agent_context_for_execution(
         finish_execution_terminal(
             client,
             execution_id,
+            sink_token=sink_token,
             events=[
                 status_event(
                     "failed",
@@ -208,7 +214,10 @@ def prepare_agent_context_for_execution(
             },
         )
         raise
-    client.patch_execution(execution_id, {"dispatcher_id": "dispatcher", "metadata": {"agent_context": materialized.metadata()}})
+    patch_payload = {"dispatcher_id": "dispatcher", "metadata": {"agent_context": materialized.metadata()}}
+    if sink_token is not None:
+        patch_payload["sink_token"] = sink_token
+    client.patch_execution(execution_id, patch_payload)
     return WorkerRuntimeContext(
         agent_context_enabled=materialized.enabled and materialized.status == "materialized",
         agent_context_kind=materialized.kind,
@@ -417,17 +426,19 @@ def record_remote_session(
     driver,
     prepared_session: str | None,
     execution_id: str | None = None,
+    sink_token: str | None = None,
 ) -> str | None:
     session = driver.extract_session_provenance(prepared_session, run.stdout, run.stderr)
     if execution_id is not None:
-        response = client.patch_execution(
-            execution_id,
-            {
-                "remote_session_out_kind": session.kind,
-                "remote_session_out_id": session.id,
-                "remote_session_out_status": session.status,
-            },
-        )
+        patch_payload = {
+            "remote_session_out_kind": session.kind,
+            "remote_session_out_id": session.id,
+            "remote_session_out_status": session.status,
+        }
+        if sink_token is not None:
+            patch_payload["dispatcher_id"] = "dispatcher"
+            patch_payload["sink_token"] = sink_token
+        response = client.patch_execution(execution_id, patch_payload)
         if not response.ok:
             LOG.warning(
                 "execution session update failed project=%s execution=%s status=%s body=%s",
@@ -644,17 +655,21 @@ def finish_execution_terminal(
     events: list[dict[str, Any]],
     patch: dict[str, Any],
     dispatcher_id: str = "dispatcher",
+    sink_token: str | None = None,
 ):
     finish = getattr(client, "finish_execution", None)
     if callable(finish):
         return finish(
             execution_id,
             dispatcher_id=dispatcher_id,
+            sink_token=sink_token,
             events=events,
             patch={key: value for key, value in patch.items() if key != "dispatcher_id"},
         )
-    append = client.append_execution_events(execution_id, dispatcher_id=dispatcher_id, events=events)
+    append = client.append_execution_events(execution_id, dispatcher_id=dispatcher_id, sink_token=sink_token, events=events)
     if not append.ok:
         return append
     patch_payload = {"dispatcher_id": dispatcher_id, **patch}
+    if sink_token is not None:
+        patch_payload["sink_token"] = sink_token
     return client.patch_execution(execution_id, patch_payload)

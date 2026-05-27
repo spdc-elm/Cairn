@@ -328,11 +328,19 @@ class CairnClient:
             },
         )
 
-    def heartbeat_execution(self, execution_id: str, *, dispatcher_id: str, lease_seconds: int = 60) -> ApiResult:
+    def heartbeat_execution(
+        self,
+        execution_id: str,
+        *,
+        dispatcher_id: str,
+        sink_token: str | None = None,
+        lease_seconds: int = 60,
+    ) -> ApiResult:
         return self.patch_execution(
             execution_id,
             {
                 "dispatcher_id": dispatcher_id,
+                "sink_token": sink_token,
                 "last_heartbeat_at": None,
                 "lease_seconds": lease_seconds,
             },
@@ -350,12 +358,16 @@ class CairnClient:
         execution_id: str,
         *,
         dispatcher_id: str | None = None,
+        sink_token: str | None = None,
         events: list[dict[str, Any]],
     ) -> ApiResult:
+        body: dict[str, Any] = {"dispatcher_id": dispatcher_id, "events": events}
+        if sink_token is not None:
+            body["sink_token"] = sink_token
         return self._request_json(
             "POST",
             f"/dispatcher/executions/{execution_id}/events",
-            json={"dispatcher_id": dispatcher_id, "events": events},
+            json=body,
         )
 
     def finish_execution(
@@ -363,13 +375,17 @@ class CairnClient:
         execution_id: str,
         *,
         dispatcher_id: str,
+        sink_token: str | None = None,
         events: list[dict[str, Any]],
         patch: dict[str, Any],
     ) -> ApiResult:
+        body: dict[str, Any] = {"dispatcher_id": dispatcher_id, "events": events, "patch": patch}
+        if sink_token is not None:
+            body["sink_token"] = sink_token
         return self._request_json(
             "POST",
             f"/dispatcher/executions/{execution_id}/finish",
-            json={"dispatcher_id": dispatcher_id, "events": events, "patch": patch},
+            json=body,
         )
 
     def upload_execution_artifact(self, execution_id: str, payload: dict[str, Any]) -> ApiResult:

@@ -174,6 +174,7 @@ class ExecutionRun(BaseModel):
     workspace: str | None = None
     status: ExecutionStatus
     leased_by: str | None = None
+    sink_token: str | None = None
     leased_at: str | None = None
     lease_expires_at: str | None = None
     last_heartbeat_at: str | None = None
@@ -322,6 +323,7 @@ class PatchExecutionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     dispatcher_id: str | None = None
+    sink_token: str | None = None
     status: ExecutionStatus | None = None
     last_heartbeat_at: str | None = None
     lease_seconds: int | None = Field(default=None, gt=0)
@@ -367,6 +369,7 @@ class AppendExecutionEventsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     dispatcher_id: str | None = None
+    sink_token: str | None = None
     events: list[ExecutionEventAppend] = Field(min_length=1, max_length=250)
 
 
@@ -387,6 +390,7 @@ class FinishExecutionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     dispatcher_id: str
+    sink_token: str | None = None
     events: list[ExecutionEventAppend] = Field(default_factory=list, max_length=250)
     patch: FinishExecutionPatch
 

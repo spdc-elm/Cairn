@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import json
 import hashlib
+import secrets
 from pathlib import PurePosixPath
 from datetime import datetime, timedelta, timezone
 
@@ -842,6 +843,7 @@ def dumps_json(value) -> str | None:
 
 
 def execution_run_row_to_model(row: sqlite3.Row) -> ExecutionRun:
+    keys = row.keys()
     return ExecutionRun(
         id=row["id"],
         project_id=row["project_id"],
@@ -859,6 +861,7 @@ def execution_run_row_to_model(row: sqlite3.Row) -> ExecutionRun:
         workspace=row["workspace"],
         status=row["status"],
         leased_by=row["leased_by"],
+        sink_token=row["sink_token"] if "sink_token" in keys else None,
         leased_at=row["leased_at"],
         lease_expires_at=row["lease_expires_at"],
         last_heartbeat_at=row["last_heartbeat_at"],
@@ -1074,18 +1077,20 @@ def claim_pending_healthcheck_executions(
     lease_expires_at = _add_seconds(now, lease_seconds)
     claimed: list[ExecutionRun] = []
     for row in rows:
+        sink_token = secrets.token_hex(16)
         conn.execute(
             """
             UPDATE execution_runs
             SET status = 'leased',
                 leased_by = ?,
+                sink_token = ?,
                 leased_at = ?,
                 lease_expires_at = ?,
                 last_heartbeat_at = ?,
                 updated_at = ?
             WHERE id = ? AND status = 'pending'
             """,
-            (dispatcher_id, now, lease_expires_at, now, now, row["id"]),
+            (dispatcher_id, sink_token, now, lease_expires_at, now, now, row["id"]),
         )
         updated = conn.execute("SELECT * FROM execution_runs WHERE id = ?", (row["id"],)).fetchone()
         if updated is not None and updated["status"] == "leased":
@@ -1123,11 +1128,13 @@ def claim_pending_question_executions(
         identity = _question_execution_claim_identity(conn, row, worker_names, environment_ids)
         if identity is None:
             continue
+        sink_token = secrets.token_hex(16)
         conn.execute(
             """
             UPDATE execution_runs
             SET status = 'leased',
                 leased_by = ?,
+                sink_token = ?,
                 leased_at = ?,
                 lease_expires_at = ?,
                 last_heartbeat_at = ?,
@@ -1142,6 +1149,7 @@ def claim_pending_question_executions(
             """,
             (
                 dispatcher_id,
+                sink_token,
                 now,
                 lease_expires_at,
                 now,
@@ -1369,11 +1377,13 @@ def lease_execution(conn: sqlite3.Connection, body: LeaseExecutionRequest, *, in
         execution = get_execution_or_404(conn, body.project_id, body.execution_id)
         if execution.status != "pending":
             raise HTTPException(409, f"Execution is {execution.status}")
+    sink_token = secrets.token_hex(16)
     conn.execute(
         """
         UPDATE execution_runs
         SET status = 'leased',
             leased_by = ?,
+            sink_token = ?,
             leased_at = ?,
             lease_expires_at = ?,
             last_heartbeat_at = ?,
@@ -1388,6 +1398,7 @@ def lease_execution(conn: sqlite3.Connection, body: LeaseExecutionRequest, *, in
         """,
         (
             body.dispatcher_id,
+            sink_token,
             now,
             lease_expires_at,
             now,
@@ -1455,6 +1466,7 @@ def patch_execution(conn: sqlite3.Connection, execution_id: str, body: PatchExec
     if current.status in TERMINAL_EXECUTION_STATUSES:
         allowed_terminal_followup = {
             "dispatcher_id",
+            "sink_token",
             "remote_session_out_kind",
             "remote_session_out_id",
             "remote_session_out_status",
@@ -1903,6 +1915,8 @@ def finish_execution(
     current = get_execution_or_404(conn, None, execution_id)
     if current.leased_by is not None and current.leased_by != body.dispatcher_id:
         raise HTTPException(403, "Execution is leased by another dispatcher")
+    if current.sink_token is not None and body.sink_token != current.sink_token:
+        raise HTTPException(409, "Sink token mismatch; stale sink writer rejected")
     if current.status in TERMINAL_EXECUTION_STATUSES:
         _ensure_duplicate_finish(conn, current, body)
         return current
@@ -1913,7 +1927,7 @@ def finish_execution(
         append_execution_events(
             conn,
             execution_id,
-            AppendExecutionEventsRequest(dispatcher_id=body.dispatcher_id, events=body.events),
+            AppendExecutionEventsRequest(dispatcher_id=body.dispatcher_id, sink_token=body.sink_token, events=body.events),
         )
     patch_fields = body.patch.model_dump(exclude_unset=True)
     patch_fields["dispatcher_id"] = body.dispatcher_id
@@ -1973,12 +1987,24 @@ def _canonical_append_tuple(event) -> tuple:
 
 def _ensure_canonical_event_matches(row: sqlite3.Row, event) -> None:
     append_ts = event.ts if event.ts is not None else row["ts"]
-    if _canonical_event_tuple(row["event_type"], row["role"], row["payload_json"], row["ts"]) != (
-        event.event_type,
-        event.role,
-        dumps_json(event.payload) or "{}",
-        append_ts,
-    ):
+    existing = _canonical_event_tuple(row["event_type"], row["role"], row["payload_json"], row["ts"])
+    incoming = (event.event_type, event.role, dumps_json(event.payload) or "{}", append_ts)
+    if existing != incoming:
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
+        existing_payload_hash = hashlib.sha256((existing[2] or "").encode()).hexdigest()[:12]
+        incoming_payload_hash = hashlib.sha256((incoming[2] or "").encode()).hexdigest()[:12]
+        _log.warning(
+            "event_key_conflict execution_id=%s event_key=%s existing_type=%s new_type=%s "
+            "existing_payload_hash=%s new_payload_hash=%s payload_size_bytes=%d",
+            row["execution_id"],
+            row["event_key"],
+            row["event_type"],
+            event.event_type,
+            existing_payload_hash,
+            incoming_payload_hash,
+            len((incoming[2] or "").encode()),
+        )
         raise HTTPException(409, "Event key conflict")
 
 
@@ -2239,6 +2265,37 @@ def expire_workers(conn: sqlite3.Connection, project_id: str | None = None) -> N
         query = query.replace("WHERE ", "WHERE project_id = ? AND ", 1)
         params = (project_id, now, now, now, timeout)
     conn.execute(query, params)
+    _expire_stale_branch_executions(conn, timeout, project_id)
+
+
+def _expire_stale_branch_executions(conn: sqlite3.Connection, timeout: int, project_id: str | None = None) -> None:
+    now = utcnow()
+    select_query = """
+        SELECT id FROM execution_runs
+        WHERE branch_id IS NOT NULL
+          AND intent_id IS NULL
+          AND status IN ('leased','running')
+          AND last_heartbeat_at IS NOT NULL
+          AND (julianday(?) - julianday(last_heartbeat_at)) * 86400 > ?
+    """
+    select_params: tuple = (now, timeout)
+    if project_id is not None:
+        select_query = select_query.replace("WHERE ", "WHERE project_id = ? AND ", 1)
+        select_params = (project_id, now, timeout)
+    stale_rows = conn.execute(select_query, select_params).fetchall()
+    for row in stale_rows:
+        conn.execute(
+            """
+            UPDATE execution_runs
+            SET status = 'failed',
+                finished_at = COALESCE(finished_at, ?),
+                error_code = COALESCE(error_code, 'lease_expired'),
+                updated_at = ?
+            WHERE id = ? AND status IN ('leased','running')
+            """,
+            (now, now, row["id"]),
+        )
+        release_execution_session_lock(conn, row["id"])
 
 
 def expire_reason_leases(conn: sqlite3.Connection, project_id: str | None = None) -> None:

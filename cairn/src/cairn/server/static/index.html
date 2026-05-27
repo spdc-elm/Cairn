@@ -2882,7 +2882,17 @@ function cairnApp() {
       for (let pageIndex = 0; pageIndex < 200; pageIndex++) {
         const params = new URLSearchParams({ limit: String(pageLimit) });
         if (cursor) params.set('after_cursor', cursor);
-        const page = await this.api('GET', `/projects/${projectId}/executions/${encodeURIComponent(executionId)}/events?${params.toString()}`);
+        let page;
+        try {
+          page = await this.api('GET', `/projects/${projectId}/executions/${encodeURIComponent(executionId)}/events?${params.toString()}`);
+        } catch (err) {
+          if (cursor && (err.message.includes('Foreign cursor') || err.message.includes('Invalid cursor') || err.message.includes('Cursor does not belong'))) {
+            cursor = null;
+            events.length = 0;
+            continue;
+          }
+          throw err;
+        }
         const pageEvents = page.events || [];
         events.push(...pageEvents);
         const next = page.next_cursor || (pageEvents.length ? pageEvents[pageEvents.length - 1].cursor : cursor);
@@ -2899,7 +2909,17 @@ function cairnApp() {
       for (let pageIndex = 0; pageIndex < 200; pageIndex++) {
         const params = new URLSearchParams({ limit: String(pageLimit) });
         if (cursor) params.set('after_cursor', cursor);
-        const page = await this.api('GET', `/projects/${projectId}/branches/${encodeURIComponent(branchId)}/timeline?${params.toString()}`);
+        let page;
+        try {
+          page = await this.api('GET', `/projects/${projectId}/branches/${encodeURIComponent(branchId)}/timeline?${params.toString()}`);
+        } catch (err) {
+          if (cursor && (err.message.includes('Foreign cursor') || err.message.includes('Invalid cursor') || err.message.includes('Cursor does not belong'))) {
+            cursor = null;
+            events.length = 0;
+            continue;
+          }
+          throw err;
+        }
         const pageEvents = page.events || [];
         events.push(...pageEvents);
         const next = page.next_cursor || (pageEvents.length ? pageEvents[pageEvents.length - 1].cursor : cursor);

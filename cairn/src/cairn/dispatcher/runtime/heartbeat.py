@@ -77,11 +77,13 @@ class HeartbeatLease:
         execution_id: str,
         worker_name: str,
         interval: int,
+        sink_token: str | None = None,
     ) -> "HeartbeatLease":
         return cls(
             heartbeat=lambda: client.heartbeat_execution(
                 execution_id,
                 dispatcher_id="dispatcher",
+                sink_token=sink_token,
                 lease_seconds=max(interval * HEARTBEAT_FAILURE_GRACE_MULTIPLIER, interval),
             ),
             scope=f"execution={execution_id}",

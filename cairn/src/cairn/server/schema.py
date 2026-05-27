@@ -187,6 +187,7 @@ CREATE TABLE IF NOT EXISTS execution_runs (
     workspace TEXT,
     status TEXT NOT NULL CHECK (status IN ('pending','leased','running','succeeded','failed','cancelled')),
     leased_by TEXT,
+    sink_token TEXT,
     leased_at TEXT,
     lease_expires_at TEXT,
     last_heartbeat_at TEXT,

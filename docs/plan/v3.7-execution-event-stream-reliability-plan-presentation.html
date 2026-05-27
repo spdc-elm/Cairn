@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>v3.7 Execution Event Stream Reliability Plan</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fb;
+      --ink: #18202f;
+      --muted: #5c667a;
+      --line: #d9deea;
+      --panel: #ffffff;
+      --accent: #1f8f78;
+      --accent-2: #d65f3b;
+      --accent-3: #4d6fb3;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      letter-spacing: 0;
+    }
+    header {
+      padding: 28px 36px 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      line-height: 1.15;
+      font-weight: 760;
+    }
+    header p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 920px;
+      line-height: 1.55;
+    }
+    main {
+      max-width: 1160px;
+      margin: 0 auto;
+      padding: 28px 24px 48px;
+    }
+    section {
+      margin-bottom: 28px;
+    }
+    h2 {
+      margin: 0 0 14px;
+      font-size: 18px;
+      line-height: 1.3;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      min-height: 126px;
+    }
+    .card h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+      line-height: 1.3;
+    }
+    .card p, li {
+      color: var(--muted);
+      line-height: 1.48;
+      font-size: 14px;
+    }
+    .card p { margin: 0; }
+    ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+    }
+    .route {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .step {
+      border-left: 4px solid var(--accent-3);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 14px;
+      border-top: 1px solid var(--line);
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+    .step strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+    .step span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .callout {
+      border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+      border-left: 5px solid var(--accent);
+      border-radius: 8px;
+      padding: 16px;
+      background: #f3fbf8;
+    }
+    .warn {
+      border-color: color-mix(in srgb, var(--accent-2) 45%, var(--line));
+      border-left-color: var(--accent-2);
+      background: #fff7f3;
+    }
+    code {
+      background: #eef1f7;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 0.92em;
+    }
+    @media (max-width: 860px) {
+      header { padding: 24px 20px 16px; }
+      h1 { font-size: 24px; }
+      main { padding: 20px 14px 36px; }
+      .grid, .grid.two, .route { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>v3.7 Execution Event Stream Reliability</h1>
+    <p>目标是把 resume/fork、ExecutionEvent 写入、Output 实时预览和可观测性拉回同一个清晰契约：每轮执行一个 ExecutionRun，事件主链路稳定、实时、可诊断。</p>
+  </header>
+  <main>
+    <section>
+      <h2>核心判断</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>不是 batch size 问题</h3>
+          <p><code>too_long 251</code> 是 409 后队列滚雪球的次生灾害，根因是同 execution 被重写或 close-side events 重复生成。</p>
+        </div>
+        <div class="card">
+          <h3>ExecutionRun 是原子边界</h3>
+          <p>fork/resume 每一轮必须创建新的 execution，不能复用 source execution id 重新从 <code>status:1</code> 写事件。</p>
+        </div>
+        <div class="card">
+          <h3>event_key 是稳定幂等键</h3>
+          <p>同 key 不同 event 仍必须冲突；修复方向是 single writer 和确定性 key，不是吞掉冲突。</p>
+        </div>
+        <div class="card">
+          <h3>single writer 需要 token</h3>
+          <p><code>leased_by</code> 只能区分 dispatcher，不能区分同 dispatcher 的 stale sink；append/finish/patch 需要持久 <code>sink_token</code>。</p>
+        </div>
+        <div class="card">
+          <h3>内部写入分流</h3>
+          <p>branch 初始 user event 与 manual conclude terminal event 走 server-internal helper，不套 dispatcher append 权限。</p>
+        </div>
+        <div class="card">
+          <h3>诊断不泄漏 payload</h3>
+          <p>server canonical diff 只打 hash/shape，不输出 raw stdout、message 或 API key preview。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>实施路线</h2>
+      <div class="route">
+        <div class="step"><strong>0. 基线测试</strong><span>固定 409、251、重复 raw metric、terminal append 等失败模式。</span></div>
+        <div class="step"><strong>1. Server 契约</strong><span>状态/owner guard、terminal replay、finish barrier、conflict diagnostic。</span></div>
+        <div class="step"><strong>2. EventSink 状态机</strong><span>拆分 live flush 与 finish，切片批量，409/422 fail-fast。</span></div>
+        <div class="step"><strong>3. Branch 稳定性</strong><span>每条 branch message 新 execution，resume lock 释放，fork lineage 正确。</span></div>
+        <div class="step"><strong>4. UI 实时预览</strong><span>running、last event age、bounded diagnostic、长输出持续可见。</span></div>
+        <div class="step"><strong>5. 可观测性</strong><span>结构化日志、canonical diff、sink summary、诊断 SQL。</span></div>
+        <div class="step"><strong>6. SSOT 合并</strong><span>实现后把 single-writer、state machine、UI 规则写回架构事实源。</span></div>
+        <div class="step"><strong>7. E2E 验收</strong><span>真实 server/dispatcher/browser/worker 流程跑完 fork 和 resume。</span></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>验收重点</h2>
+      <div class="grid two">
+        <div class="card">
+          <h3>稳定性</h3>
+          <ul>
+            <li>terminal execution 后不能追加新事件。</li>
+            <li>fork/resume 多轮不复用 source execution。</li>
+            <li>owner + sink token 阻止第二个 stale sink。</li>
+            <li>409/422 后不刷屏，不出现 251 events。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>实时体验</h3>
+          <ul>
+            <li>2 秒内看到 running。</li>
+            <li>5 秒内看到 3 个 1s marker。</li>
+            <li>运行中 last event age 小于 3 秒。</li>
+            <li>final assistant/status 不丢、不被 terminal 抢跑。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>UI 隔离</h3>
+          <ul>
+            <li>fork 输出关闭和刷新后不进入 source。</li>
+            <li>resume 输出刷新后进入主 history。</li>
+            <li>1000+ events 不爆 DOM，不铺开大 diagnostic。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>可观测性</h3>
+          <ul>
+            <li>日志能关联 execution、sink、batch、event key、run log。</li>
+            <li>409 只打 hash/shape diff。</li>
+            <li>诊断事件不进入普通 Conversation。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="callout">
+      <h2>架构取舍</h2>
+      <p>优先强化现有 ExecutionRun / ExecutionEvent 主链路，不引入旧 transcript 或 run provenance 兼容路径。本轮接受 schema delta：为 dispatcher writer 增加 <code>sink_token</code> 或等价 generation，专门解决同 dispatcher stale sink。</p>
+    </section>
+
+    <section class="callout warn">
+      <h2>最大风险</h2>
+      <p>如果只修 EventSink 而不修 server append guard 和 branch execution lifecycle，下一次仍可能由另一路复用 execution id 触发同类冲突。因此计划把 server contract 放在 EventSink 重构之前。</p>
+    </section>
+  </main>
+</body>
+</html>

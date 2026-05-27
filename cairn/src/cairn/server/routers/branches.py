@@ -16,6 +16,7 @@ from cairn.server.services import (
     append_execution_events,
     create_execution_run,
     execution_event_row_to_model,
+    expire_workers,
     get_execution_or_404,
     get_project_or_404,
     next_branch_id,
@@ -135,6 +136,7 @@ def create_branch(project_id: str, body: CreateBranchRequest):
 @router.post("/projects/{project_id}/branches/{branch_id}/messages")
 def post_branch_message(project_id: str, branch_id: str, body: BranchMessageRequest):
     with get_conn() as conn:
+        expire_workers(conn, project_id)
         branch = _branch_row(conn, project_id, branch_id)
         session = _next_session_input(conn, branch)
         session_action = _session_action(conn, branch)
@@ -175,6 +177,7 @@ def post_branch_message(project_id: str, branch_id: str, body: BranchMessageRequ
 @router.get("/projects/{project_id}/branches/{branch_id}/timeline", response_model=ExecutionEventsResponse)
 def get_branch_timeline(project_id: str, branch_id: str, after_cursor: str | None = None, limit: int = 200):
     with get_conn() as conn:
+        expire_workers(conn, project_id)
         _branch_row(conn, project_id, branch_id)
         after_project_seq = 0
         if after_cursor:
@@ -376,31 +379,3 @@ def _source_value(source, key: str):
     if hasattr(source, key):
         return getattr(source, key)
     return source[key]
-    existing = conn.execute(
-        """
-        SELECT execution_id FROM execution_session_locks
-        WHERE project_id = ?
-          AND remote_session_kind = ?
-          AND remote_session_id = ?
-        """,
-        (branch["project_id"], session["kind"], session["id"]),
-    ).fetchone()
-    if existing is not None:
-        raise HTTPException(409, "Remote session is locked by another execution")
-    conn.execute(
-        """
-        INSERT INTO execution_session_locks (
-            project_id, remote_session_kind, remote_session_id,
-            execution_id, branch_id, lease_expires_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            branch["project_id"],
-            session["kind"],
-            session["id"],
-            execution_id,
-            branch["id"],
-            "2999-01-01T00:00:00Z",
-            now,
-        ),
-    )

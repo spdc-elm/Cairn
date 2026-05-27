@@ -103,14 +103,30 @@ class FakeClient:
     def __init__(self) -> None:
         self.batches: list[list[dict]] = []
         self.patches: list[dict] = []
+        self.heartbeats: list[dict] = []
 
-    def append_execution_events(self, execution_id: str, *, dispatcher_id: str | None = None, events: list[dict]):
+    def append_execution_events(self, execution_id: str, *, dispatcher_id: str | None = None, sink_token: str | None = None, events: list[dict]):
         self.batches.append(events)
         return type("Response", (), {"ok": True, "status_code": 200, "text": ""})()
 
     def patch_execution(self, execution_id: str, payload: dict):
         self.patches.append(payload)
         return type("Response", (), {"ok": True, "status_code": 200, "text": ""})()
+
+    def heartbeat_execution(self, execution_id: str, *, dispatcher_id: str, sink_token: str | None = None, lease_seconds: int | None = None):
+        self.heartbeats.append(
+            {
+                "execution_id": execution_id,
+                "dispatcher_id": dispatcher_id,
+                "sink_token": sink_token,
+                "lease_seconds": lease_seconds,
+            }
+        )
+        return type("Response", (), {"ok": True, "status_code": 200, "text": ""})()
+
+
+def _dispatch_config(interval: int = 30):
+    return SimpleNamespace(runtime=SimpleNamespace(interval=interval))
 
 
 class V32ExecutionEventStreamTests(unittest.TestCase):
@@ -298,7 +314,7 @@ class V32ExecutionEventStreamTests(unittest.TestCase):
             }
 
             outcome = run_question_task(
-                SimpleNamespace(),
+                _dispatch_config(),
                 client,
                 FakeEnvironment(),
                 project,
@@ -346,7 +362,7 @@ class V32ExecutionEventStreamTests(unittest.TestCase):
             }
 
             outcome = run_question_task(
-                SimpleNamespace(),
+                _dispatch_config(),
                 client,
                 ClaudeJsonEnvironment(),
                 project,
