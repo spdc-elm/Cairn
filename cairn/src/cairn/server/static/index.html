@@ -13,6 +13,7 @@
 <script src="/static/vendor/cytoscape-klay.js"></script>
 <script src="/static/vendor/elk.bundled.js"></script>
 <script src="/static/vendor/cytoscape-elk.js"></script>
+<script src="/static/vendor/js-yaml.min.js"></script>
 <script defer src="/static/vendor/alpine.min.js"></script>
 <style>
   [x-cloak] { display: none !important; }
@@ -227,6 +228,7 @@
 </script>
 </head>
 <body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" x-data="cairnApp()">
+<input x-ref="replayYamlFileInput" type="file" accept=".yaml,.yml,text/yaml,application/x-yaml,text/plain" class="hidden" @change="handleReplayYamlUpload($event)">
 
 <!-- ═══════════ PROJECT LIST VIEW ═══════════ -->
 <div x-show="view === 'list'" x-cloak class="flex-1 flex flex-col overflow-hidden">
@@ -265,6 +267,10 @@
       </button>
     </div>
     <div class="flex items-center gap-1.5">
+      <button @click="openReplayYamlFilePicker()" class="h-7 px-2.5 rounded-lg border border-violet-200 text-xs text-violet-600 hover:bg-violet-50 transition inline-flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/><path d="M4 5v14"/><path d="M12 3v4"/><path d="M9.5 5.5 12 8l2.5-2.5"/></svg>
+        Replay YAML
+      </button>
       <button @click="openEnvironmentPanel()" class="h-7 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/><path d="M7 7h.01M7 12h.01M7 17h.01"/></svg>
         Environments
@@ -442,10 +448,16 @@
     </div>
     <div class="flex items-center gap-1.5">
       <template x-if="!replay.active">
-        <button @click="startProjectReplay()" class="px-2.5 py-1 rounded-lg border border-violet-200 text-xs text-violet-600 hover:bg-violet-50 transition flex items-center gap-1.5">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/><path d="M4 5v14"/></svg>
-          Replay
-        </button>
+        <div class="flex items-center gap-1.5">
+          <button @click="startProjectReplay()" class="px-2.5 py-1 rounded-lg border border-violet-200 text-xs text-violet-600 hover:bg-violet-50 transition flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/><path d="M4 5v14"/></svg>
+            Replay
+          </button>
+          <button @click="openReplayYamlFilePicker()" class="px-2.5 py-1 rounded-lg border border-violet-200 text-xs text-violet-600 hover:bg-violet-50 transition flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 3v10"/><path d="m8.5 9.5 3.5 3.5 3.5-3.5"/><path d="M5 17h14"/><path d="m8 5 11 7-11 7V5Z"/></svg>
+            YAML
+          </button>
+        </div>
       </template>
       <template x-if="replay.active">
         <div class="flex items-center gap-1.5 rounded-xl border border-violet-200 bg-violet-50/80 px-2 py-1 text-xs text-violet-700">
@@ -467,7 +479,7 @@
           </button>
         </div>
       </template>
-      <button @click="viewProjectYaml(selectedProjectId, project.project.title)" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition flex items-center gap-1.5">
+      <button x-show="!isReplayYamlDemo()" @click="viewProjectYaml(selectedProjectId, project.project.title)" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M14.25 3H7.5A2.25 2.25 0 0 0 5.25 5.25v13.5A2.25 2.25 0 0 0 7.5 21h9a2.25 2.25 0 0 0 2.25-2.25V8.25L14.25 3Z"/><path d="M14.25 3v5.25h4.5"/><path d="M8.25 12h7.5M8.25 15h5.25"/></svg>
         Snapshot
       </button>
@@ -1754,6 +1766,8 @@ function cairnApp() {
       frames: [],
       visibleEvents: [],
       sourceProject: null,
+      source: null,
+      returnProjectId: '',
       timer: null,
     },
     _timelineEventsCacheProject: null,
@@ -3921,6 +3935,229 @@ function cairnApp() {
       }
     },
 
+    openReplayYamlFilePicker() {
+      const input = this.$refs.replayYamlFileInput;
+      if (!input) return;
+      input.value = '';
+      input.click();
+    },
+
+    async handleReplayYamlUpload(event) {
+      const file = event?.target?.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const sourceProject = this.buildReplayProjectFromYaml(text, file.name);
+        this.startReplaySession(sourceProject, {
+          source: 'yaml',
+          returnProjectId: this.selectedProjectId || '',
+        });
+        this.showToast(`Replaying ${file.name}`);
+      } catch (e) {
+        this.showToast(e.message || 'Could not replay YAML', 'error');
+      } finally {
+        if (event?.target) event.target.value = '';
+      }
+    },
+
+    buildReplayProjectFromYaml(text, fileName = 'trajectory.yaml') {
+      if (!window.jsyaml || typeof window.jsyaml.load !== 'function') {
+        throw new Error('YAML parser is unavailable');
+      }
+      const data = window.jsyaml.load(text);
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        throw new Error('YAML must be a mapping with project/facts/intents');
+      }
+
+      const projectData = this.plainObject(data.project) ? data.project : {};
+      const importedAt = new Date();
+      const title = this.yamlText(projectData.title ?? data.title, fileName.replace(/\.(ya?ml|json)$/i, '') || 'YAML Replay');
+      const projectId = this.yamlText(projectData.id ?? data.id, `yaml-replay-${Date.now()}`);
+      const originDescription = this.yamlText(projectData.origin ?? data.origin, 'Imported origin');
+      const goalDescription = this.yamlText(projectData.goal ?? data.goal, 'Imported goal');
+      const facts = [];
+      const factMap = new Map();
+      const addFact = (rawFact, fallbackId) => {
+        const factData = this.plainObject(rawFact) ? rawFact : { description: rawFact };
+        const id = this.yamlText(factData.id, fallbackId);
+        if (!id) return null;
+        const existing = factMap.get(id);
+        const description = this.yamlText(
+          factData.description ?? factData.content ?? factData.text ?? factData.value,
+          id === 'origin' ? originDescription : id === 'goal' ? goalDescription : '',
+        );
+        const fact = {
+          id,
+          title: this.yamlText(factData.title, id === 'origin' ? 'Origin' : id === 'goal' ? 'Goal' : ''),
+          description,
+          metadata: this.plainObject(factData.metadata) ? factData.metadata : null,
+        };
+        if (existing) {
+          Object.assign(existing, {
+            title: existing.title || fact.title,
+            description: existing.description || fact.description,
+            metadata: existing.metadata || fact.metadata,
+          });
+          return existing;
+        }
+        if (!fact.title) fact.title = this.summarizeFactLabel(fact);
+        facts.push(fact);
+        factMap.set(id, fact);
+        return fact;
+      };
+
+      const rawFacts = data.facts;
+      if (Array.isArray(rawFacts)) {
+        rawFacts.forEach((fact, index) => addFact(fact, `f${index + 1}`));
+      } else if (this.plainObject(rawFacts)) {
+        Object.entries(rawFacts).forEach(([id, fact]) => {
+          addFact(this.plainObject(fact) ? { id, ...fact } : { id, description: fact }, id);
+        });
+      }
+      addFact({ id: 'origin', title: 'Origin', description: originDescription }, 'origin');
+      addFact({ id: 'goal', title: 'Goal', description: goalDescription }, 'goal');
+
+      const hints = this.yamlArray(data.hints).map((hint, index) => {
+        const hintData = this.plainObject(hint) ? hint : { content: hint };
+        return {
+          id: this.yamlText(hintData.id, `h${index + 1}`),
+          content: this.yamlText(hintData.content ?? hintData.description ?? hintData.text, ''),
+          creator: this.yamlText(hintData.creator ?? hintData.actor, 'import'),
+          created_at: this.normalizeReplayTimestamp(
+            hintData.created_at ?? hintData.timestamp,
+            this.syntheticReplayTimestamp(importedAt, index, 0.4),
+          ),
+        };
+      }).filter(hint => hint.content);
+
+      const rawIntents = this.yamlArray(data.intents ?? data.trajectory ?? data.steps);
+      let generatedFactIndex = 1;
+      const intents = rawIntents.map((step, index) => {
+        const stepData = this.plainObject(step) ? step : { description: step };
+        const id = this.yamlText(stepData.id, `i${index + 1}`);
+        const from = this.normalizeFactIdList(
+          stepData.from ?? stepData.sources ?? stepData.source,
+          index === 0 ? ['origin'] : ['origin'],
+        );
+        const produced = this.plainObject(stepData.fact)
+          ? stepData.fact
+          : this.plainObject(stepData.result_fact)
+            ? stepData.result_fact
+            : this.plainObject(stepData.produced_fact)
+              ? stepData.produced_fact
+              : null;
+        let to = this.yamlText(
+          stepData.to ?? stepData.target ?? stepData.fact_id ?? stepData.produced_fact_id,
+          '',
+        );
+        if (!to && produced) to = this.yamlText(produced.id, `f${generatedFactIndex++}`);
+        if (!to && (stepData.result || stepData.observation || stepData.output)) to = `f${generatedFactIndex++}`;
+
+        if (to && to !== 'goal' && !factMap.has(to)) {
+          addFact({
+            ...(produced || {}),
+            id: to,
+            description: this.yamlText(
+              produced?.description ?? produced?.content ?? produced?.text ?? stepData.result ?? stepData.observation ?? stepData.output,
+              to,
+            ),
+          }, to);
+        }
+
+        return {
+          id,
+          from,
+          to: to || null,
+          description: this.yamlText(stepData.description ?? stepData.intent ?? stepData.action ?? stepData.question, `Explore ${from.join(', ')}`),
+          creator: this.yamlText(stepData.creator ?? stepData.actor, 'import'),
+          worker: this.yamlText(stepData.worker, '') || null,
+          requested_worker: this.yamlText(stepData.requested_worker, '') || null,
+          timeout_override_seconds: stepData.timeout_override_seconds ?? null,
+          conclude_timeout_override_seconds: stepData.conclude_timeout_override_seconds ?? null,
+          control_state: this.yamlText(stepData.control_state, 'normal'),
+          control_requested_at: this.normalizeReplayTimestamp(stepData.control_requested_at, null),
+          control_requested_by: this.yamlText(stepData.control_requested_by, '') || null,
+          control_reason: this.yamlText(stepData.control_reason, '') || null,
+          last_heartbeat_at: this.normalizeReplayTimestamp(
+            stepData.last_heartbeat_at ?? stepData.heartbeat_at,
+            stepData.worker ? this.syntheticReplayTimestamp(importedAt, index, 1.5) : null,
+          ),
+          created_at: this.normalizeReplayTimestamp(
+            stepData.created_at ?? stepData.started_at ?? stepData.timestamp,
+            this.syntheticReplayTimestamp(importedAt, index, 1),
+          ),
+          concluded_at: to ? this.normalizeReplayTimestamp(
+            stepData.concluded_at ?? stepData.finished_at,
+            this.syntheticReplayTimestamp(importedAt, index, 2),
+          ) : null,
+        };
+      });
+
+      const status = this.yamlText(projectData.status ?? data.status, '')
+        || (intents.some(intent => intent.to === 'goal' && intent.concluded_at) ? 'completed' : 'active');
+      return {
+        project: {
+          id: projectId,
+          title,
+          status,
+          created_at: this.normalizeReplayTimestamp(projectData.created_at ?? data.created_at, importedAt.toISOString()),
+          auto_reason: false,
+          allowed_auto_workers: [],
+          default_timeout_seconds: null,
+          default_conclude_timeout_seconds: null,
+          reason: null,
+          environment: null,
+          workspace: null,
+        },
+        facts,
+        intents,
+        hints,
+      };
+    },
+
+    plainObject(value) {
+      return value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date);
+    },
+
+    yamlArray(value) {
+      if (Array.isArray(value)) return value;
+      if (value === null || value === undefined) return [];
+      return [value];
+    },
+
+    yamlText(value, fallback = '') {
+      if (value === null || value === undefined) return fallback;
+      const text = String(value).trim();
+      return text || fallback;
+    },
+
+    normalizeFactIdList(value, fallback = []) {
+      const list = this.yamlArray(value).flatMap(item => {
+        if (Array.isArray(item)) return item;
+        if (typeof item === 'string' && item.includes(',')) return item.split(',');
+        return [item];
+      }).map(item => this.yamlText(item, '')).filter(Boolean);
+      return list.length ? list : [...fallback];
+    },
+
+    normalizeReplayTimestamp(value, fallback) {
+      if (value === null || value === undefined || value === '') return fallback;
+      if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
+      const text = String(value).trim();
+      if (!text) return fallback;
+      const normalized = /^\d{4}-\d{2}-\d{2} /.test(text) ? text.replace(' ', 'T') : text;
+      const parsed = new Date(normalized);
+      return Number.isNaN(parsed.getTime()) ? text : parsed.toISOString();
+    },
+
+    syntheticReplayTimestamp(baseDate, index, phase = 0) {
+      return new Date(baseDate.getTime() + index * 3000 + phase * 1000).toISOString();
+    },
+
+    isReplayYamlDemo() {
+      return this.replay.active && this.replay.source === 'yaml';
+    },
+
     replayProgressLabel() {
       if (!this.replay.active || this.replay.frames.length === 0) return 'Replay';
       return `Replay ${Math.min(this.replay.frameIndex + 1, this.replay.frames.length)} / ${this.replay.frames.length}`;
@@ -4164,40 +4401,52 @@ function cairnApp() {
       this.followReplayTimelineTail();
     },
 
-    async startProjectReplay() {
-      if (!this.project || this.replay.active || !this.selectedProjectId) return;
-      try {
-        const sourceProject = await this.api('GET', `/projects/${this.selectedProjectId}`);
-        const baseEvents = this.timelineEvents().map(event => ({
+    startReplaySession(sourceProject, options = {}) {
+      if (!sourceProject || this.replay.active) return;
+      const baseEvents = this.projectTimelineEvents(sourceProject).map(event => ({
           ...event,
           meta: [...(event.meta || [])],
           sourceFactIds: [...(event.sourceFactIds || [])],
         }));
-        const frames = this.buildReplayFrames(sourceProject, baseEvents);
-        if (frames.length === 0) {
-          this.showToast('No timeline to replay', 'error');
-          return;
-        }
+      const frames = this.buildReplayFrames(sourceProject, baseEvents);
+      if (frames.length === 0) {
+        this.showToast('No timeline to replay', 'error');
+        return;
+      }
 
-        const stepMs = String(this.replay.stepMs || '1100');
-        this.stopReplayTimer();
-        this.replay = {
-          active: true,
-          playing: true,
-          stepMs,
-          frameIndex: -1,
-          frames,
-          visibleEvents: [],
-          sourceProject,
-          timer: null,
-        };
-        this.polling = false;
-        this.sideTab = 'log';
-        this.selectedNode = null;
-        this.selectedFacts = [];
-        this.selectedTimelineEntryId = null;
-        this.applyReplayFrame(0, { reinitialize: true });
-        this.scheduleReplayTick();
+      const stepMs = String(this.replay.stepMs || '1100');
+      this.stopReplayTimer();
+      this.replay = {
+        active: true,
+        playing: true,
+        stepMs,
+        frameIndex: -1,
+        frames,
+        visibleEvents: [],
+        sourceProject,
+        source: options.source || 'project',
+        returnProjectId: options.returnProjectId || '',
+        timer: null,
+      };
+      this.polling = false;
+      this.view = 'graph';
+      this.sideTab = 'log';
+      this.selectedProjectId = options.source === 'yaml' ? '' : sourceProject.project.id;
+      this.selectedNode = null;
+      this.selectedFacts = [];
+      this.selectedTimelineEntryId = null;
+      this.applyReplayFrame(0, { reinitialize: true });
+      this.scheduleReplayTick();
+    },
+
+    async startProjectReplay() {
+      if (!this.project || this.replay.active || !this.selectedProjectId) return;
+      try {
+        const sourceProject = await this.api('GET', `/projects/${this.selectedProjectId}`);
+        this.startReplaySession(sourceProject, {
+          source: 'project',
+          returnProjectId: this.selectedProjectId,
+        });
       } catch (e) {
         this.showToast(e.message, 'error');
       }
@@ -4244,6 +4493,8 @@ function cairnApp() {
       if (!this.replay.active) return;
       const projectId = this.selectedProjectId;
       const stepMs = String(this.replay.stepMs || '1100');
+      const replaySource = this.replay.source;
+      const returnProjectId = this.replay.returnProjectId || '';
       this.stopReplayTimer();
       this.replay = {
         active: false,
@@ -4253,11 +4504,37 @@ function cairnApp() {
         frames: [],
         visibleEvents: [],
         sourceProject: null,
+        source: null,
+        returnProjectId: '',
         timer: null,
       };
       this._timelineEventsCacheProject = null;
       this._timelineEventsCache = [];
       this.polling = true;
+      if (replaySource === 'yaml') {
+        if (!returnProjectId) {
+          this.view = 'list';
+          this.project = null;
+          this.selectedProjectId = '';
+          this.selectedNode = null;
+          this.selectedFacts = [];
+          this.selectedTimelineEntryId = null;
+          if (location.hash !== '#/') location.hash = '/';
+          return;
+        }
+        this.selectedProjectId = returnProjectId;
+        await this.loadProject(returnProjectId);
+        this.view = 'graph';
+        this.$nextTick(() => {
+          this.teardownAutoFit();
+          if (this.cy) {
+            this.cy.destroy();
+            this.cy = null;
+          }
+          this.initGraph();
+        });
+        return;
+      }
       if (!projectId) return;
       await this.loadProject(projectId);
       this.$nextTick(() => {
@@ -4301,6 +4578,8 @@ function cairnApp() {
         this.replay.visibleEvents = [];
         this.replay.frameIndex = -1;
         this.replay.sourceProject = null;
+        this.replay.source = null;
+        this.replay.returnProjectId = '';
         this._timelineEventsCacheProject = null;
         this._timelineEventsCache = [];
         this.polling = true;
@@ -4334,6 +4613,8 @@ function cairnApp() {
         this.replay.visibleEvents = [];
         this.replay.frameIndex = -1;
         this.replay.sourceProject = null;
+        this.replay.source = null;
+        this.replay.returnProjectId = '';
         this._timelineEventsCacheProject = null;
         this._timelineEventsCache = [];
         this.polling = true;
@@ -5213,18 +5494,27 @@ function cairnApp() {
       if (this.replay.active) return this.replay.visibleEvents;
       if (!this.project) return [];
       if (this._timelineEventsCacheProject === this.project) return this._timelineEventsCache;
+      const cached = this.projectTimelineEvents(this.project);
+      this._timelineEventsCacheProject = this.project;
+      this._timelineEventsCache = cached;
+      return cached;
+    },
+
+    projectTimelineEvents(project) {
+      if (!project) return [];
 
       const events = [];
       let order = 0;
-      const origin = this.getFactRecord('origin');
-      const goal = this.getFactRecord('goal');
+      const factById = (fid) => project.facts.find(f => f.id === fid) || null;
+      const origin = factById('origin');
+      const goal = factById('goal');
 
       events.push({
-        id: `project-created-${this.project.project.id}`,
+        id: `project-created-${project.project.id}`,
         type: 'project_created',
-        timestamp: this.project.project.created_at,
+        timestamp: project.project.created_at,
         actor: 'system',
-        title: this.project.project.title,
+        title: project.project.title,
         meta: [origin ? origin.description : null, goal ? `goal: ${this.factDisplayTitle(goal)}` : null].filter(Boolean),
         targetType: 'fact',
         targetId: 'origin',
@@ -5234,7 +5524,7 @@ function cairnApp() {
         sourceFactIds: [],
       });
 
-      for (const hint of this.project.hints) {
+      for (const hint of project.hints) {
         events.push({
           id: `hint-${hint.id}`,
           type: 'hint_added',
@@ -5251,7 +5541,7 @@ function cairnApp() {
         });
       }
 
-      for (const intent of this.project.intents) {
+      for (const intent of project.intents) {
         events.push({
           id: `intent-declared-${intent.id}`,
           type: 'intent_declared',
@@ -5287,7 +5577,7 @@ function cairnApp() {
           continue;
         }
 
-        const fact = this.getFactRecord(intent.to);
+        const fact = factById(intent.to);
         events.push({
           id: `intent-concluded-${intent.id}`,
           type: 'intent_concluded',
@@ -5321,8 +5611,6 @@ function cairnApp() {
       }
 
       const cached = resolved.map((entry, index) => ({ ...entry, isLast: index === resolved.length - 1 }));
-      this._timelineEventsCacheProject = this.project;
-      this._timelineEventsCache = cached;
       return cached;
     },
 
